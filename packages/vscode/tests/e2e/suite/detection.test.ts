@@ -100,7 +100,9 @@ suite('detection', () => {
         const binPath = detection.stacks.fmt.binPath;
         if (expected.fmtBin) {
           assert.ok(binPath, `${name}: the rs fmt bin probe found nothing`);
-          assert.equal(path.basename(binPath), expected.fmtBin);
+          // Compare without the extension: on Windows the bin is a `rs.cmd`
+          // (or `rs.exe`) shim, on POSIX a plain `rs` symlink.
+          assert.equal(path.parse(binPath).name, expected.fmtBin);
           assert.ok(
             binPath.includes(
               `${path.sep}node_modules${path.sep}.bin${path.sep}`,
