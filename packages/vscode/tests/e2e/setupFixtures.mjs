@@ -33,7 +33,7 @@ export const FIXTURES = {
 };
 export const FIXTURE_NAMES = Object.keys(FIXTURES);
 
-const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
+const pnpmCommand = 'pnpm';
 
 /** @param {string} name */
 const install = (name) => {
@@ -69,7 +69,14 @@ const install = (name) => {
       // build scripts as-is.
       '--config.dangerouslyAllowAllBuilds=true',
     ],
-    { cwd, stdio: 'inherit', env: process.env },
+    {
+      cwd,
+      stdio: 'inherit',
+      env: process.env,
+      // On Windows, pnpm is a .cmd shim, and Node refuses to spawn batch
+      // files without a shell (CVE-2024-27980 hardening) — EINVAL otherwise.
+      shell: process.platform === 'win32',
+    },
   );
   if (result.error) {
     throw result.error;
