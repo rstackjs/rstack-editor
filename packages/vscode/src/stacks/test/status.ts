@@ -99,6 +99,17 @@ class StatusHolder implements StatusReporter {
     if (!this.#mismatches.delete(source)) return;
     this.#paintOrRun();
   }
+
+  /**
+   * A resolution root went away (its config file or workspace folder was
+   * removed) without recovering: its failures must not outlive it and keep
+   * suppressing the surviving roots' status.
+   */
+  forget(source: string): void {
+    const hadCrash = this.#crashes.delete(source);
+    const hadMismatch = this.#mismatches.delete(source);
+    if (hadCrash || hadMismatch) this.#paintOrRun();
+  }
 }
 
 export const status = new StatusHolder();

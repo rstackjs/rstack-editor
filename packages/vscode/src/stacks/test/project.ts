@@ -9,6 +9,7 @@ import { watchConfigValue } from './config';
 import { logger } from './logger';
 import { RstestApi } from './master';
 import { type ChildProjectRef, computeCoveredConfigs } from './projectCoverage';
+import { status } from './status';
 import { ProjectFolder, TestFile, TestFolder, testData } from './testTree';
 
 // The default config file name at the workspace root. A lone project using it
@@ -122,6 +123,11 @@ export class WorkspaceManager implements vscode.Disposable {
   public dispose() {
     for (const project of this.projects.values()) {
       project.dispose();
+    }
+    // A failed shim resolution latches a mismatch without ever creating a
+    // project, so no `Project.dispose` will clear it when the folder goes.
+    for (const cwd of this.reportedShimFailures) {
+      status.forget(cwd);
     }
     this.configValueWatcher.dispose();
   }
@@ -256,6 +262,13 @@ export class WorkspaceManager implements vscode.Disposable {
    * duplicate the tree. A native config elsewhere in the workspace folder
    * (e.g. a sibling monorepo package) says nothing about this root and must
    * not suppress its bridge.
+   *
+   * The shim is re-resolved on **every** sync, including for live bridges: a
+   * dependency change (observed as a lockfile-driven detection pass) can move
+   * the version-pinned store path the project was created with, or swap the
+   * installed version entirely. A bridge whose shim still resolves to the
+   * same file is kept as-is — its warm worker is not churned — and rebuilt
+   * only when the resolution actually moved or stopped resolving.
    */
   private syncBridgeProjects() {
     if (!this.didScanConfigFiles) return;
@@ -266,17 +279,13 @@ export class WorkspaceManager implements vscode.Disposable {
         .map((project) => path.dirname(project.sourceUri.fsPath)),
     );
 
+    const candidateDirs = new Set<string>();
     const wanted = new Map<string, ProjectSource>();
     for (const rstackConfig of this.rstackConfigFiles) {
       const key = rstackConfig.toString();
       const cwd = path.dirname(rstackConfig.fsPath);
       if (nativeProjectDirs.has(cwd)) continue;
-      // Keep an existing bridged project as-is; re-resolving the shim on
-      // every tree refresh would churn its worker for nothing.
-      if (this.projects.get(key)?.isBridge) {
-        wanted.set(key, { sourceUri: rstackConfig });
-        continue;
-      }
+      candidateDirs.add(cwd);
       const shim = resolveRstackShim(cwd, {
         silent: this.reportedShimFailures.has(cwd),
       });
@@ -285,15 +294,39 @@ export class WorkspaceManager implements vscode.Disposable {
         continue;
       }
       this.reportedShimFailures.delete(cwd);
+      const configFileUri = vscode.Uri.file(shim.configFilePath);
+      const existing = this.projects.get(key);
+      if (
+        existing?.isBridge &&
+        existing.configFileUri.toString() === configFileUri.toString()
+      ) {
+        wanted.set(key, { sourceUri: rstackConfig });
+        continue;
+      }
+      if (existing?.isBridge) {
+        // The shim moved: drop the stale project so the add loop below
+        // recreates it against the fresh resolution.
+        existing.dispose();
+        this.projects.delete(key);
+      }
       wanted.set(key, {
         sourceUri: rstackConfig,
-        configFileUri: vscode.Uri.file(shim.configFilePath),
+        configFileUri,
         cwd,
         isBridge: true,
       });
       logger.info(
         `Driving Rstest from ${rstackConfig.fsPath} through the rstack config shim`,
       );
+    }
+
+    // A directory that stopped being a bridge candidate (its config was
+    // removed or a native config took over) can leave a latched version
+    // mismatch behind with no project whose disposal would clear it.
+    for (const cwd of [...this.reportedShimFailures]) {
+      if (candidateDirs.has(cwd)) continue;
+      this.reportedShimFailures.delete(cwd);
+      status.forget(cwd);
     }
 
     for (const [key, project] of this.projects) {
@@ -578,6 +611,10 @@ export class Project implements vscode.Disposable {
     this.#watch?.dispose();
     this.api.dispose();
     this.cancellationSource.cancel();
+    // This root's failures must not outlive its project (config removed,
+    // folder closed, bridge rebuilt); the master and bridge report keyed by
+    // this same cwd.
+    status.forget(this.cwd);
   }
   get collection() {
     return this.testItem?.children || this.parentCollection;

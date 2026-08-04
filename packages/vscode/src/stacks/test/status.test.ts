@@ -69,6 +69,26 @@ describe('StatusHolder failure latches', () => {
     expect(calls).toEqual(['crashed:spawn ENOENT', 'running:3 folders']);
   });
 
+  it('forgets a removed root’s failures and repaints', () => {
+    const calls = bindRecorder();
+    status.versionMismatch('core too old', '/a');
+    status.crashed('spawn ENOENT', '/a');
+    status.running('1 folder');
+    status.forget('/a');
+    expect(calls).toEqual([
+      'mismatch:core too old',
+      'crashed:spawn ENOENT',
+      'running:1 folder',
+    ]);
+  });
+
+  it('forget of an unknown root does not repaint', () => {
+    const calls = bindRecorder();
+    status.versionMismatch('core too old', '/a');
+    status.forget('/b');
+    expect(calls).toEqual(['mismatch:core too old']);
+  });
+
   it('drops stale latches on bind', () => {
     bindRecorder();
     status.versionMismatch('core too old', '/a');
