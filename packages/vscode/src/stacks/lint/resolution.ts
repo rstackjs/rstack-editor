@@ -105,6 +105,12 @@ const loadPnpApi = async (folder: WorkspaceFolder): Promise<PnpApi | null> => {
       continue;
     }
     try {
+      // `yarn install` rewrites `.pnp.cjs` in place, and the module cache
+      // would pin the dependency map seen by the first load — the PnP flavor
+      // of the resolution staleness `findPackageJsonUncached` avoids — so a
+      // dependency-driven retry must load the current file, not the cached
+      // module.
+      delete nodeRequire.cache[nodeRequire.resolve(pnpFile.fsPath)];
       return nodeRequire(pnpFile.fsPath) as PnpApi;
     } catch {
       // Try the next candidate; a broken PnP file is not fatal on its own.

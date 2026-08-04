@@ -55,6 +55,9 @@ const isPortAvailable = (port: number, host?: string): Promise<boolean> =>
 
 export class RstestApi {
   private childProcesses = new Set<ChildProcess>();
+  // Processes killed on purpose outside the `$close` → `off` path (dispose,
+  // failed debugger attach). Their `exit` events are not crashes.
+  private readonly expectedExits = new WeakSet<ChildProcess>();
 
   constructor(
     private workspace: vscode.WorkspaceFolder,
@@ -582,8 +585,20 @@ export class RstestApi {
 
     rstestProcess.on('exit', (code, signal) => {
       logger.debug('Worker process exited', { code, signal });
+      if (worker.$closed || this.expectedExits.has(rstestProcess)) return;
+      // An exit nobody asked for: every deliberate teardown either runs
+      // `$close` first (its `off` handler kills after `$closed` flips) or
+      // marks the process in `expectedExits` before killing. The process
+      // *did* spawn — which cleared the crash latch — and nothing else will
+      // report; e.g. an invalid `nodeExecArgs` option makes Node exit right
+      // after a successful spawn, and without this the status keeps saying
+      // running over an empty Test Explorer.
+      status.crashed(
+        `worker process exited unexpectedly (code: ${String(code)}, signal: ${String(signal)})`,
+        this.statusSource,
+      );
       // Unblock pending calls when the worker exits before we closed it.
-      if (!worker.$closed) worker.$close();
+      worker.$close();
     });
 
     // Attach the debugger only after the error/exit handlers are wired, so a
@@ -609,6 +624,7 @@ export class RstestApi {
         { testRun },
       );
       if (!startedDebugging) {
+        this.expectedExits.add(rstestProcess);
         rstestProcess.kill();
         throw new Error(
           `Failed to attach debugger to test worker process (PID: ${rstestProcess.pid})`,
@@ -621,6 +637,7 @@ export class RstestApi {
 
   public dispose() {
     for (const child of this.childProcesses) {
+      this.expectedExits.add(child);
       child.kill();
     }
     this.childProcesses.clear();
