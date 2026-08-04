@@ -1,5 +1,4 @@
 import semver from 'semver';
-import type { StatusReporter } from '../types';
 
 /**
  * The version-compatibility contract. A VSIX has no npm install step,
@@ -56,15 +55,19 @@ export const formatVersionMismatch = (
 /**
  * Checks one project-resolved package and reports a mismatch through the
  * shared status reporter. Returns `true` when the stack may keep going.
+ *
+ * `source` identifies the resolution root on reporters that latch mismatches
+ * per root (`stacks/test/status.ts`); plain `StatusReporter`s ignore it.
  */
 export const reportVersionCheck = (
-  status: StatusReporter,
+  status: { versionMismatch(detail: string, source?: string): void },
   packageName: SupportedPackage,
   version: string | undefined,
+  source?: string,
 ): boolean => {
   const result = checkPackageVersion(packageName, version);
   if (result.kind === 'mismatch') {
-    status.versionMismatch(formatVersionMismatch(packageName, result));
+    status.versionMismatch(formatVersionMismatch(packageName, result), source);
     return false;
   }
   return true;

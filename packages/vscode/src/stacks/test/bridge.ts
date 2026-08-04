@@ -118,7 +118,7 @@ export function resolveRstackShim(
     if (!silent) {
       logger.error(message);
     }
-    status.versionMismatch(message);
+    status.versionMismatch(message, configDir);
     return undefined;
   }
 
@@ -126,6 +126,6 @@ export function resolveRstackShim(
     configFilePath,
     version,
   });
-  status.versionOk();
+  status.versionOk(configDir);
   return { configFilePath, version };
 }

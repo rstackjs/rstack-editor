@@ -167,6 +167,31 @@ export class WorkspaceRslintCoordinator {
     this.reconcile(folders, forceReplace);
   }
 
+  /**
+   * Re-attempts every root whose last start failed. A failed slot is pinned to
+   * its `failedGeneration` so `reconcile` never spins on it, and folder
+   * identity — the only thing `reconcile` keys on — does not change when the
+   * failure cause goes away (e.g. `pnpm install` materializes the Rslint
+   * binary, observed as a lockfile-driven detection pass). The retry therefore
+   * has to bump the generation explicitly. `failedGeneration` matching the
+   * desired generation is the precise "currently failed" predicate — a live or
+   * in-flight runtime always carries a newer generation — so healthy roots are
+   * left alone.
+   */
+  public retryFailedRoots(): void {
+    if (this.closing) return;
+    const changedKeys = new Set<string>();
+    for (const [key, desired] of this.desiredRoots) {
+      if (this.slots.get(key)?.failedGeneration !== desired.generation) {
+        continue;
+      }
+      this.desiredRoots.set(key, this.createDesiredRoot(desired.folder));
+      changedKeys.add(key);
+    }
+    for (const key of changedKeys) this.kick(key);
+    if (changedKeys.size > 0) this.signalTopologyChanged();
+  }
+
   public async close(): Promise<void> {
     await (this.closePromise ??= this.closeImpl());
   }

@@ -131,6 +131,10 @@ class RslintController implements StackController {
       context.onDidChangeDetection((snapshot) => {
         this.#snapshot = snapshot;
         this.reconcileFolders({ added: [], removed: [] });
+        // A detection pass fires on config topology and lockfile changes —
+        // exactly the moments a previously failed root (missing binary,
+        // uninstalled dependencies) may have become startable.
+        this.#coordinator?.retryFailedRoots();
       }),
       vscode.workspace.onDidChangeWorkspaceFolders((event) => {
         this.reconcileFolders(event);

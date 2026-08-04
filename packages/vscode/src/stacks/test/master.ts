@@ -191,12 +191,12 @@ export class RstestApi {
       // The status-aggregation adaptation: the one-shot `showWarningMessage`
       // becomes the shared `version mismatch` status bar state with actual vs
       // required versions. The floor is the same `>= 0.6.0`.
-      if (!reportVersionCheck(status, '@rstest/core', coreVersion)) {
+      if (!reportVersionCheck(status, '@rstest/core', coreVersion, this.cwd)) {
         logger.error(
           `Unsupported @rstest/core version ${coreVersion ?? 'unknown'} resolved from ${this.cwd}`,
         );
       } else {
-        status.versionOk();
+        status.versionOk(this.cwd);
       }
 
       return nodeExport;
@@ -502,7 +502,7 @@ export class RstestApi {
     });
 
     rstestProcess.on('spawn', () => {
-      status.workerSpawned();
+      status.workerSpawned(this.cwd);
     });
 
     rstestProcess.on('error', (error) => {
@@ -511,7 +511,7 @@ export class RstestApi {
       // `crashed` state of the shared status bar. The notification is kept because
       // a failed spawn is almost always a wrong `nodeExecutable` the user has
       // to fix, and the status bar alone is easy to miss mid-run.
-      status.crashed(`worker process failed: ${error.message}`);
+      status.crashed(`worker process failed: ${error.message}`, this.cwd);
       vscode.window.showErrorMessage(
         `Rstest worker process failed: ${error.message}`,
       );

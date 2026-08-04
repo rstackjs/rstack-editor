@@ -15,11 +15,14 @@ class StatusHolder implements StatusReporter {
   #reporter: StatusReporter | undefined;
   // Failure latches. Detection refreshes re-derive `running` from the folder
   // count alone (`reportStatus`), which must not paint over a live failure
-  // that was neither recovered nor retried. Each latch is cleared by the
-  // code path that observes the corresponding recovery: a worker process
-  // that actually spawned, or a version check that passed.
-  #crash: string | undefined;
-  #mismatch: string | undefined;
+  // that was neither recovered nor retried. Each latch is keyed by the
+  // resolution root that reported it — a multi-project workspace runs one
+  // master (and one bridge resolution) per root, and a recovery observed by
+  // one root must not clear another root's live failure. A latch entry is
+  // cleared by the code path that observes the corresponding recovery: a
+  // worker process that actually spawned, or a version check that passed.
+  #crashes = new Map<string, string>();
+  #mismatches = new Map<string, string>();
   #lastRunningDetail: string | undefined;
 
   get stack() {
@@ -28,8 +31,8 @@ class StatusHolder implements StatusReporter {
 
   public bind(reporter: StatusReporter) {
     this.#reporter = reporter;
-    this.#crash = undefined;
-    this.#mismatch = undefined;
+    this.#crashes.clear();
+    this.#mismatches.clear();
     this.#lastRunningDetail = undefined;
   }
 
@@ -37,15 +40,27 @@ class StatusHolder implements StatusReporter {
     this.#reporter = undefined;
   }
 
-  /** Worst live state first: a crash outranks a version mismatch. */
+  get #latched(): boolean {
+    return this.#crashes.size > 0 || this.#mismatches.size > 0;
+  }
+
+  /**
+   * Worst live state first: a crash outranks a version mismatch. Within one
+   * severity the oldest unrecovered entry wins, keeping the display stable
+   * while other roots come and go.
+   */
   #paintOrRun(): void {
-    if (this.#crash !== undefined) {
-      this.#reporter?.crashed(this.#crash);
-    } else if (this.#mismatch !== undefined) {
-      this.#reporter?.versionMismatch(this.#mismatch);
-    } else {
-      this.#reporter?.running(this.#lastRunningDetail);
+    const [crash] = this.#crashes.values();
+    if (crash !== undefined) {
+      this.#reporter?.crashed(crash);
+      return;
     }
+    const [mismatch] = this.#mismatches.values();
+    if (mismatch !== undefined) {
+      this.#reporter?.versionMismatch(mismatch);
+      return;
+    }
+    this.#reporter?.running(this.#lastRunningDetail);
   }
 
   report(state: StackState): void {
@@ -53,39 +68,35 @@ class StatusHolder implements StatusReporter {
   }
 
   starting(detail?: string): void {
-    if (this.#crash !== undefined || this.#mismatch !== undefined) return;
+    if (this.#latched) return;
     this.#reporter?.starting(detail);
   }
 
   running(detail?: string): void {
     this.#lastRunningDetail = detail;
-    if (this.#crash !== undefined || this.#mismatch !== undefined) return;
+    if (this.#latched) return;
     this.#reporter?.running(detail);
   }
 
-  crashed(detail: string): void {
-    this.#crash = detail;
-    this.#reporter?.crashed(detail);
-  }
-
-  versionMismatch(detail: string): void {
-    this.#mismatch = detail;
-    if (this.#crash === undefined) {
-      this.#reporter?.versionMismatch(detail);
-    }
-  }
-
-  /** A worker process came up: the previous spawn failure is over. */
-  workerSpawned(): void {
-    if (this.#crash === undefined) return;
-    this.#crash = undefined;
+  crashed(detail: string, source = ''): void {
+    this.#crashes.set(source, detail);
     this.#paintOrRun();
   }
 
-  /** A package version check passed: the previous mismatch is resolved. */
-  versionOk(): void {
-    if (this.#mismatch === undefined) return;
-    this.#mismatch = undefined;
+  versionMismatch(detail: string, source = ''): void {
+    this.#mismatches.set(source, detail);
+    this.#paintOrRun();
+  }
+
+  /** A worker process came up: that root's previous spawn failure is over. */
+  workerSpawned(source = ''): void {
+    if (!this.#crashes.delete(source)) return;
+    this.#paintOrRun();
+  }
+
+  /** A package version check passed: that root's previous mismatch is resolved. */
+  versionOk(source = ''): void {
+    if (!this.#mismatches.delete(source)) return;
     this.#paintOrRun();
   }
 }

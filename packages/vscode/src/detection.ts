@@ -49,6 +49,11 @@ export const LOCKFILE_NAMES = [
   'yarn.lock',
 ] as const;
 
+const LOCKFILE_NAME_SET: ReadonlySet<string> = new Set(LOCKFILE_NAMES);
+
+const isLockfile = (uri: vscode.Uri): boolean =>
+  LOCKFILE_NAME_SET.has(uri.path.slice(uri.path.lastIndexOf('/') + 1));
+
 /** Both bins of the `rstack` package point at the same launcher. */
 export const FMT_BIN_NAMES = ['rs', 'rstack'] as const;
 
@@ -224,6 +229,13 @@ const signatureOf = (snapshot: DetectionSnapshot): string =>
 export class DetectionService implements vscode.Disposable {
   #snapshot: DetectionSnapshot = emptySnapshot();
   #signature = '';
+  // A lockfile change means dependencies changed without necessarily moving
+  // any config file or the fmt bin probe, so the discovery signature can come
+  // out identical while every project-resolved package (Rslint binary, Rstest
+  // core, the rstack shim) may now resolve differently. Such a pass must
+  // notify subscribers even when the signature is unchanged, or failed
+  // resolutions are never retried until a window reload.
+  #notifyUnchanged = false;
   #watchers: vscode.Disposable[] = [];
   #debounce: ReturnType<typeof setTimeout> | undefined;
   #running: Promise<DetectionSnapshot> | undefined;
@@ -287,7 +299,9 @@ export class DetectionService implements vscode.Disposable {
     const snapshot = new Snapshot(detections);
     const signature = signatureOf(snapshot);
     this.#snapshot = snapshot;
-    if (signature !== this.#signature) {
+    const notifyUnchanged = this.#notifyUnchanged;
+    this.#notifyUnchanged = false;
+    if (signature !== this.#signature || notifyUnchanged) {
       this.#signature = signature;
       this.log(snapshot);
       if (!this.#disposed) {
@@ -333,7 +347,12 @@ export class DetectionService implements vscode.Disposable {
       if (folder.uri.scheme !== 'file') {
         continue;
       }
-      const onEvent = () => this.schedule();
+      const onEvent = (uri: vscode.Uri) => {
+        if (isLockfile(uri)) {
+          this.#notifyUnchanged = true;
+        }
+        this.schedule();
+      };
       for (const pattern of detectionWatchPatterns(readRstestGlobs(folder))) {
         const watcher = vscode.workspace.createFileSystemWatcher(
           new vscode.RelativePattern(folder, pattern),
