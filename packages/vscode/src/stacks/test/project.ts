@@ -221,6 +221,29 @@ export class WorkspaceManager implements vscode.Disposable {
       },
     );
   }
+  /**
+   * Recreates projects whose one-shot config evaluation failed — dependencies
+   * may have been installed since (observed as a lockfile-driven detection
+   * pass). Only ever called from a detection event, never from a project
+   * callback, so a persistently failing config cannot recreate itself in a
+   * loop; it is simply re-attempted once per detection pass.
+   */
+  public retryFailedProjects() {
+    for (const [key, project] of [...this.projects]) {
+      if (!project.configLoadFailed) continue;
+      project.dispose();
+      this.projects.set(
+        key,
+        this.createProject({
+          sourceUri: project.sourceUri,
+          configFileUri: project.configFileUri,
+          cwd: project.cwd,
+          isBridge: project.isBridge,
+        }),
+      );
+    }
+  }
+
   private handleAddConfigFile(configFileUri: vscode.Uri) {
     const configFilePath = configFileUri.toString();
     if (this.projects.has(configFilePath)) return;
@@ -505,6 +528,10 @@ export class Project implements vscode.Disposable {
   // project is suppressed: it neither watches files nor renders test items, so
   // the same tests are not shown twice.
   suppressed = false;
+  // The one-shot config evaluation in the constructor rejected (typically:
+  // dependencies not installed yet). `retryFailedProjects` recreates such
+  // projects on the next detection pass.
+  configLoadFailed = false;
   // See `ProjectSource`.
   readonly sourceUri: vscode.Uri;
   readonly configFileUri: vscode.Uri;
@@ -546,6 +573,7 @@ export class Project implements vscode.Disposable {
       })
       .catch((error) => {
         if (this.cancellationSource.token.isCancellationRequested) return;
+        this.configLoadFailed = true;
         logger.error('Failed to initialize project config', error);
         // Let the manager settle its tree even when a config fails to load.
         this.onConfigResolved?.();
@@ -611,10 +639,12 @@ export class Project implements vscode.Disposable {
     this.#watch?.dispose();
     this.api.dispose();
     this.cancellationSource.cancel();
-    // This root's failures must not outlive its project (config removed,
-    // folder closed, bridge rebuilt); the master and bridge report keyed by
-    // this same cwd.
-    status.forget(this.cwd);
+    // This project's failures must not outlive it (config removed, folder
+    // closed, bridge rebuilt). The master latches under the source URI —
+    // unique to this project, so a sibling config in the same directory keeps
+    // its own entries. Bridge *resolution* failures latch under the config
+    // directory instead and are reconciled by `syncBridgeProjects`, not here.
+    status.forget(this.sourceUri.toString());
   }
   get collection() {
     return this.testItem?.children || this.parentCollection;

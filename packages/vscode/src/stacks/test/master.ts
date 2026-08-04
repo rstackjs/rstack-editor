@@ -67,6 +67,16 @@ export class RstestApi {
     private project: Project,
   ) {}
 
+  /**
+   * The failure-latch key for this master's status reports. The project's
+   * source URI is unique (the projects map is keyed by it), unlike `cwd`,
+   * which two configs in one directory share — a shared key would let one
+   * project's recovery or disposal clear its sibling's live failure.
+   */
+  private get statusSource(): string {
+    return this.project.sourceUri.toString();
+  }
+
   private expandWorkspaceFolder(value: string): string {
     return value.replaceAll('${workspaceFolder}', this.workspace.uri.fsPath);
   }
@@ -191,12 +201,19 @@ export class RstestApi {
       // The status-aggregation adaptation: the one-shot `showWarningMessage`
       // becomes the shared `version mismatch` status bar state with actual vs
       // required versions. The floor is the same `>= 0.6.0`.
-      if (!reportVersionCheck(status, '@rstest/core', coreVersion, this.cwd)) {
+      if (
+        !reportVersionCheck(
+          status,
+          '@rstest/core',
+          coreVersion,
+          this.statusSource,
+        )
+      ) {
         logger.error(
           `Unsupported @rstest/core version ${coreVersion ?? 'unknown'} resolved from ${this.cwd}`,
         );
       } else {
-        status.versionOk(this.cwd);
+        status.versionOk(this.statusSource);
       }
 
       return nodeExport;
@@ -502,7 +519,7 @@ export class RstestApi {
     });
 
     rstestProcess.on('spawn', () => {
-      status.workerSpawned(this.cwd);
+      status.workerSpawned(this.statusSource);
     });
 
     rstestProcess.on('error', (error) => {
@@ -511,7 +528,10 @@ export class RstestApi {
       // `crashed` state of the shared status bar. The notification is kept because
       // a failed spawn is almost always a wrong `nodeExecutable` the user has
       // to fix, and the status bar alone is easy to miss mid-run.
-      status.crashed(`worker process failed: ${error.message}`, this.cwd);
+      status.crashed(
+        `worker process failed: ${error.message}`,
+        this.statusSource,
+      );
       vscode.window.showErrorMessage(
         `Rstest worker process failed: ${error.message}`,
       );

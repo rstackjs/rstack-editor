@@ -322,6 +322,9 @@ class Rstest implements vscode.Disposable {
       const existing = this.workspaces.get(key);
       if (existing) {
         existing.setRstackConfigFiles(this.rstackConfigFilesOf(folder));
+        // The detection pass may have been lockfile-driven: dependencies that
+        // were missing when a project's config first evaluated may exist now.
+        existing.retryFailedProjects();
       } else {
         this.handleAddWorkspace(folder);
       }

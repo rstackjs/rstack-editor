@@ -15,12 +15,15 @@ class StatusHolder implements StatusReporter {
   #reporter: StatusReporter | undefined;
   // Failure latches. Detection refreshes re-derive `running` from the folder
   // count alone (`reportStatus`), which must not paint over a live failure
-  // that was neither recovered nor retried. Each latch is keyed by the
-  // resolution root that reported it — a multi-project workspace runs one
-  // master (and one bridge resolution) per root, and a recovery observed by
-  // one root must not clear another root's live failure. A latch entry is
-  // cleared by the code path that observes the corresponding recovery: a
-  // worker process that actually spawned, or a version check that passed.
+  // that was neither recovered nor retried. Each latch is keyed by its
+  // reporting site's identity — a master reports under its project's source
+  // URI (unique per project, so sibling configs in one directory stay
+  // independent), a bridge shim resolution under its config directory; the
+  // two namespaces (URI string vs filesystem path) never collide. A recovery
+  // observed under one key must not clear another key's live failure. An
+  // entry is cleared by the code path that observes the corresponding
+  // recovery (a worker that actually spawned, a version check that passed) or
+  // by `forget` when its reporter goes away.
   #crashes = new Map<string, string>();
   #mismatches = new Map<string, string>();
   #lastRunningDetail: string | undefined;
