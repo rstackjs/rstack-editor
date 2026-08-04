@@ -5,6 +5,10 @@ import { type BirpcReturn, createBirpc } from 'birpc';
 import regexpEscape from 'core-js-pure/actual/regexp/escape';
 import vscode from 'vscode';
 import {
+  findPackageJsonUncached,
+  readPackageJson,
+} from '../../shared/packageResolve';
+import {
   readPackageVersion,
   reportVersionCheck,
 } from '../../shared/versionCheck';
@@ -149,9 +153,13 @@ export class RstestApi {
   private resolveFromCwd(
     specifier: string,
     configuredPackagePath?: string,
+    // Default-resolution callers pass the freshly located package directory
+    // so the lookup is keyed by that (version-pinned on pnpm) path instead of
+    // replaying `require.resolve`'s process-lifetime cache for `this.cwd`.
+    fromDir: string = this.cwd,
   ): string | undefined {
     try {
-      return nodeRequire.resolve(specifier, { paths: [this.cwd] });
+      return nodeRequire.resolve(specifier, { paths: [fromDir] });
     } catch (e) {
       if (!isModuleNotFoundError(e, specifier)) throw e;
       if (configuredPackagePath) {
@@ -170,27 +178,52 @@ export class RstestApi {
   private resolveRstestPath(): string {
     try {
       const configured = this.resolveConfiguredPackageJson();
-      const packageJson = configured ?? CORE_PACKAGE_JSON;
-      if (configured) {
-        logger.debug('Using configured rstestPackagePath:', configured);
-      }
-
-      // `dirname` turns either package.json specifier into its package entry.
-      const nodeExport = this.resolveFromCwd(dirname(packageJson), configured);
-      if (!nodeExport) return '';
 
       let corePackageJsonPath: string;
-      try {
-        corePackageJsonPath = nodeRequire.resolve(packageJson, {
-          paths: [this.cwd],
-        });
-      } catch (e) {
-        vscode.window.showErrorMessage(
-          'Failed to resolve @rstest/core/package.json. Please upgrade @rstest/core to the latest version.',
+      let nodeExport: string | undefined;
+      if (configured) {
+        logger.debug('Using configured rstestPackagePath:', configured);
+        // An explicit pin, resolved exactly as before — the setting names one
+        // fixed path, so cache staleness is moot.
+        // `dirname` turns the package.json specifier into its package entry.
+        nodeExport = this.resolveFromCwd(dirname(configured), configured);
+        if (!nodeExport) return '';
+        try {
+          corePackageJsonPath = nodeRequire.resolve(configured, {
+            paths: [this.cwd],
+          });
+        } catch (e) {
+          vscode.window.showErrorMessage(
+            'Failed to resolve @rstest/core/package.json. Please upgrade @rstest/core to the latest version.',
+          );
+          logger.error('Failed to resolve @rstest/core/package.json', e);
+          return '';
+        }
+      } else {
+        // The uncached walk-up runs first (see `findPackageJsonUncached`);
+        // the entry resolution is then anchored at the realpath'd package
+        // directory, so a re-resolution after a dependency change lands on
+        // the retargeted install instead of `require.resolve`'s cached
+        // answer, while the bare specifier keeps the exports map honored.
+        const found = findPackageJsonUncached(
+          dirname(CORE_PACKAGE_JSON),
+          this.cwd,
         );
-        logger.error('Failed to resolve @rstest/core/package.json', e);
-        return '';
+        if (!found) {
+          // The normal state of a repository whose dependencies are not
+          // installed yet: output channel only, never a notification.
+          logger.error(formatCoreNotFoundMessage(this.cwd));
+          return '';
+        }
+        corePackageJsonPath = found;
+        nodeExport = this.resolveFromCwd(
+          dirname(CORE_PACKAGE_JSON),
+          undefined,
+          dirname(corePackageJsonPath),
+        );
+        if (!nodeExport) return '';
       }
+
       const coreVersion = readPackageVersion(corePackageJsonPath);
 
       // Upstream also compared the core version against the extension's own
@@ -228,12 +261,19 @@ export class RstestApi {
   // resolution above.
   private resolveRstestBin(): string | undefined {
     const configured = this.resolveConfiguredPackageJson();
-    const pkgJsonPath = this.resolveFromCwd(
-      configured ?? CORE_PACKAGE_JSON,
-      configured,
-    );
+    let pkgJsonPath: string | undefined;
+    if (configured) {
+      pkgJsonPath = this.resolveFromCwd(configured, configured);
+    } else {
+      // Same uncached lookup as the worker resolution above.
+      pkgJsonPath = findPackageJsonUncached(
+        dirname(CORE_PACKAGE_JSON),
+        this.cwd,
+      );
+      if (!pkgJsonPath) logger.error(formatCoreNotFoundMessage(this.cwd));
+    }
     if (!pkgJsonPath) return undefined;
-    const pkg = nodeRequire(pkgJsonPath) as {
+    const pkg = (readPackageJson(pkgJsonPath) ?? {}) as {
       bin?: string | Record<string, string>;
     };
     const binRel = typeof pkg.bin === 'string' ? pkg.bin : pkg.bin?.rstest;

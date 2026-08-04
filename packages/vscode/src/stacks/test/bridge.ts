@@ -1,12 +1,12 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { findPackageJsonUncached } from '../../shared/packageResolve';
 import {
   checkPackageVersion,
   formatVersionMismatch,
   readPackageVersion,
 } from '../../shared/versionCheck';
 import { logger } from './logger';
-import { nodeRequire } from './nodeRequire';
 import { status } from './status';
 
 /**
@@ -50,8 +50,12 @@ export type RstackShim = {
  *
  * `rstack`'s exports map has no `./rstestConfig`, no `./config` and no wildcard
  * subpath, so the shim is unreachable by bare specifier
- * (`ERR_PACKAGE_PATH_NOT_EXPORTED`). `./package.json` *is* exported, which makes
- * it the resolution anchor; the shim is then addressed as a filesystem path.
+ * (`ERR_PACKAGE_PATH_NOT_EXPORTED`). The package.json is the resolution anchor
+ * instead — located by an uncached `node_modules` walk-up (`require.resolve`
+ * would replay its process-lifetime cache instead of seeing a retargeted
+ * install; see `findPackageJsonUncached`) — and the shim is then addressed as
+ * a filesystem path. The walk-up only ever yields `node_modules` candidates,
+ * which also rules out self-resolving a workspace package named "rstack".
  *
  * Resolution is anchored on the config directory rather than the workspace
  * folder so a monorepo package with its own `rstack` install wins over the root.
@@ -62,25 +66,7 @@ export function resolveRstackShim(
   // be picked up without a reload), so a persistent failure must not re-log.
   { silent = false }: { silent?: boolean } = {},
 ): RstackShim | undefined {
-  let packageJsonPath: string | undefined;
-  try {
-    packageJsonPath = nodeRequire.resolve('rstack/package.json', {
-      paths: [configDir],
-    });
-  } catch {
-    packageJsonPath = undefined;
-  }
-  // The shim lives in the project's installed `rstack` package
-  // (`node_modules/rstack/dist/...`), so anything resolved from
-  // outside a node_modules tree is not it. This also shields against resolvers
-  // that self-resolve the enclosing workspace package named "rstack" (this
-  // extension's own manifest) despite the explicit `paths` override.
-  if (
-    packageJsonPath !== undefined &&
-    !packageJsonPath.includes(`${path.sep}node_modules${path.sep}`)
-  ) {
-    packageJsonPath = undefined;
-  }
+  const packageJsonPath = findPackageJsonUncached('rstack', configDir);
   if (packageJsonPath === undefined) {
     if (!silent) {
       logger.warn(

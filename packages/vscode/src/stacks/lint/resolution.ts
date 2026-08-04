@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { Uri, workspace, type WorkspaceFolder } from 'vscode';
+import { findPackageJsonUncached } from '../../shared/packageResolve';
 import type { Logger } from './logger';
 import {
   fileExists,
@@ -124,19 +125,21 @@ const locateCore = async (
   logger: Logger,
 ): Promise<CoreLocation> => {
   const searchRoot = folder.uri.fsPath;
-  try {
-    const packageJsonPath = nodeRequire.resolve('@rslint/core/package.json', {
-      paths: [searchRoot],
-    });
+  // Uncached on purpose: a failed root is retried after dependency changes
+  // (the lockfile-driven detection pass), and `require.resolve` would replay
+  // its process-lifetime cache instead of seeing a retargeted install. Every
+  // cooperating piece resolves from the returned path afterwards, so the
+  // whole root follows the fresh location (the one-resolution-root rule).
+  const packageJsonPath = findPackageJsonUncached('@rslint/core', searchRoot);
+  if (packageJsonPath !== undefined) {
     logger.debug(`Found @rslint/core in node_modules: ${packageJsonPath}`);
     return {
       kind: 'node-modules',
       packageJsonPath,
       coreDir: path.dirname(packageJsonPath),
     };
-  } catch {
-    logger.debug('No @rslint/core in node_modules, trying Yarn PnP');
   }
+  logger.debug('No @rslint/core in node_modules, trying Yarn PnP');
 
   const pnpApi = await loadPnpApi(folder);
   if (pnpApi) {
