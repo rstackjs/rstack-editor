@@ -195,6 +195,8 @@ export class RstestApi {
         logger.error(
           `Unsupported @rstest/core version ${coreVersion ?? 'unknown'} resolved from ${this.cwd}`,
         );
+      } else {
+        status.versionOk();
       }
 
       return nodeExport;
@@ -497,6 +499,10 @@ export class RstestApi {
       root: this.cwd,
       rstestPath,
       configFilePath: this.configFilePath,
+    });
+
+    rstestProcess.on('spawn', () => {
+      status.workerSpawned();
     });
 
     rstestProcess.on('error', (error) => {

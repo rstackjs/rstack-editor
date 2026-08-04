@@ -3,6 +3,7 @@ import type { TestInfo } from '@rstest/core';
 import picomatch from 'picomatch';
 import { glob } from 'tinyglobby';
 import vscode from 'vscode';
+import { RSTACK_CONFIG_NAMES } from '../../detection';
 import { resolveRstackShim } from './bridge';
 import { watchConfigValue } from './config';
 import { logger } from './logger';
@@ -186,6 +187,31 @@ export class WorkspaceManager implements vscode.Disposable {
             this.refreshAllProject();
           });
         }
+
+        // Content edits to a `rstack.config.*` change neither the detection
+        // snapshot (it records paths only) nor the shim file Rstest actually
+        // loads, so without this watcher nothing would re-evaluate
+        // `define.test()` for a bridged project until a reload. Rebuild the
+        // project on change; create/delete arrive through the shell's
+        // detection events (`setRstackConfigFiles`) instead.
+        const rstackWatcher = vscode.workspace.createFileSystemWatcher(
+          new vscode.RelativePattern(
+            this.workspaceFolder,
+            `**/{${RSTACK_CONFIG_NAMES.join(',')}}`,
+          ),
+          true,
+          false,
+          true,
+        );
+        token.onCancellationRequested(() => rstackWatcher.dispose());
+        rstackWatcher.onDidChange((file) => {
+          const key = file.toString();
+          if (!this.projects.get(key)?.isBridge) return;
+          this.handleRemoveConfigFile(file);
+          // `refreshAllProject` → `syncBridgeProjects` re-resolves the shim
+          // and recreates the project with a fresh config evaluation.
+          this.refreshAllProject();
+        });
       },
     );
   }
@@ -223,47 +249,51 @@ export class WorkspaceManager implements vscode.Disposable {
    * per `rstack.config.*` whose config file is rstack's shipped Rstest shim and
    * whose cwd is the config's own directory.
    *
-   * A native `rstest.config.*` always wins: rstack's own `rs test` would load
-   * the shim, which reads `define.test()`, but a project that ships both has
-   * deliberately opted into the tool-native config, and running the same tests
-   * through two projects would duplicate the whole tree.
+   * A native `rstest.config.*` wins **at its own root**: rstack's own
+   * `rs test` would load the shim, which reads `define.test()`, but a
+   * directory that ships both configs has deliberately opted into the
+   * tool-native one, and running the same tests through two projects would
+   * duplicate the tree. A native config elsewhere in the workspace folder
+   * (e.g. a sibling monorepo package) says nothing about this root and must
+   * not suppress its bridge.
    */
   private syncBridgeProjects() {
     if (!this.didScanConfigFiles) return;
 
-    const hasNativeProject = [...this.projects.values()].some(
-      (project) => !project.isBridge,
+    const nativeProjectDirs = new Set(
+      [...this.projects.values()]
+        .filter((project) => !project.isBridge)
+        .map((project) => path.dirname(project.sourceUri.fsPath)),
     );
 
     const wanted = new Map<string, ProjectSource>();
-    if (!hasNativeProject) {
-      for (const rstackConfig of this.rstackConfigFiles) {
-        const key = rstackConfig.toString();
-        // Keep an existing bridged project as-is; re-resolving the shim on
-        // every tree refresh would churn its worker for nothing.
-        if (this.projects.get(key)?.isBridge) {
-          wanted.set(key, { sourceUri: rstackConfig });
-          continue;
-        }
-        const cwd = path.dirname(rstackConfig.fsPath);
-        const shim = resolveRstackShim(cwd, {
-          silent: this.reportedShimFailures.has(cwd),
-        });
-        if (!shim) {
-          this.reportedShimFailures.add(cwd);
-          continue;
-        }
-        this.reportedShimFailures.delete(cwd);
-        wanted.set(key, {
-          sourceUri: rstackConfig,
-          configFileUri: vscode.Uri.file(shim.configFilePath),
-          cwd,
-          isBridge: true,
-        });
-        logger.info(
-          `Driving Rstest from ${rstackConfig.fsPath} through the rstack config shim`,
-        );
+    for (const rstackConfig of this.rstackConfigFiles) {
+      const key = rstackConfig.toString();
+      const cwd = path.dirname(rstackConfig.fsPath);
+      if (nativeProjectDirs.has(cwd)) continue;
+      // Keep an existing bridged project as-is; re-resolving the shim on
+      // every tree refresh would churn its worker for nothing.
+      if (this.projects.get(key)?.isBridge) {
+        wanted.set(key, { sourceUri: rstackConfig });
+        continue;
       }
+      const shim = resolveRstackShim(cwd, {
+        silent: this.reportedShimFailures.has(cwd),
+      });
+      if (!shim) {
+        this.reportedShimFailures.add(cwd);
+        continue;
+      }
+      this.reportedShimFailures.delete(cwd);
+      wanted.set(key, {
+        sourceUri: rstackConfig,
+        configFileUri: vscode.Uri.file(shim.configFilePath),
+        cwd,
+        isBridge: true,
+      });
+      logger.info(
+        `Driving Rstest from ${rstackConfig.fsPath} through the rstack config shim`,
+      );
     }
 
     for (const [key, project] of this.projects) {

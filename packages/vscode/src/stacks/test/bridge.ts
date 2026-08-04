@@ -126,5 +126,6 @@ export function resolveRstackShim(
     configFilePath,
     version,
   });
+  status.versionOk();
   return { configFilePath, version };
 }

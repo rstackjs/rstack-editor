@@ -83,11 +83,12 @@ describe('LEGACY_MAPPINGS', () => {
     );
   });
 
-  it('marks the window-scoped Rstest settings as such', () => {
+  it('marks the window-scoped settings as such', () => {
     const windowScoped = LEGACY_MAPPINGS.filter(
       (mapping) => mapping.targetScope === 'window',
     ).map((mapping) => mapping.from);
     expect(windowScoped).toEqual([
+      'rslint.enable',
       'rstest.configFileGlobPattern',
       'rstest.testCaseCollectMethod',
       'rstest.applyDiagnostic',
@@ -207,7 +208,7 @@ describe('planMigration — rslint.binPath', () => {
 describe('planMigration — layers', () => {
   it('groups writes per layer and orders them user, workspace, folder', () => {
     const plan = planMigration([
-      folderReading('file:///w/app', 'app', 'rslint.enable', false),
+      folderReading('file:///w/app', 'app', 'rslint.customBinPath', '/x/bin'),
       reading({
         scopeId: 'workspace',
         layer: 'workspace',
@@ -226,16 +227,16 @@ describe('planMigration — layers', () => {
 
   it('keeps same-named folders of a multi-root workspace apart', () => {
     const plan = planMigration([
-      folderReading('file:///a/app', 'app', 'rslint.enable', true),
-      folderReading('file:///b/app', 'app', 'rslint.enable', false),
+      folderReading('file:///a/app', 'app', 'rslint.customBinPath', '/a/bin'),
+      folderReading('file:///b/app', 'app', 'rslint.customBinPath', '/b/bin'),
     ]);
     expect(plan.scopes.map((scope) => scope.scopeId)).toEqual([
       'file:///a/app',
       'file:///b/app',
     ]);
     expect(plan.scopes.map((scope) => scope.writes[0]?.value)).toEqual([
-      true,
-      false,
+      '/a/bin',
+      '/b/bin',
     ]);
   });
 
@@ -345,14 +346,16 @@ describe('formatPreview', () => {
     const preview = formatPreview(
       planMigration([
         reading({ key: 'rslint.binPath', value: 'built-in' }),
-        folderReading('file:///w/app', 'app', 'rslint.enable', false),
+        folderReading('file:///w/app', 'app', 'rslint.customBinPath', '/x'),
       ]),
     );
     expect(preview).toContain('User Settings');
     expect(preview).toContain('rslint.binPath -> rstack.rslint.binPath');
     expect(preview).toContain('"built-in" -> "local"');
     expect(preview).toContain('Folder Settings — app');
-    expect(preview).toContain('rslint.enable -> rstack.rslint.enable');
+    expect(preview).toContain(
+      'rslint.customBinPath -> rstack.rslint.customBinPath',
+    );
   });
 
   it('lists what was left untouched and why', () => {

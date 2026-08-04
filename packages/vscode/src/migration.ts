@@ -119,8 +119,11 @@ const RSTEST_KEYS: readonly (readonly [string, 'resource' | 'window'])[] = [
 export const LEGACY_MAPPINGS: readonly LegacyMapping[] = [
   {
     from: 'rslint.enable',
+    // The manifest declares `rstack.rslint.enable` as window-scoped (the
+    // shell reads it without a resource URI), so a folder-level legacy value
+    // cannot be preserved and must be skipped as `not-folder-scoped`.
     to: 'rstack.rslint.enable',
-    targetScope: 'resource',
+    targetScope: 'window',
   },
   {
     from: 'rslint.binPath',

@@ -13,6 +13,14 @@ import type { StackState, StatusReporter } from '../../types';
  */
 class StatusHolder implements StatusReporter {
   #reporter: StatusReporter | undefined;
+  // Failure latches. Detection refreshes re-derive `running` from the folder
+  // count alone (`reportStatus`), which must not paint over a live failure
+  // that was neither recovered nor retried. Each latch is cleared by the
+  // code path that observes the corresponding recovery: a worker process
+  // that actually spawned, or a version check that passed.
+  #crash: string | undefined;
+  #mismatch: string | undefined;
+  #lastRunningDetail: string | undefined;
 
   get stack() {
     return this.#reporter?.stack ?? ('rstest' as const);
@@ -20,10 +28,24 @@ class StatusHolder implements StatusReporter {
 
   public bind(reporter: StatusReporter) {
     this.#reporter = reporter;
+    this.#crash = undefined;
+    this.#mismatch = undefined;
+    this.#lastRunningDetail = undefined;
   }
 
   public unbind() {
     this.#reporter = undefined;
+  }
+
+  /** Worst live state first: a crash outranks a version mismatch. */
+  #paintOrRun(): void {
+    if (this.#crash !== undefined) {
+      this.#reporter?.crashed(this.#crash);
+    } else if (this.#mismatch !== undefined) {
+      this.#reporter?.versionMismatch(this.#mismatch);
+    } else {
+      this.#reporter?.running(this.#lastRunningDetail);
+    }
   }
 
   report(state: StackState): void {
@@ -31,19 +53,40 @@ class StatusHolder implements StatusReporter {
   }
 
   starting(detail?: string): void {
+    if (this.#crash !== undefined || this.#mismatch !== undefined) return;
     this.#reporter?.starting(detail);
   }
 
   running(detail?: string): void {
+    this.#lastRunningDetail = detail;
+    if (this.#crash !== undefined || this.#mismatch !== undefined) return;
     this.#reporter?.running(detail);
   }
 
   crashed(detail: string): void {
+    this.#crash = detail;
     this.#reporter?.crashed(detail);
   }
 
   versionMismatch(detail: string): void {
-    this.#reporter?.versionMismatch(detail);
+    this.#mismatch = detail;
+    if (this.#crash === undefined) {
+      this.#reporter?.versionMismatch(detail);
+    }
+  }
+
+  /** A worker process came up: the previous spawn failure is over. */
+  workerSpawned(): void {
+    if (this.#crash === undefined) return;
+    this.#crash = undefined;
+    this.#paintOrRun();
+  }
+
+  /** A package version check passed: the previous mismatch is resolved. */
+  versionOk(): void {
+    if (this.#mismatch === undefined) return;
+    this.#mismatch = undefined;
+    this.#paintOrRun();
   }
 }
 
