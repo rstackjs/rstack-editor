@@ -4,7 +4,10 @@ import path, { dirname } from 'node:path';
 import { type BirpcReturn, createBirpc } from 'birpc';
 import regexpEscape from 'core-js-pure/actual/regexp/escape';
 import vscode from 'vscode';
-import { reportVersionCheck } from '../../shared/versionCheck';
+import {
+  readPackageVersion,
+  reportVersionCheck,
+} from '../../shared/versionCheck';
 import { CONFIG_SECTION, getConfigValue } from './config';
 import {
   formatConfiguredCoreNotFoundMessage,
@@ -188,10 +191,7 @@ export class RstestApi {
         logger.error('Failed to resolve @rstest/core/package.json', e);
         return '';
       }
-      const corePackageJson = nodeRequire(corePackageJsonPath) as {
-        version?: string;
-      };
-      const coreVersion = corePackageJson.version;
+      const coreVersion = readPackageVersion(corePackageJsonPath);
 
       // Upstream also compared the core version against the extension's own
       // version, because they were released from one monorepo in lockstep. This

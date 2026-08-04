@@ -27,15 +27,6 @@ const STATE_ICONS: Readonly<Record<StackState['kind'], string>> = {
   'version-mismatch': '$(warning)',
 };
 
-/**
- * The restart command handler only exists while the stack's controller is
- * registered. A detected-but-disabled stack (enable-setting off, Restricted
- * Mode) never registered it, so offering the action would die with a
- * command-not-found error.
- */
-const canRestart = (state: StackState): boolean =>
-  state.kind !== 'not-detected' && state.kind !== 'disabled';
-
 const stateText = (state: StackState): string => {
   switch (state.kind) {
     case 'not-detected':
@@ -63,6 +54,12 @@ export class StatusBar implements vscode.Disposable {
   readonly #states = new Map<StackId, StackState>(
     STACK_IDS.map((stack) => [stack, { kind: 'not-detected' }]),
   );
+  // Stacks whose controller is currently registered. Restart availability
+  // tracks this, not the state kind: a state cannot distinguish "crashed
+  // while running" (controller alive, its restart command exists) from
+  // "failed to register" (controller disposed, the command with it), and a
+  // disabled stack never registered the command at all.
+  readonly #active = new Set<StackId>();
 
   constructor() {
     this.#item = vscode.window.createStatusBarItem(
@@ -97,6 +94,20 @@ export class StatusBar implements vscode.Disposable {
     return this.#states.get(stack) ?? { kind: 'not-detected' };
   }
 
+  /** The shell reports controller registration and disposal here. */
+  setActive(stack: StackId, active: boolean): void {
+    if (active) {
+      this.#active.add(stack);
+    } else {
+      this.#active.delete(stack);
+    }
+    this.render();
+  }
+
+  #canRestart(stack: StackId): boolean {
+    return RESTART_COMMANDS[stack] !== undefined && this.#active.has(stack);
+  }
+
   /** The QuickPick behind the status bar item. */
   async showMenu(): Promise<void> {
     type Item = vscode.QuickPickItem & { readonly command?: string };
@@ -110,7 +121,7 @@ export class StatusBar implements vscode.Disposable {
         command: OUTPUT_COMMANDS[stack],
       });
       const restart = RESTART_COMMANDS[stack];
-      if (restart && canRestart(state)) {
+      if (restart && this.#canRestart(stack)) {
         items.push({
           label: `$(refresh) Restart ${STACK_LABELS[stack]}`,
           command: restart,
@@ -181,7 +192,7 @@ export class StatusBar implements vscode.Disposable {
       const state = this.stateOf(stack);
       const links = [`[Output](command:${OUTPUT_COMMANDS[stack]})`];
       const restart = RESTART_COMMANDS[stack];
-      if (restart && canRestart(state)) {
+      if (restart && this.#canRestart(stack)) {
         links.push(`[Restart](command:${restart})`);
       }
       tooltip.appendMarkdown(

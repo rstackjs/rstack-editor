@@ -200,6 +200,7 @@ class ExtensionShell {
         this.#controllers.delete(stack);
         await this.disposeController(stack, existing);
         await this.setContextKey(`rstack.${stack}.active`, false);
+        this.#statusBar.setActive(stack, false);
       }
       this.#statusBar.setState(stack, gate.state);
       return;
@@ -226,11 +227,13 @@ class ExtensionShell {
         this.publishStackExports(stack, stackExports);
       }
       await this.setContextKey(`rstack.${stack}.active`, true);
+      this.#statusBar.setActive(stack, true);
       this.#channels.shell.info(`${STACK_LABELS[stack]} registered`);
     } catch (error) {
       this.#controllers.delete(stack);
       await this.disposeController(stack, controller);
       await this.setContextKey(`rstack.${stack}.active`, false);
+      this.#statusBar.setActive(stack, false);
       const message = errorMessage(error);
       this.#channels.shell.error(
         `${STACK_LABELS[stack]} failed to register: ${message}`,

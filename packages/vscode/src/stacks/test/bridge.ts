@@ -3,6 +3,7 @@ import path from 'node:path';
 import {
   checkPackageVersion,
   formatVersionMismatch,
+  readPackageVersion,
 } from '../../shared/versionCheck';
 import { logger } from './logger';
 import { nodeRequire } from './nodeRequire';
@@ -43,8 +44,6 @@ export type RstackShim = {
   /** The installed `rstack` version, when it could be read. */
   readonly version?: string;
 };
-
-type RstackPackageJson = { version?: string };
 
 /**
  * Resolves the rstack shim for a directory containing an `rstack.config.*`.
@@ -104,13 +103,10 @@ export function resolveRstackShim(
     return undefined;
   }
 
-  let version: string | undefined;
-  try {
-    version = (nodeRequire(packageJsonPath) as RstackPackageJson).version;
-  } catch {
-    // A readable `dist/rstestConfig.js` is what the bridge actually needs; an
-    // unreadable package.json only costs the version check.
-  }
+  // An uncached filesystem read: `nodeRequire` would pin the version seen by
+  // the first resolution for the lifetime of the extension host, defeating
+  // the re-resolution that every `syncBridgeProjects` pass performs.
+  const version = readPackageVersion(packageJsonPath);
 
   const result = checkPackageVersion('rstack', version);
   if (result.kind === 'mismatch') {

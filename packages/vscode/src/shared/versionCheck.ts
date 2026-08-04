@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import semver from 'semver';
 
 /**
@@ -29,6 +30,28 @@ export type VersionCheckResult =
       readonly version: string;
       readonly required: string;
     };
+
+/**
+ * Reads a package.json `version` with a plain filesystem read. `require`-ing
+ * the file would cache the parsed module by path, so an in-place upgrade
+ * (npm and yarn reuse the same node_modules path; pnpm's store path changes)
+ * would keep reporting the pre-upgrade version until the extension host
+ * reloads. Returns `undefined` when unreadable — version checks treat an
+ * unknown version as soft-pass, so an unreadable package.json only costs the
+ * check, never the feature.
+ */
+export const readPackageVersion = (
+  packageJsonPath: string,
+): string | undefined => {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')) as {
+      version?: unknown;
+    };
+    return typeof parsed.version === 'string' ? parsed.version : undefined;
+  } catch {
+    return undefined;
+  }
+};
 
 export const checkPackageVersion = (
   packageName: SupportedPackage,
