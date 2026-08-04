@@ -1,0 +1,17 @@
+packages:
+  - packages/*
+
+# Build-script policy: vsce-sign fetches its signing binary at install time and
+# is needed by `vsce publish`; keytar (credential storage) and core-js-pure
+# (funding banner) are not needed in this repo's workflows.
+allowBuilds:
+  '@vscode/vsce-sign': true
+  core-js-pure: false
+  keytar: false
+
+# The whole point of this repo is tracking the freshest Rstack toolchain
+# releases, so exempt them from the minimum-release-age supply-chain policy.
+minimumReleaseAgeExclude:
+  - rstack
+  - '@rslint/core'
+  - '@rstest/core'

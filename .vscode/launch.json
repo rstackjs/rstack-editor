@@ -1,0 +1,42 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // F5: pick a fixture from the dropdown, then an Extension Development
+      // Host opens on it. Fixtures are real projects on published
+      // `@rslint/core` / `@rstest/core` / `rstack` — run
+      // `pnpm test:e2e:fixtures` once first to install their dependencies.
+      "name": "Run Extension (playground)",
+      "type": "extensionHost",
+      "request": "launch",
+      "runtimeExecutable": "${execPath}",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/packages/vscode",
+        "--disable-extensions",
+        "${workspaceFolder}/packages/vscode/${input:playgroundTarget}"
+      ],
+      "outFiles": ["${workspaceFolder}/packages/vscode/dist/**/*.js"],
+      "preLaunchTask": "extension watch",
+      // Off by default: attaching to every spawned worker slows runs down and
+      // child-process sourcemaps are unreliable (same setting upstream).
+      "autoAttachChildProcesses": false
+    }
+  ],
+  "inputs": [
+    {
+      "id": "playgroundTarget",
+      "type": "pickString",
+      "description": "Which fixture should the dev host open?",
+      "default": "tests/e2e/fixtures/e2e.code-workspace",
+      "options": [
+        {
+          "label": "all three fixtures (multi-root)",
+          "value": "tests/e2e/fixtures/e2e.code-workspace"
+        },
+        { "label": "rslint fixture", "value": "tests/e2e/fixtures/rslint" },
+        { "label": "rstest fixture", "value": "tests/e2e/fixtures/rstest" },
+        { "label": "rstack fixture", "value": "tests/e2e/fixtures/rstack" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      // Background watch build the F5 launch depends on. SOURCEMAP=true
+      // (`watch:local`) so breakpoints in src/ bind inside the dev host.
+      "label": "extension watch",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["-C", "packages/vscode", "watch:local"],
+      "isBackground": true,
+      "group": "build",
+      "problemMatcher": {
+        "owner": "rslib",
+        "pattern": {
+          // rslib prints rspack errors with file:line:column on their own
+          // lines; a permissive pattern keeps the matcher valid without
+          // parsing them — build failures still show in the terminal.
+          "regexp": "^\\s*(ERROR|error)\\s+(.*)$",
+          "severity": 1,
+          "message": 2
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "build started\\.\\.\\.",
+          "endsPattern": "built in"
+        }
+      },
+      "presentation": {
+        "reveal": "never",
+        "panel": "dedicated"
+      }
+    }
+  ]
+}

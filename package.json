@@ -1,0 +1,24 @@
+{
+  "name": "rstack-editor",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r run build",
+    "fmt": "rs fmt",
+    "fmt:check": "rs fmt --check",
+    "lint": "rs lint --type-check",
+    "package": "pnpm -r run package",
+    "prepare": "rs setup",
+    "test": "pnpm -r run test",
+    "test:e2e": "pnpm -r run test:e2e",
+    "test:unit": "pnpm -r run test:unit"
+  },
+  "devDependencies": {
+    "rstack": "^0.3.2"
+  },
+  "packageManager": "pnpm@11.20.0",
+  "engines": {
+    "node": ">=22.12.0",
+    "pnpm": ">=11.0.0"
+  }
+}

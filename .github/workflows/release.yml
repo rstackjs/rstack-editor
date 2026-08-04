@@ -1,0 +1,102 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run: package and upload the VSIX artifacts only, skip publishing'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  release_vscode_extension:
+    name: Release VS Code Extension (${{ matrix.vsce-target }})
+    if: github.repository == 'rstackjs/rstack-editor' && github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.runner }}
+    environment: vscode-marketplace
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            vsce-target: linux-x64
+            arch: x64
+          - runner: ubuntu-22.04
+            vsce-target: linux-arm64
+            arch: arm64
+          - runner: macos-15
+            vsce-target: darwin-x64
+            arch: x64
+          - runner: macos-15
+            vsce-target: darwin-arm64
+            arch: arm64
+          - runner: windows-2022
+            vsce-target: win32-x64
+            arch: x64
+          - runner: windows-latest
+            vsce-target: win32-arm64
+            arch: arm64
+    defaults:
+      run:
+        shell: bash
+    env:
+      # rslib.config.mts keys the staged `@yuku-parser/binding-*` napi payload
+      # off this variable (Linux targets get a `-gnu` suffix appended there).
+      VSCE_TARGET: ${{ matrix.vsce-target }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      # `supportedArchitectures` must be set BEFORE `pnpm install` so pnpm also
+      # fetches the cross-target optional `@yuku-parser/binding-*` package (the
+      # Linux runners' current libc is glibc, matching the `-gnu` bindings the
+      # linux-* VSIX targets need).
+      - name: Install Dependencies
+        run: |
+          pnpm config set --location=project --json supportedArchitectures '{"cpu":["current","${{ matrix.arch }}"]}'
+          pnpm install
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Package VS Code Extension
+        working-directory: packages/vscode
+        run: pnpm exec vsce package --target ${{ matrix.vsce-target }} -o rstack-${{ matrix.vsce-target }}.vsix
+
+      - name: Upload VSIX Artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: rstack-${{ matrix.vsce-target }}
+          path: packages/vscode/rstack-${{ matrix.vsce-target }}.vsix
+          if-no-files-found: error
+
+      - name: Publish VS Code Extension
+        if: ${{ !inputs.dry_run }}
+        working-directory: packages/vscode
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: pnpm exec vsce publish --target ${{ matrix.vsce-target }} --skip-duplicate
+
+      - name: Publish OVSX Extension
+        if: ${{ !inputs.dry_run }}
+        working-directory: packages/vscode
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: pnpm exec ovsx publish --target ${{ matrix.vsce-target }} --skip-duplicate

@@ -1,0 +1,6 @@
+{
+  // Rslint powers `pnpm lint` in this repo; the extension surfaces the same
+  // diagnostics in the editor. To be replaced by `rstack.rstack` (this very
+  // extension) once it is published.
+  "recommendations": ["rstack.rslint"]
+}

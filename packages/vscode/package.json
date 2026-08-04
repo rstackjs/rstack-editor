@@ -1,0 +1,467 @@
+{
+  "name": "rstack",
+  "displayName": "Rstack",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Editor support for the Rstack toolchain: Rslint, Rstest and rs fmt",
+  "categories": [
+    "Linters",
+    "Testing",
+    "Formatters"
+  ],
+  "keywords": [
+    "rstack",
+    "rslint",
+    "rstest",
+    "rsfmt",
+    "typescript"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rstackjs/rstack-editor.git"
+  },
+  "license": "MIT",
+  "publisher": "rstack",
+  "main": "./dist/extension.js",
+  "scripts": {
+    "build": "rslib build",
+    "build:local": "cross-env SOURCEMAP=true rslib build",
+    "package": "pnpm run build && vsce package",
+    "package:targets": "node scripts/packageTargets.mjs",
+    "test": "pnpm run test:unit && pnpm run test:e2e",
+    "test:e2e": "pnpm run test:e2e:fixtures && pnpm run test:e2e:smoke && pnpm run test:e2e:vscode && pnpm run test:e2e:rstest:run && pnpm run test:e2e:lint:run",
+    "test:e2e:fixtures": "node ./tests/e2e/setupFixtures.mjs",
+    "test:e2e:lint": "pnpm run test:e2e:fixtures lint && pnpm run test:e2e:lint:run",
+    "test:e2e:lint:run": "tsc -p tsconfig.e2e.json && node ./tests-dist/tests/e2e/lint/runTest.js",
+    "test:e2e:rstest": "pnpm run test:e2e:fixtures rstest-workspace-1 rstest-workspace-2 && pnpm run test:e2e:rstest:run",
+    "test:e2e:rstest:run": "tsc -p tsconfig.e2e.json && node ./tests-dist/tests/e2e/rstest/runTest.js",
+    "test:e2e:smoke": "node ./tests/e2e/smoke/rslintPluginHost.mjs",
+    "test:e2e:vscode": "tsc -p tsconfig.e2e.json && node ./tests-dist/tests/e2e/runTest.js",
+    "test:unit": "rstest",
+    "watch": "rslib build --watch",
+    "watch:local": "cross-env SOURCEMAP=true rslib build --watch"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "rstack.showMenu",
+        "title": "Show Menu",
+        "category": "Rstack"
+      },
+      {
+        "command": "rstack.showOutput",
+        "title": "Show Extension Log",
+        "category": "Rstack"
+      },
+      {
+        "command": "rstack.migrateSettings",
+        "title": "Migrate Rslint/Rstest Settings",
+        "category": "Rstack"
+      },
+      {
+        "command": "rstack.rslint.output.focus",
+        "title": "Show Rslint Log",
+        "category": "Rstack"
+      },
+      {
+        "command": "rstack.rslint.restart",
+        "title": "Restart Rslint Language Server",
+        "category": "Rstack",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "rstack.rstest.output.focus",
+        "title": "Show Rstest Log",
+        "category": "Rstack"
+      },
+      {
+        "command": "rstack.rstest.updateSnapshot",
+        "title": "Update Snapshot",
+        "category": "Testing",
+        "icon": "$(merge)"
+      },
+      {
+        "command": "rstack.rstest.revealInTestExplorer",
+        "title": "Reveal in Test Explorer",
+        "category": "Rstack"
+      },
+      {
+        "command": "rstack.rstest.copyErrorOutput",
+        "title": "Copy Error Output",
+        "category": "Rstack",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "rstack.rstest.copyTestItemErrors",
+        "title": "Copy Test Errors",
+        "category": "Rstack",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "rstack.rstest.runInTerminal",
+        "title": "Run in Terminal",
+        "category": "Rstack",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "rstack.fmt.output.focus",
+        "title": "Show rs fmt Log",
+        "category": "Rstack"
+      }
+    ],
+    "configuration": [
+      {
+        "type": "object",
+        "title": "Rstack",
+        "properties": {
+          "rstack.enable": {
+            "order": 0,
+            "type": "boolean",
+            "default": true,
+            "scope": "window",
+            "markdownDescription": "Master switch for the Rstack extension. When disabled, no stack is registered — the status bar item stays visible so the extension can still be told apart from a broken install."
+          }
+        }
+      },
+      {
+        "type": "object",
+        "title": "Rstack › Rslint",
+        "properties": {
+          "rstack.rslint.enable": {
+            "order": 0,
+            "type": "boolean",
+            "default": true,
+            "scope": "window",
+            "markdownDescription": "Enable the Rslint language server for detected workspace folders. Requires `#rstack.enable#`. This is a window-level kill switch; which folders run Rslint is decided by detection."
+          },
+          "rstack.rslint.binPath": {
+            "order": 1,
+            "type": "string",
+            "enum": [
+              "local",
+              "custom"
+            ],
+            "default": "local",
+            "scope": "resource",
+            "markdownEnumDescriptions": [
+              "Resolve the Rslint binary from the workspace `node_modules` (Yarn PnP is supported). This extension ships no binary.",
+              "Use the binary at `#rstack.rslint.customBinPath#`, e.g. a global installation or a specific version of Rslint."
+            ],
+            "description": "How to locate the Rslint executable binary"
+          },
+          "rstack.rslint.customBinPath": {
+            "order": 2,
+            "type": "string",
+            "scope": "resource",
+            "markdownDescription": "Custom path to the Rslint executable. Only used when `#rstack.rslint.binPath#` is set to `custom`. Requires reloading VS Code to take effect."
+          },
+          "rstack.rslint.trace.server": {
+            "order": 3,
+            "type": "string",
+            "enum": [
+              "off",
+              "messages",
+              "verbose"
+            ],
+            "default": "off",
+            "scope": "resource",
+            "description": "Traces the communication between VS Code and the Rslint language server"
+          }
+        }
+      },
+      {
+        "type": "object",
+        "title": "Rstack › Rstest",
+        "properties": {
+          "rstack.rstest.enable": {
+            "order": 0,
+            "type": "boolean",
+            "default": true,
+            "scope": "window",
+            "markdownDescription": "Enable the Rstest test explorer for detected workspace folders. Requires `#rstack.enable#`. This is a window-level kill switch; which folders run Rstest is decided by detection."
+          },
+          "rstack.rstest.rstestPackagePath": {
+            "order": 1,
+            "type": "string",
+            "scope": "resource",
+            "markdownDescription": "The path to a `package.json` file of an Rstest installation (usually inside `node_modules`) in case the extension cannot find it. It will be used to resolve Rstest API paths. This should be used as a last resort fix. Supports the `${workspaceFolder}` placeholder."
+          },
+          "rstack.rstest.configFileGlobPattern": {
+            "order": 2,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "**/rstest.config.{mjs,ts,js,cjs,mts,cts}"
+            ],
+            "description": "Glob patterns used to discover Rstest config files. Must be an array of strings."
+          },
+          "rstack.rstest.testCaseCollectMethod": {
+            "order": 3,
+            "type": "string",
+            "default": "ast",
+            "enum": [
+              "ast",
+              "runtime"
+            ],
+            "enumItemLabels": [
+              "Static AST Analyze",
+              "Run Test File"
+            ],
+            "enumDescriptions": [
+              "Fast, only supports basic test cases.",
+              "Slow, supports all test cases, including dynamic test generation methods (each/for/extend)."
+            ]
+          },
+          "rstack.rstest.applyDiagnostic": {
+            "order": 4,
+            "type": "boolean",
+            "default": true,
+            "description": "Show diagnostics in the editor and Problems panel for failed tests."
+          },
+          "rstack.rstest.nodeExecutable": {
+            "order": 5,
+            "type": "string",
+            "scope": "resource",
+            "markdownDescription": "Overrides the `node` binary used to spawn the Rstest test worker process. Provide an absolute path to a Node.js executable (for example, a version-manager or custom build). When empty, the `node` binary on `PATH` is used. Supports the `${workspaceFolder}` placeholder."
+          },
+          "rstack.rstest.nodeExecArgs": {
+            "order": 6,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "scope": "resource",
+            "description": "Extra arguments passed to the Node executable when spawning the test worker (e.g. --experimental-vm-modules). Must be an array of strings."
+          },
+          "rstack.rstest.nodeEnv": {
+            "order": 7,
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": null,
+            "scope": "resource",
+            "markdownDescription": "Environment variables passed to the test worker process, in addition to `process.env`."
+          },
+          "rstack.rstest.debugNodeEnv": {
+            "order": 8,
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": null,
+            "scope": "resource",
+            "markdownDescription": "Environment variables passed to the test worker process when debugging, in addition to `process.env` and `#rstack.rstest.nodeEnv#`."
+          },
+          "rstack.rstest.debugExclude": {
+            "order": 9,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "<node_internals>/**"
+            ],
+            "scope": "resource",
+            "markdownDescription": "Glob patterns for files to skip while debugging tests (maps to the debug session's `skipFiles`)."
+          },
+          "rstack.rstest.debugOutFiles": {
+            "order": 10,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "scope": "resource",
+            "markdownDescription": "When source maps are enabled, glob patterns locating the generated JavaScript files (maps to the debug session's `outFiles`)."
+          },
+          "rstack.rstest.debuggerPort": {
+            "order": 11,
+            "type": "number",
+            "scope": "resource",
+            "description": "Port the debugger attaches to. Defaults to Node's inspector behavior (9229, or a free port if taken)."
+          },
+          "rstack.rstest.debuggerAddress": {
+            "order": 12,
+            "type": "string",
+            "scope": "resource",
+            "description": "TCP/IP address the debugger attaches to. Defaults to localhost."
+          },
+          "rstack.rstest.terminalShellPath": {
+            "order": 13,
+            "type": "string",
+            "markdownDescription": "Path to the shell used by the **Run in Terminal** command. Leave empty to use your default integrated terminal so its profile and environment are honored. Note: command arguments are quoted for POSIX shells; on Windows point this at a POSIX-style shell (e.g. Git Bash) if a test name needs quoting."
+          },
+          "rstack.rstest.terminalShellArgs": {
+            "order": 14,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "markdownDescription": "Arguments passed to the shell used by the **Run in Terminal** command."
+          }
+        }
+      },
+      {
+        "type": "object",
+        "title": "Rstack › Formatter",
+        "properties": {
+          "rstack.fmt.enable": {
+            "order": 0,
+            "type": "boolean",
+            "default": true,
+            "scope": "window",
+            "markdownDescription": "Enable the `rs fmt` document formatter for detected workspace folders. Requires `#rstack.enable#`. This is a window-level kill switch; which folders are formatted is decided by detection. Phase 2 — the formatter is not registered yet."
+          },
+          "rstack.fmt.suggestDefaultFormatter": {
+            "order": 1,
+            "type": "boolean",
+            "default": true,
+            "scope": "resource",
+            "markdownDescription": "Offer a one-time prompt to set Rstack as the workspace `editor.defaultFormatter` when `rs fmt` is detected. The extension never writes `editor.defaultFormatter` without confirmation."
+          }
+        }
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "rstack.rslint.output.focus",
+          "when": "rstack.rslint.active"
+        },
+        {
+          "command": "rstack.rslint.restart",
+          "when": "rstack.rslint.active"
+        },
+        {
+          "command": "rstack.rstest.output.focus",
+          "when": "rstack.rstest.active"
+        },
+        {
+          "command": "rstack.fmt.output.focus",
+          "when": "rstack.fmt.active"
+        },
+        {
+          "command": "rstack.rstest.updateSnapshot",
+          "when": "false"
+        },
+        {
+          "command": "rstack.rstest.revealInTestExplorer",
+          "when": "false"
+        },
+        {
+          "command": "rstack.rstest.copyErrorOutput",
+          "when": "false"
+        },
+        {
+          "command": "rstack.rstest.copyTestItemErrors",
+          "when": "false"
+        },
+        {
+          "command": "rstack.rstest.runInTerminal",
+          "when": "false"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "rstack.rstest.revealInTestExplorer",
+          "when": "resourcePath in rstack.rstest.testFiles"
+        }
+      ],
+      "testing/message/content": [
+        {
+          "command": "rstack.rstest.updateSnapshot",
+          "when": "testMessage == canUpdateSnapshot"
+        },
+        {
+          "command": "rstack.rstest.copyErrorOutput",
+          "when": "resourcePath in rstack.rstest.testFiles"
+        }
+      ],
+      "testing/message/context": [
+        {
+          "command": "rstack.rstest.updateSnapshot",
+          "group": "inline@1",
+          "when": "testMessage == canUpdateSnapshot"
+        },
+        {
+          "command": "rstack.rstest.copyErrorOutput",
+          "group": "inline@2",
+          "when": "resourcePath in rstack.rstest.testFiles"
+        }
+      ],
+      "testing/item/context": [
+        {
+          "command": "rstack.rstest.runInTerminal",
+          "group": "rstack@1",
+          "when": "controllerId == 'rstack.rstest'"
+        },
+        {
+          "command": "rstack.rstest.copyTestItemErrors",
+          "when": "controllerId == 'rstack.rstest'"
+        }
+      ],
+      "testing/item/gutter": [
+        {
+          "command": "rstack.rstest.runInTerminal",
+          "when": "controllerId == 'rstack.rstest'"
+        },
+        {
+          "command": "rstack.rstest.copyTestItemErrors",
+          "when": "controllerId == 'rstack.rstest'"
+        }
+      ]
+    }
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "devDependencies": {
+    "@rsbuild/core": "~2.1.9",
+    "@rslib/core": "^1.0.0-beta.1",
+    "@rslint/core": "^0.7.2",
+    "@rstackjs/load-config": "^0.1.2",
+    "@rstest/core": "^0.11.5",
+    "@types/istanbul-lib-report": "^3.0.3",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.16.5",
+    "@types/picomatch": "^4.0.3",
+    "@types/semver": "^7.7.1",
+    "@types/vscode": "1.97.0",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^3.9.2",
+    "birpc": "^4.0.0",
+    "core-js-pure": "^3.49.0",
+    "cross-env": "^7.0.3",
+    "mocha": "^11.7.6",
+    "ovsx": "^1.0.2",
+    "picomatch": "^4.0.5",
+    "semver": "^7.8.5",
+    "stacktrace-parser": "^0.1.11",
+    "tinyglobby": "^0.2.17",
+    "typescript": "^5.9.3",
+    "valibot": "^1.4.2",
+    "vscode-languageclient": "^9.0.1",
+    "yuku-parser": "^0.8.3"
+  },
+  "engines": {
+    "vscode": "^1.97.0"
+  },
+  "icon": "icon.png",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Rstack spawns project-local executables (the Rslint language server, the Rstest worker, `rs fmt`) and loads project configuration files. In Restricted Mode only the status bar item is shown; no process is spawned and no project code is loaded."
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  // One multi-root window holding all three fixtures. Detection is per
+  // workspace folder, so a single VS Code launch can assert that
+  // each fixture lights exactly the stacks it should — and it exercises the
+  // multi-root path the per-folder coordinators are built for.
+  "folders": [
+    { "path": "rslint" },
+    { "path": "rstest" },
+    { "path": "rstack" }
+  ],
+  "settings": {
+    "files.exclude": {
+      "**/node_modules": true
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "rstack-editor-rstest-e2e-workspace-2",
+  "version": "0.0.0",
+  "private": true,
+  "description": "E2E fixture for the ported Rstest suites: upstream `tests/fixtures/workspace-2`. One install at the root serves both nested projects via the normal node_modules walk-up.",
+  "dependencies": {
+    "@rstest/core": "^0.11.5"
+  }
+}
