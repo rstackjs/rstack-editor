@@ -129,11 +129,17 @@ const readRstestGlobs = (folder: vscode.WorkspaceFolder): readonly string[] => {
 const findFiles = async (
   folder: vscode.WorkspaceFolder,
   glob: string,
+  // The default cap bounds detection cost for rows that are mere *signals* —
+  // the stacks rescan their own configs, so a truncated list still lights
+  // them up. Rows whose URI list is consumed as-is pass `undefined`
+  // (unbounded): the rstack configs are the sole input to the test stack's
+  // bridge sync, where silent truncation would drop whole projects.
+  maxResults: number | undefined = MAX_CONFIG_FILES,
 ): Promise<vscode.Uri[]> =>
   vscode.workspace.findFiles(
     new vscode.RelativePattern(folder, glob),
     NODE_MODULES_EXCLUDE,
-    MAX_CONFIG_FILES,
+    maxResults,
   );
 
 const fileExists = async (uri: vscode.Uri): Promise<boolean> => {
@@ -173,7 +179,7 @@ export const detectFolder = async (
   const rstestGlobs = readRstestGlobs(folder);
   const [rstackConfigFiles, rslintConfigFiles, binPath, rstestConfigFiles] =
     await Promise.all([
-      findFiles(folder, RSTACK_CONFIG_GLOB),
+      findFiles(folder, RSTACK_CONFIG_GLOB, undefined),
       findFiles(folder, RSLINT_CONFIG_GLOB),
       probeFmtBin(folder),
       Promise.all(rstestGlobs.map((glob) => findFiles(folder, glob))).then(
