@@ -27,6 +27,15 @@ const STATE_ICONS: Readonly<Record<StackState['kind'], string>> = {
   'version-mismatch': '$(warning)',
 };
 
+/**
+ * The restart command handler only exists while the stack's controller is
+ * registered. A detected-but-disabled stack (enable-setting off, Restricted
+ * Mode) never registered it, so offering the action would die with a
+ * command-not-found error.
+ */
+const canRestart = (state: StackState): boolean =>
+  state.kind !== 'not-detected' && state.kind !== 'disabled';
+
 const stateText = (state: StackState): string => {
   switch (state.kind) {
     case 'not-detected':
@@ -101,7 +110,7 @@ export class StatusBar implements vscode.Disposable {
         command: OUTPUT_COMMANDS[stack],
       });
       const restart = RESTART_COMMANDS[stack];
-      if (restart && state.kind !== 'not-detected') {
+      if (restart && canRestart(state)) {
         items.push({
           label: `$(refresh) Restart ${STACK_LABELS[stack]}`,
           command: restart,
@@ -172,7 +181,7 @@ export class StatusBar implements vscode.Disposable {
       const state = this.stateOf(stack);
       const links = [`[Output](command:${OUTPUT_COMMANDS[stack]})`];
       const restart = RESTART_COMMANDS[stack];
-      if (restart && state.kind !== 'not-detected') {
+      if (restart && canRestart(state)) {
         links.push(`[Restart](command:${restart})`);
       }
       tooltip.appendMarkdown(

@@ -302,11 +302,29 @@ export class WorkspaceManager implements vscode.Disposable {
         .map((project) => path.dirname(project.sourceUri.fsPath)),
     );
 
+    // One bridge per directory, not per file: the shim probes the default
+    // config names in its cwd itself and never receives the source path, so
+    // sibling names (e.g. `rstack.config.ts` next to `rstack.config.js`
+    // mid-migration) would all load the same winning config and duplicate its
+    // tests. Keep the file the shim will actually pick — RSTACK_CONFIG_NAMES
+    // mirrors rstack's own probe order.
+    const precedenceOf = (uri: vscode.Uri): number =>
+      (RSTACK_CONFIG_NAMES as readonly string[]).indexOf(
+        path.basename(uri.fsPath),
+      );
+    const winnerByDir = new Map<string, vscode.Uri>();
+    for (const rstackConfig of this.rstackConfigFiles) {
+      const dir = path.dirname(rstackConfig.fsPath);
+      const current = winnerByDir.get(dir);
+      if (!current || precedenceOf(rstackConfig) < precedenceOf(current)) {
+        winnerByDir.set(dir, rstackConfig);
+      }
+    }
+
     const candidateDirs = new Set<string>();
     const wanted = new Map<string, ProjectSource>();
-    for (const rstackConfig of this.rstackConfigFiles) {
+    for (const [cwd, rstackConfig] of winnerByDir) {
       const key = rstackConfig.toString();
-      const cwd = path.dirname(rstackConfig.fsPath);
       if (nativeProjectDirs.has(cwd)) continue;
       candidateDirs.add(cwd);
       const shim = resolveRstackShim(cwd, {
