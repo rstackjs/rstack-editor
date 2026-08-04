@@ -452,7 +452,15 @@ export default [];
               ),
             );
             fs.writeFileSync(rootConfigPath, originalRootConfig, 'utf8');
-            fs.rmSync(nestedDir, { recursive: true, force: true });
+            // maxRetries: on Windows the language server / VS Code watcher can
+            // still hold handles inside the directory, making an immediate
+            // recursive delete fail with EPERM.
+            fs.rmSync(nestedDir, {
+              recursive: true,
+              force: true,
+              maxRetries: 10,
+              retryDelay: 100,
+            });
             assert.ok(
               !fs.existsSync(nestedDir),
               'Broken nested-config fixtures must be deleted during cleanup',
@@ -550,7 +558,12 @@ export default [{ files: ['**/*.ts'], rules: { 'no-console': 'error' } }];
               diagnostic.message.includes('no-explicit-any'),
             ),
         );
-        fs.rmSync(nestedDir, { recursive: true, force: true });
+        fs.rmSync(nestedDir, {
+          recursive: true,
+          force: true,
+          maxRetries: 10,
+          retryDelay: 100,
+        });
         fs.writeFileSync(rootConfigPath, originalRootConfig, 'utf8');
         await restored;
       },
@@ -614,7 +627,12 @@ export default [{ files: ['**/*.ts'], rules: { 'no-console': 'error' } }];
             ),
         );
         for (const probe of probes) {
-          fs.rmSync(probe, { recursive: true, force: true });
+          fs.rmSync(probe, {
+            recursive: true,
+            force: true,
+            maxRetries: 10,
+            retryDelay: 100,
+          });
         }
         if (!gitDirectoryExisted) {
           try {
