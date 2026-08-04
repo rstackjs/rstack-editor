@@ -585,19 +585,23 @@ export class RstestApi {
 
     rstestProcess.on('exit', (code, signal) => {
       logger.debug('Worker process exited', { code, signal });
-      if (worker.$closed || this.expectedExits.has(rstestProcess)) return;
-      // An exit nobody asked for: every deliberate teardown either runs
-      // `$close` first (its `off` handler kills after `$closed` flips) or
-      // marks the process in `expectedExits` before killing. The process
-      // *did* spawn — which cleared the crash latch — and nothing else will
-      // report; e.g. an invalid `nodeExecArgs` option makes Node exit right
-      // after a successful spawn, and without this the status keeps saying
-      // running over an empty Test Explorer.
-      status.crashed(
-        `worker process exited unexpectedly (code: ${String(code)}, signal: ${String(signal)})`,
-        this.statusSource,
-      );
-      // Unblock pending calls when the worker exits before we closed it.
+      if (worker.$closed) return;
+      if (!this.expectedExits.has(rstestProcess)) {
+        // An exit nobody asked for: every deliberate teardown either runs
+        // `$close` first (its `off` handler kills after `$closed` flips) or
+        // marks the process in `expectedExits` before killing. The process
+        // *did* spawn — which cleared the crash latch — and nothing else
+        // will report; e.g. an invalid `nodeExecArgs` option makes Node exit
+        // right after a successful spawn, and without this the status keeps
+        // saying running over an empty Test Explorer.
+        status.crashed(
+          `worker process exited unexpectedly (code: ${String(code)}, signal: ${String(signal)})`,
+          this.statusSource,
+        );
+      }
+      // Always unblock pending calls (and drop the worker from the tracking
+      // set via `off`) when the worker exits before we closed it — expected
+      // or not.
       worker.$close();
     });
 
