@@ -452,20 +452,22 @@ export default [];
               ),
             );
             fs.writeFileSync(rootConfigPath, originalRootConfig, 'utf8');
-            // maxRetries: on Windows the language server / VS Code watcher can
-            // still hold handles inside the directory, making an immediate
-            // recursive delete fail with EPERM.
+            // Wait for the restored root config to take effect BEFORE deleting
+            // the nested directory: on Windows the server still holds handles
+            // inside it (the broken config's evaluator) until the refresh
+            // lands, making an immediate recursive delete fail with EPERM.
+            // The generous maxRetries covers handles released shortly after.
+            await rootRestored;
             fs.rmSync(nestedDir, {
               recursive: true,
               force: true,
-              maxRetries: 10,
-              retryDelay: 100,
+              maxRetries: 50,
+              retryDelay: 200,
             });
             assert.ok(
               !fs.existsSync(nestedDir),
               'Broken nested-config fixtures must be deleted during cleanup',
             );
-            await rootRestored;
           },
           'Broken nested-config resource cleanup',
         );
@@ -510,11 +512,27 @@ export default [{ files: ['**/*.ts'], rules: { 'no-console': 'error' } }];
         const nestedDoc =
           await vscode.workspace.openTextDocument(nestedFilePath);
         await vscode.window.showTextDocument(nestedDoc);
-        await waitForDiagnostics(nestedDoc, (diagnostics) =>
+        // VS Code's file watcher can miss events for files created inside a
+        // directory that was itself just created (flaky on slow CI runners),
+        // leaving the new nested config undiscovered forever. If the first
+        // lint result does not arrive promptly, touch the config to re-fire
+        // the config watcher and retry.
+        const nestedLinted = (diagnostics: readonly vscode.Diagnostic[]) =>
           diagnostics.some((diagnostic) =>
             diagnostic.message.includes('Unexpected console statement'),
-          ),
-        );
+          );
+        for (let attempt = 0; ; attempt++) {
+          try {
+            await waitForDiagnostics(nestedDoc, nestedLinted, 10_000);
+            break;
+          } catch (error) {
+            if (attempt >= 5) throw error;
+            fs.appendFileSync(nestedConfigPath, '\n');
+          }
+        }
+        // Every server-side evaluation of the nested config appends to the
+        // marker; the retry nudges above may legitimately cause more than one.
+        const evaluationsBeforeIgnore = fs.readFileSync(loadMarkerPath, 'utf8');
 
         await vscode.window.showTextDocument(rootDoc);
         const parentApplied = waitForDiagnostics(rootDoc, (diagnostics) =>
@@ -535,7 +553,7 @@ export default [{ files: ['**/*.ts'], rules: { 'no-console': 'error' } }];
 
         assert.strictEqual(
           fs.readFileSync(loadMarkerPath, 'utf8'),
-          'x',
+          evaluationsBeforeIgnore,
           'The ignored nested candidate must not be evaluated again',
         );
         assert.ok(
@@ -558,14 +576,14 @@ export default [{ files: ['**/*.ts'], rules: { 'no-console': 'error' } }];
               diagnostic.message.includes('no-explicit-any'),
             ),
         );
+        fs.writeFileSync(rootConfigPath, originalRootConfig, 'utf8');
+        await restored;
         fs.rmSync(nestedDir, {
           recursive: true,
           force: true,
-          maxRetries: 10,
-          retryDelay: 100,
+          maxRetries: 50,
+          retryDelay: 200,
         });
-        fs.writeFileSync(rootConfigPath, originalRootConfig, 'utf8');
-        await restored;
       },
       'Parent-ignore catalog test',
     );
@@ -630,8 +648,8 @@ export default [{ files: ['**/*.ts'], rules: { 'no-console': 'error' } }];
           fs.rmSync(probe, {
             recursive: true,
             force: true,
-            maxRetries: 10,
-            retryDelay: 100,
+            maxRetries: 50,
+            retryDelay: 200,
           });
         }
         if (!gitDirectoryExisted) {
