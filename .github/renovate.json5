@@ -23,6 +23,29 @@
       matchUpdateTypes: ['patch'],
       matchPackageNames: ['**'],
     },
+    // The Rstack toolchain is what this repo exists to support and it ships
+    // every few days, so it opts out of the weekly window entirely: a PR is
+    // opened on the next run after a release. `schedule:weekly` still governs
+    // everything else, and `github>rstackjs/renovate:security` already waives
+    // the release-age cooldown for the same set. Listed after `all-patch` so
+    // these land in their own PR instead of the weekly patch roll-up.
+    {
+      groupName: 'rstack toolchain',
+      groupSlug: 'rstack',
+      matchPackageNames: [
+        '@rsbuild/**',
+        '@rsdoctor/**',
+        '@rslib/**',
+        '@rslint/**',
+        '@rspack/**',
+        '@rspress/**',
+        '@rstackjs/**',
+        '@rstest/**',
+        'rsbuild-plugin-**',
+        'rstack',
+      ],
+      schedule: ['at any time'],
+    },
     // The devDependency ranges for the toolchain packages are the type-level
     // side of the runtime SUPPORT_MATRIX (shared/versionCheck.ts); moving them
     // is a compatibility decision, not routine maintenance.
