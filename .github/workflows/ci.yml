@@ -14,11 +14,16 @@ permissions:
   contents: read
 
 jobs:
-  # ======== linux ========
-  test-linux:
-    name: Test (ubuntu-latest)
+  # ======== lint + unit tests: Linux only ========
+  # Nothing under test here branches on `process.platform`: the three places
+  # that do (`detection.ts` bin names, `stacks/lint/utils.ts` platform
+  # packages, `stacks/test/projectCoverage.ts` path casing) are only reachable
+  # when the host *is* that platform, so a second OS would re-run identical
+  # assertions. The Windows branches are covered by the Windows E2E job below.
+  ut:
+    name: UT (ubuntu-latest)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -51,33 +56,21 @@ jobs:
       - name: Unit Test
         run: pnpm run test:unit
 
-      # `@vscode/test-electron` downloads a full VS Code into
-      # `packages/vscode/.vscode-test`. Cache only the immutable distribution
-      # directories, keyed on the extension manifest (which carries
-      # `engines.vscode`); the restore-keys fallback keeps older downloads
-      # available while `version: 'stable'` moves forward.
-      - name: Cache VS Code Download
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: packages/vscode/.vscode-test/vscode-*
-          key: vscode-test-${{ runner.os }}-${{ hashFiles('packages/vscode/package.json') }}
-          restore-keys: |
-            vscode-test-${{ runner.os }}-
-
-      # The E2E fixtures install published npm packages at test time
-      # (tests/e2e/setupFixtures.mjs, invoked by test:e2e), so this step needs
-      # network access. The VS Code Extension Host needs a display on Linux,
-      # hence xvfb (preinstalled on GitHub-hosted Ubuntu runners).
-      - name: E2E Test
-        run: xvfb-run -a pnpm run test:e2e
-
-  # ======== windows ========
-  # A dedicated GitHub-hosted Windows job: upstream rslint notes the VS Code
-  # extension E2E suite is unreliable on self-hosted Windows runners.
-  test-windows:
-    name: Test (windows-latest)
-    runs-on: windows-latest
+  # ======== E2E: Windows + macOS, no Linux ========
+  # These are the platforms the extension is actually used on, and the only
+  # ones upstream rstest runs its ported VS Code suites on. Linux is excluded
+  # deliberately: the Extension Host needs xvfb there, and inotify reports a
+  # non-atomic file rewrite as separate truncate/write events, so fixture edits
+  # in the watch-mode suites race the watcher in a way no user hits. Do not add
+  # a Linux E2E job back without also making every fixture edit atomic.
+  e2e:
+    name: E2E (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
 
     steps:
       - name: Checkout
@@ -101,12 +94,11 @@ jobs:
       - name: Build
         run: pnpm run build
 
-      - name: Lint
-        run: pnpm run lint
-
-      - name: Unit Test
-        run: pnpm run test:unit
-
+      # `@vscode/test-electron` downloads a full VS Code into
+      # `packages/vscode/.vscode-test`. Cache only the immutable distribution
+      # directories, keyed on the extension manifest (which carries
+      # `engines.vscode`); the restore-keys fallback keeps older downloads
+      # available while `version: 'stable'` moves forward.
       - name: Cache VS Code Download
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -115,5 +107,8 @@ jobs:
           restore-keys: |
             vscode-test-${{ runner.os }}-
 
+      # The E2E fixtures install published npm packages at test time
+      # (tests/e2e/setupFixtures.mjs, invoked by test:e2e), so this step needs
+      # network access.
       - name: E2E Test
         run: pnpm run test:e2e

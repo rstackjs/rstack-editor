@@ -1,0 +1,55 @@
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: [
+    'config:recommended',
+    'github>rstackjs/renovate:security',
+    'schedule:weekly',
+    'helpers:pinGitHubActionDigests',
+  ],
+  // E2E fixtures deliberately pin the published toolchain versions the suites
+  // run against; bumping them is a manual, E2E-verified decision.
+  ignorePaths: ['**/node_modules/**', 'packages/vscode/tests/**'],
+  packageRules: [
+    // Use chore as semantic commit type for commit messages
+    {
+      matchPackageNames: ['**'],
+      semanticCommitType: 'chore',
+      // always bump package.json
+      rangeStrategy: 'bump',
+    },
+    {
+      groupName: 'all patch dependencies',
+      groupSlug: 'all-patch',
+      matchUpdateTypes: ['patch'],
+      matchPackageNames: ['**'],
+    },
+    // The Rstack toolchain is what this repo exists to support and it ships
+    // every few days, so it opts out of the weekly window entirely: a PR is
+    // opened on the next run after a release. `schedule:weekly` still governs
+    // everything else, and `github>rstackjs/renovate:security` already waives
+    // the release-age cooldown for the same set. Listed after `all-patch` so
+    // these land in their own PR instead of the weekly patch roll-up.
+    //
+    // This includes `@rslint/core`, `@rstest/core` and `rstack`, whose ranges
+    // sit alongside the runtime `SUPPORT_MATRIX` (shared/versionCheck.ts).
+    // That matrix is a floor, not a pin: raising a devDependency does not move
+    // it. Lowering the floor stays a deliberate, separate edit.
+    {
+      groupName: 'rstack toolchain',
+      groupSlug: 'rstack',
+      matchPackageNames: [
+        '@rsbuild/**',
+        '@rsdoctor/**',
+        '@rslib/**',
+        '@rslint/**',
+        '@rspack/**',
+        '@rspress/**',
+        '@rstackjs/**',
+        '@rstest/**',
+        'rsbuild-plugin-**',
+        'rstack',
+      ],
+      schedule: ['at any time'],
+    },
+  ],
+}
