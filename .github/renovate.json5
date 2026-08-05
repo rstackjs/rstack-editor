@@ -29,6 +29,11 @@
     // everything else, and `github>rstackjs/renovate:security` already waives
     // the release-age cooldown for the same set. Listed after `all-patch` so
     // these land in their own PR instead of the weekly patch roll-up.
+    //
+    // This includes `@rslint/core`, `@rstest/core` and `rstack`, whose ranges
+    // sit alongside the runtime `SUPPORT_MATRIX` (shared/versionCheck.ts).
+    // That matrix is a floor, not a pin: raising a devDependency does not move
+    // it. Lowering the floor stays a deliberate, separate edit.
     {
       groupName: 'rstack toolchain',
       groupSlug: 'rstack',
@@ -45,13 +50,6 @@
         'rstack',
       ],
       schedule: ['at any time'],
-    },
-    // The devDependency ranges for the toolchain packages are the type-level
-    // side of the runtime SUPPORT_MATRIX (shared/versionCheck.ts); moving them
-    // is a compatibility decision, not routine maintenance.
-    {
-      matchPackageNames: ['@rslint/core', '@rstest/core', 'rstack'],
-      enabled: false,
     },
   ],
 }
