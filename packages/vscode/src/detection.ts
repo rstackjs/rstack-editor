@@ -240,7 +240,9 @@ export class DetectionService implements vscode.Disposable {
   // out identical while every project-resolved package (Rslint binary, Rstest
   // core, the rstack shim) may now resolve differently. Such a pass must
   // notify subscribers even when the signature is unchanged, or failed
-  // resolutions are never retried until a window reload.
+  // resolutions are never retried until a window reload. Set by the lockfile
+  // watcher only — a caller that drives the rebuild itself does not need the
+  // event, it already has the fresh snapshot.
   #notifyUnchanged = false;
   #watchers: vscode.Disposable[] = [];
   #debounce: ReturnType<typeof setTimeout> | undefined;
@@ -301,12 +303,15 @@ export class DetectionService implements vscode.Disposable {
       // Virtual filesystems cannot host a project-local toolchain.
       (folder) => folder.uri.scheme === 'file',
     );
+    // Consumed before the first `await`: a pass that rejects (a folder removed
+    // mid-scan, a filesystem provider erroring) must not leave the flag set for
+    // an unrelated later pass to act on.
+    const notifyUnchanged = this.#notifyUnchanged;
+    this.#notifyUnchanged = false;
     const detections = await Promise.all(folders.map(detectFolder));
     const snapshot = new Snapshot(detections);
     const signature = signatureOf(snapshot);
     this.#snapshot = snapshot;
-    const notifyUnchanged = this.#notifyUnchanged;
-    this.#notifyUnchanged = false;
     if (signature !== this.#signature || notifyUnchanged) {
       this.#signature = signature;
       this.log(snapshot);

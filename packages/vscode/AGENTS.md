@@ -19,6 +19,8 @@ One extension replacing the standalone `rstack.rslint` and `rstack.rstest` exten
 
 - One stack failing to register or crashing must never take another stack (or the shell) down.
 - The shell always activates; per-folder config detection decides which stacks start, and re-runs on config/lockfile changes without a window reload. Enable-settings are coarse kill switches only.
+- Reconciles and restarts share one serialized queue (`enqueue`); a reconcile leaves a live stack alone, so the restart commands are the only path that rebuilds one. Do not add a second queue.
+- Restart is a shell concern, not a stack one: `rstack.restart` rebuilds every controller, `rstack.<stack>.restart` rebuilds one. A stack must never register its own restart command — a shallower "bounce the tool's process" restart keeps that controller's stale package resolution and version check, which is the bug the command exists to clear.
 - Deprecated `rslint.json` / `rslint.jsonc` are unsupported by decision, not omission — never make them detection signals.
 - Never share a child process across stacks: the tools have incompatible cwd semantics (lint LSP anchors on spawn cwd; test worker pins to project root; `rs fmt` resolves config from spawn cwd with no upward walk).
 - In Restricted Mode (workspace trust), only the status bar runs — no process spawns, no project code loaded.

@@ -44,14 +44,15 @@
   "contributes": {
     "commands": [
       {
-        "command": "rstack.showMenu",
-        "title": "Show Menu",
-        "category": "Rstack"
-      },
-      {
         "command": "rstack.showOutput",
         "title": "Show Extension Log",
         "category": "Rstack"
+      },
+      {
+        "command": "rstack.restart",
+        "title": "Relaunch Extension",
+        "category": "Rstack",
+        "icon": "$(debug-restart)"
       },
       {
         "command": "rstack.migrateSettings",
@@ -65,7 +66,7 @@
       },
       {
         "command": "rstack.rslint.restart",
-        "title": "Restart Rslint Language Server",
+        "title": "Restart Rslint",
         "category": "Rstack",
         "icon": "$(refresh)"
       },
@@ -73,6 +74,12 @@
         "command": "rstack.rstest.output.focus",
         "title": "Show Rstest Log",
         "category": "Rstack"
+      },
+      {
+        "command": "rstack.rstest.restart",
+        "title": "Restart Rstest",
+        "category": "Rstack",
+        "icon": "$(refresh)"
       },
       {
         "command": "rstack.rstest.updateSnapshot",
@@ -107,6 +114,12 @@
         "command": "rstack.fmt.output.focus",
         "title": "Show rs fmt Log",
         "category": "Rstack"
+      },
+      {
+        "command": "rstack.fmt.restart",
+        "title": "Restart rs fmt",
+        "category": "Rstack",
+        "icon": "$(refresh)"
       }
     ],
     "configuration": [
@@ -348,7 +361,15 @@
           "when": "rstack.rstest.active"
         },
         {
+          "command": "rstack.rstest.restart",
+          "when": "rstack.rstest.active"
+        },
+        {
           "command": "rstack.fmt.output.focus",
+          "when": "rstack.fmt.active"
+        },
+        {
+          "command": "rstack.fmt.restart",
           "when": "rstack.fmt.active"
         },
         {

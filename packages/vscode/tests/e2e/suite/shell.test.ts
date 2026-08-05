@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import * as vscode from 'vscode';
-import { delay, eventually } from './helpers';
+import type { RstackExtensionExports } from '../../../src/types';
+import { eventually } from './helpers';
 
 const EXTENSION_ID = 'rstack.rstack';
 
@@ -31,39 +32,53 @@ suite('shell', () => {
   test('registers the shell commands', async () => {
     const commands = await vscode.commands.getCommands(true);
     for (const command of [
-      'rstack.showMenu',
       'rstack.showOutput',
+      'rstack.restart',
       'rstack.migrateSettings',
       'rstack.rslint.output.focus',
+      'rstack.rslint.restart',
       'rstack.rstest.output.focus',
+      'rstack.rstest.restart',
       'rstack.fmt.output.focus',
+      'rstack.fmt.restart',
     ]) {
       assert.ok(commands.includes(command), `missing command ${command}`);
     }
   });
 
-  test('has a status bar item whose menu opens', async () => {
+  test('has a status bar item whose click target works', async () => {
     // VS Code exposes no API to enumerate another extension's status bar items,
     // so the item itself cannot be asserted on directly. What *is* observable
-    // is its command: the item is created with `command = 'rstack.showMenu'`
-    // and shown unconditionally, so a `showMenu` that opens a QuickPick without
-    // throwing is the strongest available evidence that the always-present
-    // status bar item exists and is wired up.
-    let failure: unknown;
-    const menu = Promise.resolve(
-      vscode.commands.executeCommand('rstack.showMenu'),
-    ).catch((error: unknown) => {
-      failure = error;
-    });
+    // is its command: the item is created with `command = 'rstack.showOutput'`
+    // and shown unconditionally, so a `showOutput` that reveals the channel
+    // without throwing is the strongest available evidence that the
+    // always-present status bar item exists and is wired up.
+    await vscode.commands.executeCommand('rstack.showOutput');
+  });
 
-    await delay(1_000);
-    await vscode.commands.executeCommand('workbench.action.closeQuickOpen');
-    await Promise.race([menu, delay(5_000)]);
+  test('rebuilds the live stacks on rstack.restart', async () => {
+    // The restart is a full reset: every controller is disposed and rebuilt,
+    // so the exports a stack publishes at registration must be a *different*
+    // object afterwards. That is the only externally visible proof that the
+    // stack was rebuilt rather than left alone (`reconcileStack` returns early
+    // for a stack that is already registered).
+    const extension =
+      vscode.extensions.getExtension<RstackExtensionExports>(EXTENSION_ID);
+    assert.ok(extension, `${EXTENSION_ID} is not installed in the test host`);
+    const api = await extension.activate();
 
-    assert.equal(
-      failure,
-      undefined,
-      `rstack.showMenu failed: ${String(failure)}`,
+    const before = await api.whenStackActive('rstest');
+
+    // The command resolves only once the whole restart is done, so no polling
+    // is needed to observe the result.
+    await vscode.commands.executeCommand('rstack.restart');
+
+    const after = api.getStackExports('rstest');
+    assert.ok(after, 'the Rstest stack did not come back after the restart');
+    assert.notEqual(
+      after,
+      before,
+      'the restart must rebuild the controller, not keep the old one',
     );
   });
 
