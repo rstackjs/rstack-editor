@@ -12,6 +12,7 @@ import {
   type StackState,
   STACK_IDS,
   STACK_LABELS,
+  stackCommand,
 } from './types';
 import { createFmtController } from './stacks/fmt';
 import { createRslintController } from './stacks/lint';
@@ -111,13 +112,14 @@ class ExtensionShell {
       runSettingsMigration(this.#channels.shell),
     );
     for (const stack of STACK_IDS) {
-      register(`rstack.${stack}.output.focus`, () =>
+      register(stackCommand(stack, 'output.focus'), () =>
         this.#channels.forStack(stack).show(),
       );
       // Owned by the shell, not the stack: a stack cannot rebuild itself, and
       // the shallower alternative (bouncing just the tool's own process) leaves
-      // the controller's package resolution and version check stale.
-      register(`rstack.${stack}.restart`, () => this.restart(stack));
+      // the controller's package resolution and version check stale. Stacks
+      // reach the same operation through `StackContext.requestRestart`.
+      register(stackCommand(stack, 'restart'), () => this.restart(stack));
     }
   }
 
@@ -196,31 +198,30 @@ class ExtensionShell {
    * controllers, re-runs detection and registers every affected stack that
    * still passes the gate, from scratch.
    *
-   * It rides the shared `#reconciling` queue, so repeated or concurrent
-   * invocations serialise instead of racing, and the returned promise settles
-   * only once this restart is done.
+   * `reason` is for the callers that are not a user picking the command —
+   * `StackContext.requestRestart` passes what moved.
    */
-  async restart(stack?: StackId): Promise<void> {
-    await this.enqueue(() => this.runRestart(stack));
+  restart(stack?: StackId, reason?: string): Promise<void> {
+    return this.enqueue(() => this.runRestart(stack, reason));
   }
 
-  private async runRestart(only?: StackId): Promise<void> {
+  private async runRestart(only?: StackId, reason?: string): Promise<void> {
     if (this.#disposed) {
       return;
     }
     const stacks = only ? [only] : STACK_IDS;
+    const what = only ? STACK_LABELS[only] : 'Rstack';
     this.#channels.shell.info(
-      only ? `Restarting ${STACK_LABELS[only]}` : 'Relaunching Rstack',
+      `Restarting ${what}${reason ? ` (${reason})` : ''}`,
     );
     // Per-stack isolation covers the restart too: a stack throwing on the way
     // down must not keep the others from coming back up.
     await Promise.allSettled(
-      stacks.flatMap((stack) => {
-        const controller = this.#controllers.get(stack);
-        return controller
-          ? [this.retire(stack, controller, { kind: 'starting' })]
-          : [];
-      }),
+      [...this.#controllers]
+        .filter(([stack]) => stacks.includes(stack))
+        .map(([stack, controller]) =>
+          this.retire(stack, controller, { kind: 'starting' }),
+        ),
     );
     // Teardown is slow (closing the Rslint language client, `$close()`ing the
     // Rstest workers), so a `deactivate()` can land inside it. From here on
@@ -244,18 +245,15 @@ class ExtensionShell {
     }
     await this.reconcile(stacks);
     if (!this.#disposed) {
-      this.#channels.shell.info(
-        only ? `${STACK_LABELS[only]} restart finished` : 'Rstack relaunched',
-      );
+      this.#channels.shell.info(`${what} restart finished`);
     }
   }
 
   /**
-   * A controller going away always means the same five things; only the state
-   * left on the status bar says why (`starting` for a restart about to rebuild
-   * it, the gate's own state when it stopped qualifying, `crashed` when it
-   * failed to register). Pass no state to retire it silently, which is what a
-   * shell already on its way out wants.
+   * Retires a controller. Only the state left on the status bar says why
+   * (`starting` for a restart about to rebuild it, the gate's own state when it
+   * stopped qualifying, `crashed` when it failed to register). Pass no state to
+   * retire it silently, which is what a shell already on its way out wants.
    */
   private async retire(
     stack: StackId,
@@ -329,6 +327,7 @@ class ExtensionShell {
         status: this.#statusBar.reporterFor(stack),
         detection: snapshot,
         onDidChangeDetection: this.#detectionEmitter.event,
+        requestRestart: (reason) => this.restart(stack, reason),
       });
       // `register()` is the long await here (an LSP handshake, a worker spawn),
       // so `dispose()` can have run through its controller loop while this one
@@ -422,9 +421,14 @@ class ExtensionShell {
 
   async dispose(): Promise<void> {
     this.#disposed = true;
-    for (const [stack, controller] of [...this.#controllers]) {
-      await this.retire(stack, controller);
-    }
+    // Same shape as the restart teardown: per-stack isolation, and deactivate
+    // runs against VS Code's shutdown budget, so the slow ones (the Rslint
+    // client's graceful-then-forced kill) overlap instead of queueing.
+    await Promise.allSettled(
+      [...this.#controllers].map(([stack, controller]) =>
+        this.retire(stack, controller),
+      ),
+    );
     for (const subscription of this.#subscriptions) {
       subscription.dispose();
     }

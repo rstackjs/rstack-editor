@@ -35,8 +35,3 @@ export const importProjectModule = async <T>(
   }
   return pending;
 };
-
-/** Test seam / teardown helper: drops the memoized module promises. */
-export const clearProjectModuleCache = (): void => {
-  cache.clear();
-};

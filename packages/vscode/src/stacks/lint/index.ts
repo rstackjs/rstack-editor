@@ -137,17 +137,16 @@ class RslintController implements StackController {
       }),
       // A `binPath`/`customBinPath` change must re-resolve the binary, which
       // only happens on a fresh start (upstream documents `customBinPath` as
-      // requiring a reload; a restart is strictly better). It goes through the
-      // shell's command rather than a local restart so the whole controller is
-      // rebuilt — a local one would replace the coordinator but keep this
-      // controller's already-resolved binary and version check.
+      // requiring a reload; a restart is strictly better). It asks the shell
+      // for a full rebuild rather than restarting locally — a local restart
+      // would replace the coordinator but keep this controller's
+      // already-resolved binary and version check.
       vscode.workspace.onDidChangeConfiguration((event) => {
-        if (
-          event.affectsConfiguration('rstack.rslint.binPath') ||
-          event.affectsConfiguration('rstack.rslint.customBinPath') ||
-          event.affectsConfiguration('rstack.rslint.trace.server')
-        ) {
-          void vscode.commands.executeCommand('rstack.rslint.restart');
+        for (const setting of ['binPath', 'customBinPath', 'trace.server']) {
+          if (event.affectsConfiguration(`rstack.rslint.${setting}`)) {
+            void context.requestRestart(`rstack.rslint.${setting} changed`);
+            return;
+          }
         }
       }),
     );

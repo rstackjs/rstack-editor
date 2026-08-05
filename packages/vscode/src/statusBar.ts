@@ -5,20 +5,8 @@ import {
   type StatusReporter,
   STACK_IDS,
   STACK_LABELS,
+  stackCommand,
 } from './types';
-
-/** Commands the status bar hover links to, per stack. */
-const OUTPUT_COMMANDS: Readonly<Record<StackId, string>> = {
-  rslint: 'rstack.rslint.output.focus',
-  rstest: 'rstack.rstest.output.focus',
-  fmt: 'rstack.fmt.output.focus',
-};
-
-const RESTART_COMMANDS: Readonly<Record<StackId, string>> = {
-  rslint: 'rstack.rslint.restart',
-  rstest: 'rstack.rstest.restart',
-  fmt: 'rstack.fmt.restart',
-};
 
 /**
  * Icon and hover colour per state. `color` is a theme colour id with `.`
@@ -29,12 +17,10 @@ const RESTART_COMMANDS: Readonly<Record<StackId, string>> = {
 const STATE_STYLES: Readonly<
   Record<StackState['kind'], { readonly icon: string; readonly color: string }>
 > = {
-  // The two off-states share a glyph but not a colour: nothing was found for
-  // this workspace (the weakest thing on the row — `disabledForeground` is the
-  // colour VS Code reserves for "not available") versus somebody turned it off
-  // on purpose, which is worth actually reading. Glyphs from other icon sets
-  // (the debug breakpoints, say) are drawn at their own optical size and stand
-  // out of a row of plain codicons — keep every state on one set.
+  // The two off-states share a glyph but not a colour: nothing found here (the
+  // weakest thing on the row) versus somebody turned it off on purpose, which
+  // is worth reading. Keep every state on the plain codicon set — glyphs from
+  // the debug sets are drawn at their own optical size and stick out.
   'not-detected': { icon: '$(circle-slash)', color: 'disabledForeground' },
   disabled: { icon: '$(circle-slash)', color: 'descriptionForeground' },
   starting: { icon: '$(loading~spin)', color: 'descriptionForeground' },
@@ -63,26 +49,31 @@ const stateText = (state: StackState): string => {
   }
 };
 
-/** An icon-only command link, with the wording moved to its native tooltip. */
-const action = (command: string, title: string, icon: string): string =>
-  `<a href="command:${command}" title="${escapeAttribute(title)}">${icon}</a>`;
-
-/**
- * A labelled command as a table row, so its icon lands in the same column as
- * the stack rows'. Icon and label are separate cells and therefore separate
- * links to the same command — one `<a>` cannot span two cells.
- */
-const link = (command: string, icon: string, label: string): string => {
-  const href = `<a href="command:${command}">`;
-  return `<tr><td>${href}${icon}</a></td><td colspan="2">${href}&nbsp;${label}</a></td></tr>`;
-};
-
 const escapeAttribute = (value: string): string =>
   value
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+
+/**
+ * The one anchor builder, so escaping is a property of the markup rather than
+ * something each call site has to remember. `title` becomes the icon's native
+ * tooltip, which is where the wording goes for the icon-only actions.
+ */
+const anchor = (command: string, body: string, title?: string): string =>
+  `<a href="command:${command}"${
+    title ? ` title="${escapeAttribute(title)}"` : ''
+  }>${body}</a>`;
+
+/**
+ * A labelled command as a table row, so its icon lands in the same column as
+ * the stack rows'. Icon and label are separate cells and therefore separate
+ * anchors to the same command — one `<a>` cannot span two cells.
+ */
+const actionRow = (command: string, icon: string, label: string): string =>
+  `<tr><td>${anchor(command, icon)}</td>` +
+  `<td colspan="2">${anchor(command, `&nbsp;${label}`)}</td></tr>`;
 
 /**
  * The single always-present status bar item. It is visible
@@ -100,11 +91,10 @@ export class StatusBar implements vscode.Disposable {
   readonly #states = new Map<StackId, StackState>(
     STACK_IDS.map((stack) => [stack, { kind: 'not-detected' }]),
   );
-  // Stacks whose controller is currently registered. Restart availability
-  // tracks this, not the state kind: a state cannot distinguish "crashed
-  // while running" (controller alive, its restart command exists) from
-  // "failed to register" (controller disposed, the command with it), and a
-  // disabled stack never registered the command at all.
+  // Stacks whose controller is currently registered. The restart action tracks
+  // this rather than the state kind, which cannot tell "crashed while running"
+  // (controller alive, worth rebuilding) from "failed to register" (already
+  // disposed, and the reconcile that follows will retry it anyway).
   readonly #active = new Set<StackId>();
 
   constructor() {
@@ -151,10 +141,6 @@ export class StatusBar implements vscode.Disposable {
       this.#active.delete(stack);
     }
     this.render();
-  }
-
-  #canRestart(stack: StackId): boolean {
-    return this.#active.has(stack);
   }
 
   private render(): void {
@@ -206,75 +192,66 @@ export class StatusBar implements vscode.Disposable {
       const style = STATE_STYLES[state.kind];
       const label = STACK_LABELS[stack];
       // The per-stack actions repeat once per row, so they are icon-only: the
-      // row already names the stack, and the link title carries the wording for
-      // anyone who hovers the icon. The global row below stays text — it
-      // appears once and has no row label to lean on.
+      // row already names the stack and the anchor title carries the wording.
       const actions = [
-        action(OUTPUT_COMMANDS[stack], `Show the ${label} log`, '$(selection)'),
+        anchor(
+          stackCommand(stack, 'output.focus'),
+          '$(selection)',
+          `Show the ${label} log`,
+        ),
       ];
-      if (this.#canRestart(stack)) {
-        // Titled apart from "Relaunch extension" below: this one rebuilds only
-        // this stack and leaves the others running.
+      if (this.#active.has(stack)) {
+        // Titled apart from "Relaunch" below: this one rebuilds only this
+        // stack and leaves the others running.
         actions.push(
-          action(RESTART_COMMANDS[stack], `Restart ${label}`, '$(refresh)'),
+          anchor(
+            stackCommand(stack, 'restart'),
+            '$(refresh)',
+            `Restart ${label}`,
+          ),
         );
       }
       // The state text is the icon's title rather than row text: spelling out
-      // "running — 2 folders" on every row is mostly noise once the icon says
-      // it, and the details worth reading (a crash message, a version
-      // mismatch) are exactly the long ones. `state.detail` is arbitrary text a
-      // stack produced, hence the escaping.
-      // Icon size is not adjustable here: the hover renders codicons at
-      // `font-size: inherit` and the sanitizer drops `font-size` from a span's
-      // style, leaving heading tags as the only lever — and those carry the
-      // hover's `h1-h6 { margin: 8px 0 }`, which pads out every row. Not worth
-      // it; the icons stay at the row's own size.
+      // "running — 2 folders" on every row is noise once the icon says it, and
+      // the details worth reading (a crash message, a version mismatch) are
+      // exactly the long ones. `state.detail` is arbitrary text a stack
+      // produced, hence the escaping.
       const status =
         `<span title="${escapeAttribute(stateText(state))}" ` +
         `style="color:var(--vscode-${style.color});">${style.icon}</span>`;
-      // The table stays sized to its content. Stretching it with
-      // `width="100%"` does push the actions to the card's edge, but the card
-      // is as wide as the widest line below, so the row ends up mostly gap and
-      // the action cell gets squeezed until its two icons wrap onto separate
-      // lines. Right-aligning inside the natural column is as far as this goes.
       return (
         `<tr><td>${status}</td><td>&nbsp;<b>${label}</b>&nbsp;&nbsp;</td>` +
         `<td align="right">${actions.join('&nbsp;')}</td></tr>`
       );
     });
-    // Same table as the stacks, so all six icons share one column and one gap
-    // to their label. A second table (or a markdown paragraph) would size its
-    // columns independently and the two halves would drift apart.
-    //
-    // One row per action rather than three across: the hover has no width of
-    // its own, it sizes to its content, so three labelled actions on one line
-    // set the card's width and leave the rows above swimming in it.
+    // In the same table as the stacks so all six icons share one column; a
+    // second table would size its columns independently and the two halves
+    // would drift apart. One row per action rather than three across, for the
+    // same reason the actions above are icon-only — the hover sizes to its
+    // content, so the widest line sets the card's width.
     //
     // Unlike the per-stack restarts, "Relaunch" is unconditional: it is the
     // action for "nothing is active", which is precisely when no per-stack
     // restart is offered.
-    const global = [
-      link('rstack.restart', '$(debug-restart)', 'Relaunch'),
-      link('rstack.showOutput', '$(selection)', 'Extension log'),
-      link('rstack.migrateSettings', '$(arrow-right)', 'Migrate settings'),
+    const shellActions = [
+      actionRow('rstack.restart', '$(debug-restart)', 'Relaunch'),
+      actionRow('rstack.showOutput', '$(selection)', 'Extension log'),
+      actionRow('rstack.migrateSettings', '$(arrow-right)', 'Migrate settings'),
     ];
-    tooltip.appendMarkdown(
-      `<table>${rows.join('')}` +
-        // The gap under the divider is an *empty* spacer row with an explicit
-        // `height` — the one pixel-precise spacing lever in sanitized html.
-        // Everything line-based was tried and is quantized to a full row: cell
-        // padding is unreachable (the sanitizer keeps `style` only on a span,
-        // colours only), a `<br>` costs a line-height (too much), no spacer
-        // leaves the hover's `hr { margin-bottom: -4px }` hugging the next row
-        // (too little), and shrinking a blank line with `<small>` does nothing
-        // because the cell's own strut keeps the line box at the td's
-        // font-height. An empty cell has no line box at all, so its `height`
-        // attribute (allowlisted) is what it says. Above the rule the hr's own
-        // 4px top margin is enough.
-        '<tr><td colspan="3"><hr></td></tr>' +
-        '<tr><td colspan="3" height="4"></td></tr>' +
-        `${global.join('')}</table>`,
-    );
+    // The gap under the divider is an empty spacer row with an explicit
+    // `height`, the one pixel-precise spacing lever sanitized html has left:
+    // cell padding is unreachable (`style` survives only on a span, colours
+    // only) and everything line-based is quantized to a whole row. An empty
+    // cell has no line box, so its `height` is what it says. Above the rule the
+    // hover's own `hr { margin-top: 4px }` is enough — and its
+    // `margin-bottom: -4px` is why the underside needs the spacer at all.
+    const body = [
+      ...rows,
+      '<tr><td colspan="3"><hr></td></tr>',
+      '<tr><td colspan="3" height="4"></td></tr>',
+      ...shellActions,
+    ].join('');
+    tooltip.appendMarkdown(`<table>${body}</table>`);
     this.#item.tooltip = tooltip;
   }
 

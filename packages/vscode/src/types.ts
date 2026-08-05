@@ -16,6 +16,17 @@ export const STACK_LABELS: Readonly<Record<StackId, string>> = {
 };
 
 /**
+ * The one place a per-stack command id is spelled. Both ends — the shell that
+ * registers these and the status bar that links to them — go through here, so
+ * a renamed verb cannot leave one side pointing at a command that no longer
+ * exists (a dead hover link is not a type error).
+ */
+export const stackCommand = (
+  stack: StackId,
+  verb: 'restart' | 'output.focus',
+): string => `rstack.${stack}.${verb}`;
+
+/**
  * Per-stack state machine surfaced by the status bar hover.
  *
  * `disabled` covers every "we deliberately did not start" case: the kill-switch
@@ -94,6 +105,17 @@ export interface StackContext {
    * only has to reconcile its own per-folder runtimes.
    */
   readonly onDidChangeDetection: vscode.Event<DetectionSnapshot>;
+  /**
+   * Asks the shell to rebuild this stack from scratch — the same thing
+   * `rstack.<stack>.restart` does. A stack cannot rebuild itself (its own
+   * controller is what gets replaced), and settling for a shallower local
+   * restart would keep the controller's already-resolved binary and version
+   * check, which is the staleness the rebuild exists to clear.
+   *
+   * `reason` goes to the shell log, so a restart nobody asked for out loud
+   * still says where it came from.
+   */
+  readonly requestRestart: (reason: string) => Promise<void>;
 }
 
 /**

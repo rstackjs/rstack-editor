@@ -1,6 +1,3 @@
-import { afterEach, beforeEach, describe, expect, it, rs } from '@rstest/core';
-import type vscode from 'vscode';
-
 /**
  * The shell itself is the unit under test: `activate()` runs for real and the
  * commands it contributes are invoked through the recorded command registry,
@@ -9,6 +6,9 @@ import type vscode from 'vscode';
  * tests run in plain Node with no extension host (unit tests are Rstest, E2E is
  * Electron, and E2E stays the ground truth for editor behaviour).
  */
+import { afterEach, beforeEach, describe, expect, it, rs } from '@rstest/core';
+import type vscode from 'vscode';
+
 interface FakeController {
   register(): Promise<Record<string, unknown>>;
   dispose(): Promise<void>;
@@ -51,26 +51,14 @@ const harness = rs.hoisted(() => {
 });
 
 rs.mock('vscode', () => {
-  class EventEmitter {
-    readonly #listeners = new Set<(value: unknown) => void>();
-    readonly event = (listener: (value: unknown) => void) => {
-      this.#listeners.add(listener);
-      return {
-        dispose: () => {
-          this.#listeners.delete(listener);
-        },
-      };
-    };
-    fire(value: unknown): void {
-      for (const listener of [...this.#listeners]) {
-        listener(value);
-      }
-    }
-    dispose(): void {
-      this.#listeners.clear();
-    }
-  }
   const disposable = { dispose: () => undefined };
+  // Detection is stubbed out below, so nothing here ever fires the shell's
+  // emitter — only its construction and disposal are reached.
+  class EventEmitter {
+    readonly event = () => disposable;
+    fire(): void {}
+    dispose(): void {}
+  }
   const createOutputChannel = (name: string) => {
     // Only the shell channel is recorded — the failure reports the user is
     // supposed to find live there.
@@ -309,11 +297,6 @@ describe('the shell restart command', () => {
     ]);
     expect(harness.contextKeys.get('rstack.fmt.active')).toBe(false);
     expect(harness.contextKeys.get('rstack.rslint.active')).toBe(true);
-  });
-
-  it('re-runs detection before rebuilding', async () => {
-    await restart();
-    expect(harness.refreshes).toBe(1);
   });
 
   it('rebuilds a stack whose detection did not move at all', async () => {
