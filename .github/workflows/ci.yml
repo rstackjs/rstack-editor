@@ -21,7 +21,7 @@ jobs:
   # when the host *is* that platform, so a second OS would re-run identical
   # assertions. The Windows branches are covered by the Windows E2E job below.
   ut:
-    name: UT
+    name: UT (ubuntu-latest)
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
