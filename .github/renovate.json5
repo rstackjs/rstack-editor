@@ -1,0 +1,34 @@
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: [
+    'config:recommended',
+    'github>rstackjs/renovate:security',
+    'schedule:weekly',
+    'helpers:pinGitHubActionDigests',
+  ],
+  // E2E fixtures deliberately pin the published toolchain versions the suites
+  // run against; bumping them is a manual, E2E-verified decision.
+  ignorePaths: ['**/node_modules/**', 'packages/vscode/tests/**'],
+  packageRules: [
+    // Use chore as semantic commit type for commit messages
+    {
+      matchPackageNames: ['**'],
+      semanticCommitType: 'chore',
+      // always bump package.json
+      rangeStrategy: 'bump',
+    },
+    {
+      groupName: 'all patch dependencies',
+      groupSlug: 'all-patch',
+      matchUpdateTypes: ['patch'],
+      matchPackageNames: ['**'],
+    },
+    // The devDependency ranges for the toolchain packages are the type-level
+    // side of the runtime SUPPORT_MATRIX (shared/versionCheck.ts); moving them
+    // is a compatibility decision, not routine maintenance.
+    {
+      matchPackageNames: ['@rslint/core', '@rstest/core', 'rstack'],
+      enabled: false,
+    },
+  ],
+}
