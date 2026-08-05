@@ -1,0 +1,91 @@
+import {
+  array,
+  boolean,
+  fallback,
+  type InferOutput,
+  literal,
+  number,
+  object,
+  optional,
+  parse,
+  record,
+  string,
+  union,
+} from 'valibot';
+import vscode from 'vscode';
+
+/**
+ * The namespace adaptation: the unified namespace is `rstack.*`, so
+ * every key below is read from the `rstack.rstest` section instead of the
+ * legacy `rstest` one. No aliases — `rstack.migrateSettings` is the migration
+ * path.
+ */
+export const CONFIG_SECTION = 'rstack.rstest';
+
+// Centralized configuration types for the extension.
+// Add new keys here to extend configuration in a type-safe way.
+const configSchema = object({
+  // The path to a package.json file of a Rstest executable.
+  // Used as a last resort if the extension cannot auto-detect @rstest/core.
+  rstestPackagePath: fallback(optional(string()), undefined),
+  nodeExecutable: fallback(optional(string()), undefined),
+  nodeExecArgs: fallback(array(string()), []),
+  nodeEnv: fallback(optional(record(string(), string())), undefined),
+  debugNodeEnv: fallback(optional(record(string(), string())), undefined),
+  debuggerPort: fallback(optional(number()), undefined),
+  debuggerAddress: fallback(optional(string()), undefined),
+  debugExclude: fallback(array(string()), ['<node_internals>/**']),
+  debugOutFiles: fallback(array(string()), []),
+  configFileGlobPattern: fallback(array(string()), [
+    '**/rstest.config.{mjs,ts,js,cjs,mts,cts}',
+  ]),
+  testCaseCollectMethod: fallback(
+    union([literal('ast'), literal('runtime')]),
+    'ast',
+  ),
+  applyDiagnostic: fallback(boolean(), true),
+  // Shell used by the "Run in Terminal" command. Empty falls back to the
+  // user's default integrated terminal (so its profile/env are honored).
+  terminalShellPath: fallback(optional(string()), undefined),
+  terminalShellArgs: fallback(array(string()), []),
+});
+
+type ExtensionConfig = InferOutput<typeof configSchema>;
+
+// Type-safe getter for a single config value
+export function getConfigValue<K extends keyof ExtensionConfig>(
+  key: K,
+  scope?: vscode.ConfigurationScope | null,
+): ExtensionConfig[K] {
+  const value = vscode.workspace
+    .getConfiguration(CONFIG_SECTION, scope)
+    .get(key);
+  return parse(configSchema.entries[key], value) as ExtensionConfig[K];
+}
+
+export function watchConfigValue<K extends keyof ExtensionConfig>(
+  key: K,
+  scope: vscode.ConfigurationScope | null | undefined,
+  listener: (
+    value: ExtensionConfig[K],
+    token: vscode.CancellationToken,
+  ) => void,
+): vscode.Disposable {
+  let cancelSource = new vscode.CancellationTokenSource();
+  listener(getConfigValue(key, scope), cancelSource.token);
+  const disposable = vscode.workspace.onDidChangeConfiguration((e) => {
+    if (
+      e.affectsConfiguration(`${CONFIG_SECTION}.${key}`, scope ?? undefined)
+    ) {
+      cancelSource.cancel();
+      cancelSource = new vscode.CancellationTokenSource();
+      listener(getConfigValue(key, scope), cancelSource.token);
+    }
+  });
+  return {
+    dispose: () => {
+      disposable.dispose();
+      cancelSource.cancel();
+    },
+  };
+}

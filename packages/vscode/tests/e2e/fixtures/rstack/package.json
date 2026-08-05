@@ -1,0 +1,13 @@
+{
+  "name": "rstack-editor-fixture-rstack",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "E2E fixture: an rstack-cli project whose only config is `rstack.config.ts`, which lights the Rstest and rs fmt stacks.",
+  "dependencies": {
+    "rstack": "^0.3.2"
+  },
+  "devDependencies": {
+    "jiti": "^2.0.0"
+  }
+}

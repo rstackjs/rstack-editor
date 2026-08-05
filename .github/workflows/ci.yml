@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.ref_name != 'main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ======== linux ========
+  test-linux:
+    name: Test (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Format Check
+        run: pnpm run fmt:check
+
+      - name: Unit Test
+        run: pnpm run test:unit
+
+      # `@vscode/test-electron` downloads a full VS Code into
+      # `packages/vscode/.vscode-test`. Cache only the immutable distribution
+      # directories, keyed on the extension manifest (which carries
+      # `engines.vscode`); the restore-keys fallback keeps older downloads
+      # available while `version: 'stable'` moves forward.
+      - name: Cache VS Code Download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: packages/vscode/.vscode-test/vscode-*
+          key: vscode-test-${{ runner.os }}-${{ hashFiles('packages/vscode/package.json') }}
+          restore-keys: |
+            vscode-test-${{ runner.os }}-
+
+      # The E2E fixtures install published npm packages at test time
+      # (tests/e2e/setupFixtures.mjs, invoked by test:e2e), so this step needs
+      # network access. The VS Code Extension Host needs a display on Linux,
+      # hence xvfb (preinstalled on GitHub-hosted Ubuntu runners).
+      - name: E2E Test
+        run: xvfb-run -a pnpm run test:e2e
+
+  # ======== windows ========
+  # A dedicated GitHub-hosted Windows job: upstream rslint notes the VS Code
+  # extension E2E suite is unreliable on self-hosted Windows runners.
+  test-windows:
+    name: Test (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Unit Test
+        run: pnpm run test:unit
+
+      - name: Cache VS Code Download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: packages/vscode/.vscode-test/vscode-*
+          key: vscode-test-${{ runner.os }}-${{ hashFiles('packages/vscode/package.json') }}
+          restore-keys: |
+            vscode-test-${{ runner.os }}-
+
+      - name: E2E Test
+        run: pnpm run test:e2e

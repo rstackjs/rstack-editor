@@ -1,0 +1,51 @@
+name: '🐞 Bug Report'
+description: Report a bug in the Rstack VS Code extension
+title: '[Bug]: '
+labels: ['🐞 bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this issue! Before submitting, please note:
+
+        - Make sure you searched in the [Issues](https://github.com/rstackjs/rstack-editor/issues) and didn't find the same issue.
+        - If the problem reproduces with the CLI too (`rs lint` / `rs test` / `rs fmt`), it likely belongs to the tool's own repo — file it against [rslint](https://github.com/web-infra-dev/rslint), [rstest](https://github.com/web-infra-dev/rstest) or [rstack-cli](https://github.com/rstackjs/rstack-cli) instead.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Linting (Rslint)
+        - Testing (Rstest)
+        - Formatting
+        - Detection / status bar / settings
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: versions
+    attributes:
+      label: Versions
+      description: |
+        Extension version, VS Code version + platform (Help → About), and the tool versions resolved from your project (`npm ls @rslint/core @rstest/core rstack`).
+      render: sh
+    validations:
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Describe the bug, including screenshots and relevant output-channel logs (Output panel → Rstack channels).
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce-steps
+    attributes:
+      label: Reproduce steps
+      description: The simplest steps (ideally with a minimal repo link) so we can quickly reproduce the problem.
+    validations:
+      required: true

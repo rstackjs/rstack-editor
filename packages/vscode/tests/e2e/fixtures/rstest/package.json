@@ -1,0 +1,10 @@
+{
+  "name": "rstack-editor-fixture-rstest",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "E2E fixture: a project detected as Rstest only, pinned to the launch floor `@rstest/core >= 0.6.0`.",
+  "dependencies": {
+    "@rstest/core": "^0.6.0"
+  }
+}

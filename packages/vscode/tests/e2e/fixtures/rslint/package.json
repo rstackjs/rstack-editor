@@ -1,0 +1,10 @@
+{
+  "name": "rstack-editor-fixture-rslint",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "E2E fixture: a project detected as Rslint only, installed from the npm registry.",
+  "dependencies": {
+    "@rslint/core": "^0.7.2"
+  }
+}

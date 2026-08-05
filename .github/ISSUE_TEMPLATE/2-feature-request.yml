@@ -1,0 +1,18 @@
+name: '💡 Feature Request'
+description: Suggest a feature for the Rstack VS Code extension
+title: '[Feature]: '
+labels: ['💡 feature']
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this feature solve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: What does the proposed API/UX look like?
+    validations:
+      required: true
