@@ -15,7 +15,12 @@ interface FakeController {
 }
 
 const harness = rs.hoisted(() => {
-  const state = {
+  /**
+   * Every field a test may set or read, rebuilt between tests. A factory rather
+   * than a list of resets in `beforeEach`, so a field added here cannot leak
+   * into the next test by being forgotten there.
+   */
+  const defaults = () => ({
     /** Stacks detection currently reports as detected. */
     detected: new Set<string>(),
     /** Stacks whose controller rejects in `register` / `dispose`. */
@@ -31,8 +36,6 @@ const harness = rs.hoisted(() => {
     disposing: new Set<string>(),
     /** Set once the shell tears down the output channels it owns. */
     channelsDisposed: false,
-    /** Holds the initial detection open, so a test can act during activation. */
-    blockDetection: undefined as Promise<void> | undefined,
     /** Stacks whose `register` blocks until released. */
     blockRegister: new Map<string, Promise<void>>(),
     /** Stacks whose `register` has started but not yet returned. */
@@ -50,6 +53,12 @@ const harness = rs.hoisted(() => {
     shellLog: [] as string[],
     commands: new Map<string, (...args: unknown[]) => unknown>(),
     contextKeys: new Map<string, boolean>(),
+  });
+  const state = {
+    ...defaults(),
+    reset(): void {
+      Object.assign(state, defaults());
+    },
     controller(stack: string): FakeController {
       return {
         register: async () => {
@@ -193,7 +202,6 @@ rs.mock('./detection', () => {
       return snapshot();
     }
     async initialize() {
-      await harness.blockDetection;
       return this.snapshot;
     }
     async refresh() {
@@ -252,21 +260,8 @@ const settle = (): Promise<void> =>
 
 describe('the shell restart command', () => {
   beforeEach(async () => {
+    harness.reset();
     harness.detected = new Set(['rslint', 'rstest', 'fmt']);
-    harness.failRegister.clear();
-    harness.failDispose.clear();
-    harness.blockDispose.clear();
-    harness.disposing.clear();
-    harness.channelsDisposed = false;
-    harness.blockDetection = undefined;
-    harness.blockRegister.clear();
-    harness.registering.clear();
-    harness.overlaps.length = 0;
-    harness.events.length = 0;
-    harness.refreshes = 0;
-    harness.shellLog.length = 0;
-    harness.commands.clear();
-    harness.contextKeys.clear();
     await activate(context);
     expect(stacksOf('register')).toEqual(['fmt', 'rslint', 'rstest']);
     harness.events.length = 0;
@@ -427,48 +422,36 @@ describe('the shell restart command', () => {
     harness.refreshes = 0;
     harness.overlaps.length = 0;
 
-    let releaseRegister = (): void => undefined;
-    harness.blockRegister.set(
-      'rslint',
-      new Promise<void>((resolve) => {
-        releaseRegister = resolve;
-      }),
-    );
+    const blockedRegister = Promise.withResolvers<void>();
+    harness.blockRegister.set('rslint', blockedRegister.promise);
 
     const activating = activate(context);
     await settle();
     expect(harness.registering.has('rslint')).toBe(true);
 
-    const restarting = run('rstack.restart');
+    const restarting = restart();
     await settle();
 
     // The restart must still be waiting its turn, not tearing down a stack
     // that is in the middle of coming up.
     expect(harness.overlaps).toEqual([]);
 
-    releaseRegister();
+    blockedRegister.resolve();
     await Promise.all([activating, restarting]);
     expect(harness.overlaps).toEqual([]);
   });
 
   it('does not tear down shell resources while a restart is still disposing', async () => {
-    // `retire` drops the controller from the shell's map *before* awaiting its
-    // teardown, so during a restart there is a window where nothing is
-    // registered and the Rslint client is still shutting down. A `dispose()`
-    // that only walked that map finds it empty, disposes the channels out from
-    // under the in-flight teardown, and lets `deactivate()` resolve while the
-    // child processes are still alive.
+    // Covers the window `dispose()` documents: mid-restart the controller map
+    // is already empty while the Rslint client is still shutting down, so a
+    // teardown that only walked that map would pull the channels out from
+    // under it.
     //
     // The assertion is on the channels rather than on deactivate's promise:
     // "has not resolved yet" is a race with the microtask queue, whereas "the
     // channel this teardown is still logging to is alive" is a fact.
-    let release = (): void => undefined;
-    harness.blockDispose.set(
-      'rslint',
-      new Promise<void>((resolve) => {
-        release = resolve;
-      }),
-    );
+    const blockedDispose = Promise.withResolvers<void>();
+    harness.blockDispose.set('rslint', blockedDispose.promise);
 
     const restarting = restart();
     await settle();
@@ -480,7 +463,7 @@ describe('the shell restart command', () => {
     expect(harness.disposing.has('rslint')).toBe(true);
     expect(harness.channelsDisposed).toBe(false);
 
-    release();
+    blockedDispose.resolve();
     await Promise.all([restarting, shutdown]);
     expect(harness.disposing.has('rslint')).toBe(false);
     expect(harness.channelsDisposed).toBe(true);

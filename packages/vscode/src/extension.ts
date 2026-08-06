@@ -96,10 +96,9 @@ class ExtensionShell {
     await this.#detection.initialize();
     // On the queue, not beside it. `registerCommands` runs before this method's
     // first await, so a restart can be invoked from the palette while detection
-    // is still initialising — and it would then race this pass, with both
-    // finding an empty controller map and building a second controller that
-    // nothing owns.
-    await this.enqueue(() => this.reconcile());
+    // is still initialising — and running beside it would let that restart
+    // retire a controller whose `register()` has not returned yet.
+    await this.reconcile();
 
     void maybePromptForMigration(this.context, this.#channels.shell);
   }
@@ -185,11 +184,20 @@ class ExtensionShell {
     return pass;
   }
 
+  /**
+   * Queues a reconcile. The `run*` methods below are the bodies of a pass and
+   * assume they already own the queue — going through `enqueue` from inside
+   * one would wait on itself. Everything else calls the wrappers.
+   */
+  private reconcile(stacks?: readonly StackId[]): Promise<void> {
+    return this.enqueue(() => this.runReconcile(stacks));
+  }
+
   private scheduleReconcile(): void {
     if (this.#disposed) {
       return;
     }
-    void this.enqueue(() => this.reconcile());
+    void this.reconcile();
   }
 
   /**
@@ -219,15 +227,7 @@ class ExtensionShell {
     this.#channels.shell.info(
       `Restarting ${what}${reason ? ` (${reason})` : ''}`,
     );
-    // Per-stack isolation covers the restart too: a stack throwing on the way
-    // down must not keep the others from coming back up.
-    await Promise.allSettled(
-      [...this.#controllers]
-        .filter(([stack]) => stacks.includes(stack))
-        .map(([stack, controller]) =>
-          this.retire(stack, controller, { kind: 'starting' }),
-        ),
-    );
+    await this.retireAll(stacks, { kind: 'starting' });
     // Teardown is slow (closing the Rslint language client, `$close()`ing the
     // Rstest workers), so a `deactivate()` can land inside it. From here on
     // every shell resource — the output channels above all — may already be
@@ -248,10 +248,26 @@ class ExtensionShell {
         );
       }
     }
-    await this.reconcile(stacks);
+    await this.runReconcile(stacks);
     if (!this.#disposed) {
       this.#channels.shell.info(`${what} restart finished`);
     }
+  }
+
+  /**
+   * Retires whichever of `stacks` are registered. Per-stack isolation covers
+   * teardown too: one throwing on the way down must not keep the others from
+   * coming back up, or from being collected at all.
+   */
+  private async retireAll(
+    stacks: readonly StackId[],
+    next?: StackState,
+  ): Promise<void> {
+    await Promise.allSettled(
+      [...this.#controllers]
+        .filter(([stack]) => stacks.includes(stack))
+        .map(([stack, controller]) => this.retire(stack, controller, next)),
+    );
   }
 
   /**
@@ -275,7 +291,7 @@ class ExtensionShell {
     this.#statusBar.setState(stack, next);
   }
 
-  private async reconcile(
+  private async runReconcile(
     stacks: readonly StackId[] = STACK_IDS,
   ): Promise<void> {
     if (this.#disposed) {
@@ -296,10 +312,10 @@ class ExtensionShell {
       `rstack.${stack}.detected`,
       snapshot.isDetected(stack),
     );
-    // Setting a context key is a round trip to the main thread, and a restart
-    // empties `#controllers` before getting here — so a `deactivate()` landing
-    // in this window would find nothing to dispose and the controller built
-    // below would outlive the extension.
+    // `#disposed` flips outside the queue, so it can become true mid-pass even
+    // though the teardown that follows it cannot start until this pass ends.
+    // Bailing here is the optimisation, not the safety net: anything this pass
+    // did register lands in `#controllers` and the queued teardown collects it.
     if (this.#disposed) {
       return;
     }
@@ -334,9 +350,9 @@ class ExtensionShell {
         onDidChangeDetection: this.#detectionEmitter.event,
         requestRestart: (reason) => this.restart(stack, reason),
       });
-      // `register()` is the long await here (an LSP handshake, a worker spawn),
-      // so `dispose()` can have run through its controller loop while this one
-      // was still starting. Nothing else will collect it — do it here.
+      // Retiring it here rather than leaving it to the queued teardown skips
+      // publishing exports and flipping `active` on for a stack the extension
+      // is already shutting down.
       if (this.#disposed) {
         await this.retire(stack, controller);
         return;
@@ -426,6 +442,10 @@ class ExtensionShell {
 
   async dispose(): Promise<void> {
     this.#disposed = true;
+    // Before the wait below, not after it: the service holds a debounce timer
+    // and its own watchers, so leaving it live means a file touched during
+    // shutdown can start a fresh detection pass behind us.
+    this.#detection.dispose();
     // Behind the shared queue rather than beside it. `retire` drops a
     // controller from `#controllers` before awaiting its teardown, so a
     // restart in flight leaves a window where the map is already empty and the
@@ -434,23 +454,12 @@ class ExtensionShell {
     // child processes are gone. The queue is what makes "whatever was in
     // flight has finished" something this can wait for, and `#disposed` above
     // stops that pass from rebuilding anything on its way out.
-    //
-    // The pass itself keeps the restart's shape: per-stack isolation, and
-    // deactivate runs against VS Code's shutdown budget, so the slow ones
-    // overlap instead of queueing.
-    await this.enqueue(async () => {
-      await Promise.allSettled(
-        [...this.#controllers].map(([stack, controller]) =>
-          this.retire(stack, controller),
-        ),
-      );
-    });
+    await this.enqueue(() => this.retireAll(STACK_IDS));
     for (const subscription of this.#subscriptions) {
       subscription.dispose();
     }
     this.#subscriptions.length = 0;
     this.#detectionEmitter.dispose();
-    this.#detection.dispose();
     this.#statusBar.dispose();
     this.#channels.dispose();
   }
