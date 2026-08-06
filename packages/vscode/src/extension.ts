@@ -12,6 +12,7 @@ import {
   type StackState,
   STACK_IDS,
   STACK_LABELS,
+  stackCommand,
 } from './types';
 import { createFmtController } from './stacks/fmt';
 import { createRslintController } from './stacks/lint';
@@ -93,6 +94,10 @@ class ExtensionShell {
     );
 
     await this.#detection.initialize();
+    // On the queue, not beside it. `registerCommands` runs before this method's
+    // first await, so a restart can be invoked from the palette while detection
+    // is still initialising — and running beside it would let that restart
+    // retire a controller whose `register()` has not returned yet.
     await this.reconcile();
 
     void maybePromptForMigration(this.context, this.#channels.shell);
@@ -105,15 +110,20 @@ class ExtensionShell {
       );
     };
 
-    register('rstack.showMenu', () => this.#statusBar.showMenu());
     register('rstack.showOutput', () => this.#channels.shell.show());
+    register('rstack.restart', () => this.restart());
     register('rstack.migrateSettings', () =>
       runSettingsMigration(this.#channels.shell),
     );
     for (const stack of STACK_IDS) {
-      register(`rstack.${stack}.output.focus`, () =>
+      register(stackCommand(stack, 'output.focus'), () =>
         this.#channels.forStack(stack).show(),
       );
+      // Owned by the shell, not the stack: a stack cannot rebuild itself, and
+      // the shallower alternative (bouncing just the tool's own process) leaves
+      // the controller's package resolution and version check stale. Stacks
+      // reach the same operation through `StackContext.requestRestart`.
+      register(stackCommand(stack, 'restart'), () => this.restart(stack));
     }
   }
 
@@ -162,24 +172,135 @@ class ExtensionShell {
     return { ok: true };
   }
 
+  /**
+   * The single queue every pass runs on — reconciles and restarts alike. Two
+   * passes must never overlap, and a caller awaiting the returned promise
+   * waits for its own pass only. A rejection belongs to that caller, so the
+   * chain keeps only the settled shape and survives it.
+   */
+  private enqueue(task: () => Promise<void>): Promise<void> {
+    const pass = this.#reconciling.then(task);
+    this.#reconciling = pass.catch(() => undefined);
+    return pass;
+  }
+
+  /**
+   * Queues a reconcile. The `run*` methods below are the bodies of a pass and
+   * assume they already own the queue — going through `enqueue` from inside
+   * one would wait on itself. Everything else calls the wrappers.
+   */
+  private reconcile(stacks?: readonly StackId[]): Promise<void> {
+    return this.enqueue(() => this.runReconcile(stacks));
+  }
+
   private scheduleReconcile(): void {
     if (this.#disposed) {
       return;
     }
-    this.#reconciling = this.#reconciling.then(
-      () => this.reconcile(),
-      () => this.reconcile(),
+    void this.reconcile();
+  }
+
+  /**
+   * `rstack.restart` (every stack) and `rstack.<stack>.restart` (one) — a full
+   * reset, not a "retry whatever looks broken".
+   *
+   * `reconcileStack` deliberately leaves an already registered stack alone, so
+   * a stack that is up but wedged is never rebuilt: `node_modules` can be
+   * replaced or corrupted while every watched file stays untouched, and until
+   * now only a window reload recovered from that. This disposes the
+   * controllers, re-runs detection and registers every affected stack that
+   * still passes the gate, from scratch.
+   *
+   * `reason` is for the callers that are not a user picking the command —
+   * `StackContext.requestRestart` passes what moved.
+   */
+  restart(stack?: StackId, reason?: string): Promise<void> {
+    return this.enqueue(() => this.runRestart(stack, reason));
+  }
+
+  private async runRestart(only?: StackId, reason?: string): Promise<void> {
+    if (this.#disposed) {
+      return;
+    }
+    const stacks = only ? [only] : STACK_IDS;
+    const what = only ? STACK_LABELS[only] : 'Rstack';
+    this.#channels.shell.info(
+      `Restarting ${what}${reason ? ` (${reason})` : ''}`,
+    );
+    await this.retireAll(stacks, { kind: 'starting' });
+    // Teardown is slow (closing the Rslint language client, `$close()`ing the
+    // Rstest workers), so a `deactivate()` can land inside it. From here on
+    // every shell resource — the output channels above all — may already be
+    // disposed, and touching one throws.
+    if (this.#disposed) {
+      return;
+    }
+    try {
+      // A plain pass: `refresh` updates the snapshot whether or not the
+      // signature moved, and the reconcile below rebuilds every stack from it.
+      // The forced notification the lockfile path uses exists to make *live*
+      // controllers retry — there are none left to tell.
+      await this.#detection.refresh();
+    } catch (error) {
+      if (!this.#disposed) {
+        this.#channels.shell.error(
+          `Detection failed during restart: ${errorMessage(error)}`,
+        );
+      }
+    }
+    await this.runReconcile(stacks);
+    if (!this.#disposed) {
+      this.#channels.shell.info(`${what} restart finished`);
+    }
+  }
+
+  /**
+   * Retires whichever of `stacks` are registered. Per-stack isolation covers
+   * teardown too: one throwing on the way down must not keep the others from
+   * coming back up, or from being collected at all.
+   */
+  private async retireAll(
+    stacks: readonly StackId[],
+    next?: StackState,
+  ): Promise<void> {
+    await Promise.allSettled(
+      [...this.#controllers]
+        .filter(([stack]) => stacks.includes(stack))
+        .map(([stack, controller]) => this.retire(stack, controller, next)),
     );
   }
 
-  private async reconcile(): Promise<void> {
+  /**
+   * Retires a controller. Only the state left on the status bar says why
+   * (`starting` for a restart about to rebuild it, the gate's own state when it
+   * stopped qualifying, `crashed` when it failed to register). Pass no state to
+   * retire it silently, which is what a shell already on its way out wants.
+   */
+  private async retire(
+    stack: StackId,
+    controller: StackController,
+    next?: StackState,
+  ): Promise<void> {
+    this.#controllers.delete(stack);
+    await this.disposeController(stack, controller);
+    if (!next || this.#disposed) {
+      return;
+    }
+    await this.setContextKey(`rstack.${stack}.active`, false);
+    this.#statusBar.setActive(stack, false);
+    this.#statusBar.setState(stack, next);
+  }
+
+  private async runReconcile(
+    stacks: readonly StackId[] = STACK_IDS,
+  ): Promise<void> {
     if (this.#disposed) {
       return;
     }
     const snapshot = this.#detection.snapshot;
     // Per-stack isolation: one stack throwing must never affect the others.
     await Promise.allSettled(
-      STACK_IDS.map((stack) => this.reconcileStack(stack, snapshot)),
+      stacks.map((stack) => this.reconcileStack(stack, snapshot)),
     );
   }
 
@@ -191,18 +312,23 @@ class ExtensionShell {
       `rstack.${stack}.detected`,
       snapshot.isDetected(stack),
     );
+    // `#disposed` flips outside the queue, so it can become true mid-pass even
+    // though the teardown that follows it cannot start until this pass ends.
+    // Bailing here is the optimisation, not the safety net: anything this pass
+    // did register lands in `#controllers` and the queued teardown collects it.
+    if (this.#disposed) {
+      return;
+    }
 
     const gate = this.gate(stack, snapshot);
     const existing = this.#controllers.get(stack);
 
     if (!gate.ok) {
       if (existing) {
-        this.#controllers.delete(stack);
-        await this.disposeController(stack, existing);
-        await this.setContextKey(`rstack.${stack}.active`, false);
-        this.#statusBar.setActive(stack, false);
+        await this.retire(stack, existing, gate.state);
+      } else {
+        this.#statusBar.setState(stack, gate.state);
       }
-      this.#statusBar.setState(stack, gate.state);
       return;
     }
 
@@ -222,7 +348,15 @@ class ExtensionShell {
         status: this.#statusBar.reporterFor(stack),
         detection: snapshot,
         onDidChangeDetection: this.#detectionEmitter.event,
+        requestRestart: (reason) => this.restart(stack, reason),
       });
+      // Retiring it here rather than leaving it to the queued teardown skips
+      // publishing exports and flipping `active` on for a stack the extension
+      // is already shutting down.
+      if (this.#disposed) {
+        await this.retire(stack, controller);
+        return;
+      }
       if (stackExports) {
         this.publishStackExports(stack, stackExports);
       }
@@ -230,19 +364,18 @@ class ExtensionShell {
       this.#statusBar.setActive(stack, true);
       this.#channels.shell.info(`${STACK_LABELS[stack]} registered`);
     } catch (error) {
-      this.#controllers.delete(stack);
-      await this.disposeController(stack, controller);
-      await this.setContextKey(`rstack.${stack}.active`, false);
-      this.#statusBar.setActive(stack, false);
+      await this.retire(stack, controller, {
+        kind: 'crashed',
+        detail: error instanceof Error ? error.message : String(error),
+      });
+      if (this.#disposed) {
+        return;
+      }
       const message = errorMessage(error);
       this.#channels.shell.error(
         `${STACK_LABELS[stack]} failed to register: ${message}`,
       );
       this.#channels.forStack(stack).error(message);
-      this.#statusBar.setState(stack, {
-        kind: 'crashed',
-        detail: error instanceof Error ? error.message : String(error),
-      });
     }
   }
 
@@ -254,6 +387,12 @@ class ExtensionShell {
     try {
       await controller.dispose();
     } catch (error) {
+      // `dispose()` closes the channels after its controller loop, and a stack
+      // can still be shutting down then; a failed dispose must not become an
+      // unhandled "channel closed" on the way out.
+      if (this.#disposed) {
+        return;
+      }
       this.#channels.shell.error(
         `${STACK_LABELS[stack]} failed to dispose: ${errorMessage(error)}`,
       );
@@ -303,16 +442,24 @@ class ExtensionShell {
 
   async dispose(): Promise<void> {
     this.#disposed = true;
-    for (const [stack, controller] of [...this.#controllers]) {
-      this.#controllers.delete(stack);
-      await this.disposeController(stack, controller);
-    }
+    // Before the wait below, not after it: the service holds a debounce timer
+    // and its own watchers, so leaving it live means a file touched during
+    // shutdown can start a fresh detection pass behind us.
+    this.#detection.dispose();
+    // Behind the shared queue rather than beside it. `retire` drops a
+    // controller from `#controllers` before awaiting its teardown, so a
+    // restart in flight leaves a window where the map is already empty and the
+    // Rslint client is still shutting down: disposing the channels there would
+    // pull them out from under it, and `deactivate()` would resolve before the
+    // child processes are gone. The queue is what makes "whatever was in
+    // flight has finished" something this can wait for, and `#disposed` above
+    // stops that pass from rebuilding anything on its way out.
+    await this.enqueue(() => this.retireAll(STACK_IDS));
     for (const subscription of this.#subscriptions) {
       subscription.dispose();
     }
     this.#subscriptions.length = 0;
     this.#detectionEmitter.dispose();
-    this.#detection.dispose();
     this.#statusBar.dispose();
     this.#channels.dispose();
   }

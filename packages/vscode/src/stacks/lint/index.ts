@@ -116,7 +116,6 @@ class RslintController implements StackController {
   #snapshot: DetectionSnapshot | undefined;
   readonly #subscriptions: vscode.Disposable[] = [];
   readonly #folderStates = new Map<string, FolderStatus>();
-  #pending: Promise<void> = Promise.resolve();
   #disposed = false;
 
   async register(context: StackContext): Promise<Record<string, unknown>> {
@@ -125,9 +124,6 @@ class RslintController implements StackController {
     this.#logger = new Logger(context.output);
 
     this.#subscriptions.push(
-      vscode.commands.registerCommand('rstack.rslint.restart', () => {
-        void this.restart();
-      }),
       context.onDidChangeDetection((snapshot) => {
         this.#snapshot = snapshot;
         this.reconcileFolders({ added: [], removed: [] });
@@ -141,14 +137,16 @@ class RslintController implements StackController {
       }),
       // A `binPath`/`customBinPath` change must re-resolve the binary, which
       // only happens on a fresh start (upstream documents `customBinPath` as
-      // requiring a reload; a restart is strictly better).
+      // requiring a reload; a restart is strictly better). It asks the shell
+      // for a full rebuild rather than restarting locally — a local restart
+      // would replace the coordinator but keep this controller's
+      // already-resolved binary and version check.
       vscode.workspace.onDidChangeConfiguration((event) => {
-        if (
-          event.affectsConfiguration('rstack.rslint.binPath') ||
-          event.affectsConfiguration('rstack.rslint.customBinPath') ||
-          event.affectsConfiguration('rstack.rslint.trace.server')
-        ) {
-          void this.restart();
+        for (const setting of ['binPath', 'customBinPath', 'trace.server']) {
+          if (event.affectsConfiguration(`rstack.rslint.${setting}`)) {
+            void context.requestRestart(`rstack.rslint.${setting} changed`);
+            return;
+          }
         }
       }),
     );
@@ -284,33 +282,6 @@ class RslintController implements StackController {
     );
   }
 
-  /**
-   * Serializes restart/dispose. Two restarts racing (a settings change plus the
-   * palette command) would otherwise interleave close and start and leak a
-   * coordinator that nothing holds a reference to any more.
-   */
-  private enqueue(task: () => Promise<void>): Promise<void> {
-    this.#pending = this.#pending.then(task, task);
-    return this.#pending;
-  }
-
-  /**
-   * `rstack.rslint.restart`. The coordinator is single-use once closed, so a
-   * restart replaces it (and the document router) wholesale — the same shape
-   * upstream's commented-out `rslint.restart` would have needed.
-   */
-  private async restart(): Promise<void> {
-    await this.enqueue(async () => {
-      if (this.#disposed || !this.#context) {
-        return;
-      }
-      this.#logger?.info('Restarting the Rslint language server');
-      await this.closeCoordinator();
-      this.#folderStates.clear();
-      this.startCoordinator();
-    });
-  }
-
   private async closeCoordinator(): Promise<void> {
     const coordinator = this.#coordinator;
     this.#coordinator = undefined;
@@ -329,15 +300,11 @@ class RslintController implements StackController {
     for (const subscription of this.#subscriptions.splice(0)) {
       subscription.dispose();
     }
-    // Behind the same queue as `restart`, so an in-flight restart finishes
-    // (or no-ops on `#disposed`) before the language servers are torn down.
-    await this.enqueue(async () => {
-      await this.closeCoordinator();
-      this.#folderStates.clear();
-      this.#logger = undefined;
-      this.#context = undefined;
-      this.#snapshot = undefined;
-    });
+    await this.closeCoordinator();
+    this.#folderStates.clear();
+    this.#logger = undefined;
+    this.#context = undefined;
+    this.#snapshot = undefined;
   }
 }
 

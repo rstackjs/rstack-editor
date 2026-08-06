@@ -5,26 +5,31 @@ import {
   type StatusReporter,
   STACK_IDS,
   STACK_LABELS,
+  stackCommand,
 } from './types';
 
-/** Commands the status bar hover links to, per stack. */
-const OUTPUT_COMMANDS: Readonly<Record<StackId, string>> = {
-  rslint: 'rstack.rslint.output.focus',
-  rstest: 'rstack.rstest.output.focus',
-  fmt: 'rstack.fmt.output.focus',
-};
-
-const RESTART_COMMANDS: Partial<Readonly<Record<StackId, string>>> = {
-  rslint: 'rstack.rslint.restart',
-};
-
-const STATE_ICONS: Readonly<Record<StackState['kind'], string>> = {
-  'not-detected': '$(circle-slash)',
-  disabled: '$(circle-slash)',
-  starting: '$(loading~spin)',
-  running: '$(check)',
-  crashed: '$(error)',
-  'version-mismatch': '$(warning)',
+/**
+ * Icon and hover colour per state. `color` is a theme colour id with `.`
+ * replaced by `-`, the form VS Code exposes as a CSS variable; the markdown
+ * sanitizer accepts `var(--vscode-*)` on a `<span>` and nothing else, so the
+ * hover picks up the user's theme instead of hard-coded hexes.
+ */
+const STATE_STYLES: Readonly<
+  Record<StackState['kind'], { readonly icon: string; readonly color: string }>
+> = {
+  // The two off-states share a glyph but not a colour: nothing found here (the
+  // weakest thing on the row) versus somebody turned it off on purpose, which
+  // is worth reading. Keep every state on the plain codicon set — glyphs from
+  // the debug sets are drawn at their own optical size and stick out.
+  'not-detected': { icon: '$(circle-slash)', color: 'disabledForeground' },
+  disabled: { icon: '$(circle-slash)', color: 'descriptionForeground' },
+  starting: { icon: '$(loading~spin)', color: 'descriptionForeground' },
+  running: { icon: '$(check)', color: 'testing-iconPassed' },
+  crashed: { icon: '$(error)', color: 'testing-iconFailed' },
+  'version-mismatch': {
+    icon: '$(warning)',
+    color: 'editorWarning-foreground',
+  },
 };
 
 const stateText = (state: StackState): string => {
@@ -44,21 +49,52 @@ const stateText = (state: StackState): string => {
   }
 };
 
+const escapeAttribute = (value: string): string =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+/**
+ * The one anchor builder, so escaping is a property of the markup rather than
+ * something each call site has to remember. `title` becomes the icon's native
+ * tooltip, which is where the wording goes for the icon-only actions.
+ */
+const anchor = (command: string, body: string, title?: string): string =>
+  `<a href="command:${command}"${
+    title ? ` title="${escapeAttribute(title)}"` : ''
+  }>${body}</a>`;
+
+/**
+ * A labelled command as a table row, so its icon lands in the same column as
+ * the stack rows'. Icon and label are separate cells and therefore separate
+ * anchors to the same command — one `<a>` cannot span two cells.
+ */
+const actionRow = (command: string, icon: string, label: string): string =>
+  `<tr><td>${anchor(command, icon)}</td>` +
+  `<td colspan="2">${anchor(command, `&nbsp;${label}`)}</td></tr>`;
+
 /**
  * The single always-present status bar item. It is visible
  * whenever the extension is installed and enabled, even when nothing is
  * detected — it is the answer to "is the extension broken or just idle?".
+ *
+ * The hover is the only surface: it carries the per-stack state and every
+ * action, and clicking the item goes straight to the extension log. There is
+ * deliberately no QuickPick behind the item — a menu that repeats what the
+ * hover already shows is two renderings of one model, and every peer
+ * (Biome, oxc, Prettier) ships exactly one of the two.
  */
 export class StatusBar implements vscode.Disposable {
   readonly #item: vscode.StatusBarItem;
   readonly #states = new Map<StackId, StackState>(
     STACK_IDS.map((stack) => [stack, { kind: 'not-detected' }]),
   );
-  // Stacks whose controller is currently registered. Restart availability
-  // tracks this, not the state kind: a state cannot distinguish "crashed
-  // while running" (controller alive, its restart command exists) from
-  // "failed to register" (controller disposed, the command with it), and a
-  // disabled stack never registered the command at all.
+  // Stacks whose controller is currently registered. The restart action tracks
+  // this rather than the state kind, which cannot tell "crashed while running"
+  // (controller alive, worth rebuilding) from "failed to register" (already
+  // disposed, and the reconcile that follows will retry it anyway).
   readonly #active = new Set<StackId>();
 
   constructor() {
@@ -68,7 +104,10 @@ export class StatusBar implements vscode.Disposable {
       100,
     );
     this.#item.name = 'Rstack';
-    this.#item.command = 'rstack.showMenu';
+    // Clicking goes to the extension log, the way Prettier's item does. It is
+    // the one action that is useful in every state, including the states where
+    // no stack is active and there is nothing else to offer.
+    this.#item.command = 'rstack.showOutput';
     this.render();
     this.#item.show();
   }
@@ -104,51 +143,6 @@ export class StatusBar implements vscode.Disposable {
     this.render();
   }
 
-  #canRestart(stack: StackId): boolean {
-    return RESTART_COMMANDS[stack] !== undefined && this.#active.has(stack);
-  }
-
-  /** The QuickPick behind the status bar item. */
-  async showMenu(): Promise<void> {
-    type Item = vscode.QuickPickItem & { readonly command?: string };
-    const items: Item[] = [];
-    for (const stack of STACK_IDS) {
-      const state = this.stateOf(stack);
-      items.push({
-        label: `${STATE_ICONS[state.kind]} ${STACK_LABELS[stack]}`,
-        description: stateText(state),
-        detail: 'Show output',
-        command: OUTPUT_COMMANDS[stack],
-      });
-      const restart = RESTART_COMMANDS[stack];
-      if (restart && this.#canRestart(stack)) {
-        items.push({
-          label: `$(refresh) Restart ${STACK_LABELS[stack]}`,
-          command: restart,
-        });
-      }
-    }
-    items.push(
-      { label: '', kind: vscode.QuickPickItemKind.Separator },
-      {
-        label: '$(output) Show Rstack extension log',
-        command: 'rstack.showOutput',
-      },
-      {
-        label: '$(arrow-right) Migrate Rslint/Rstest settings',
-        command: 'rstack.migrateSettings',
-      },
-    );
-
-    const picked = await vscode.window.showQuickPick(items, {
-      title: 'Rstack',
-      placeHolder: 'Select an action',
-    });
-    if (picked?.command) {
-      await vscode.commands.executeCommand(picked.command);
-    }
-  }
-
   private render(): void {
     const states = STACK_IDS.map((stack) => this.stateOf(stack));
     const worst = states.find((state) => state.kind === 'crashed')
@@ -179,7 +173,7 @@ export class StatusBar implements vscode.Disposable {
         this.#item.backgroundColor = undefined;
         break;
       default:
-        this.#item.text = '$(layers) Rstack';
+        this.#item.text = '$(zap) Rstack';
         this.#item.backgroundColor = undefined;
         break;
     }
@@ -187,20 +181,77 @@ export class StatusBar implements vscode.Disposable {
     const tooltip = new vscode.MarkdownString(undefined, true);
     // Command links are only rendered in trusted markdown.
     tooltip.isTrusted = true;
-    tooltip.appendMarkdown('**Rstack**\n\n');
-    for (const stack of STACK_IDS) {
+    // The stack rows are a raw `<table>` so the three columns line up; markdown
+    // has no alignment short of a table with a visible header row, and one row
+    // per paragraph left the action icons ragged. Raw html suppresses markdown
+    // inside it, so the cells use `<b>`/`<a>` rather than `**`/`[]()` — the
+    // sanitizer keeps `command:` hrefs as long as the string stays trusted.
+    tooltip.supportHtml = true;
+    const rows = STACK_IDS.map((stack) => {
       const state = this.stateOf(stack);
-      const links = [`[Output](command:${OUTPUT_COMMANDS[stack]})`];
-      const restart = RESTART_COMMANDS[stack];
-      if (restart && this.#canRestart(stack)) {
-        links.push(`[Restart](command:${restart})`);
+      const style = STATE_STYLES[state.kind];
+      const label = STACK_LABELS[stack];
+      // The per-stack actions repeat once per row, so they are icon-only: the
+      // row already names the stack and the anchor title carries the wording.
+      const actions = [
+        anchor(
+          stackCommand(stack, 'output.focus'),
+          '$(selection)',
+          `Show the ${label} log`,
+        ),
+      ];
+      if (this.#active.has(stack)) {
+        // Titled apart from "Relaunch" below: this one rebuilds only this
+        // stack and leaves the others running.
+        actions.push(
+          anchor(
+            stackCommand(stack, 'restart'),
+            '$(refresh)',
+            `Restart ${label}`,
+          ),
+        );
       }
-      tooltip.appendMarkdown(
-        `${STATE_ICONS[state.kind]} **${STACK_LABELS[stack]}** — ${stateText(
-          state,
-        )} · ${links.join(' · ')}\n\n`,
+      // The state text is the icon's title rather than row text: spelling out
+      // "running — 2 folders" on every row is noise once the icon says it, and
+      // the details worth reading (a crash message, a version mismatch) are
+      // exactly the long ones. `state.detail` is arbitrary text a stack
+      // produced, hence the escaping.
+      const status =
+        `<span title="${escapeAttribute(stateText(state))}" ` +
+        `style="color:var(--vscode-${style.color});">${style.icon}</span>`;
+      return (
+        `<tr><td>${status}</td><td>&nbsp;<b>${label}</b>&nbsp;&nbsp;</td>` +
+        `<td align="right">${actions.join('&nbsp;')}</td></tr>`
       );
-    }
+    });
+    // In the same table as the stacks so all six icons share one column; a
+    // second table would size its columns independently and the two halves
+    // would drift apart. One row per action rather than three across, for the
+    // same reason the actions above are icon-only — the hover sizes to its
+    // content, so the widest line sets the card's width.
+    //
+    // Unlike the per-stack restarts, "Relaunch" is unconditional: it is the
+    // action for "nothing is active", which is precisely when no per-stack
+    // restart is offered.
+    const shellActions = [
+      actionRow('rstack.restart', '$(debug-restart)', 'Relaunch'),
+      actionRow('rstack.showOutput', '$(selection)', 'Extension log'),
+      actionRow('rstack.migrateSettings', '$(arrow-right)', 'Migrate settings'),
+    ];
+    // The gap under the divider is an empty spacer row with an explicit
+    // `height`, the one pixel-precise spacing lever sanitized html has left:
+    // cell padding is unreachable (`style` survives only on a span, colours
+    // only) and everything line-based is quantized to a whole row. An empty
+    // cell has no line box, so its `height` is what it says. Above the rule the
+    // hover's own `hr { margin-top: 4px }` is enough — and its
+    // `margin-bottom: -4px` is why the underside needs the spacer at all.
+    const body = [
+      ...rows,
+      '<tr><td colspan="3"><hr></td></tr>',
+      '<tr><td colspan="3" height="4"></td></tr>',
+      ...shellActions,
+    ].join('');
+    tooltip.appendMarkdown(`<table>${body}</table>`);
     this.#item.tooltip = tooltip;
   }
 

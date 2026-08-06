@@ -1,17 +1,51 @@
 import { describe, expect, it, rs } from '@rstest/core';
+import type vscode from 'vscode';
+import type { DetectionSnapshot } from './types';
 
 // `detection.ts` imports the `vscode` namespace for the watcher/`findFiles`
 // paths. `detectionWatchPatterns` is pure, but the module still has to load, so
 // the namespace is stubbed away: unit tests run in plain Node, with no
-// extension host (unit tests are Rstest, E2E is Electron).
+// extension host (unit tests are Rstest, E2E is Electron). The stub carries
+// exactly what `DetectionService` touches with no workspace folder open — its
+// event plumbing — so the notification rules can be exercised here too.
 rs.mock('vscode', () => {
-  const vscode = {};
+  class EventEmitter {
+    readonly #listeners = new Set<(value: unknown) => void>();
+    readonly event = (listener: (value: unknown) => void) => {
+      this.#listeners.add(listener);
+      return {
+        dispose: () => {
+          this.#listeners.delete(listener);
+        },
+      };
+    };
+    fire(value: unknown): void {
+      for (const listener of [...this.#listeners]) {
+        listener(value);
+      }
+    }
+    dispose(): void {
+      this.#listeners.clear();
+    }
+  }
+  const disposable = { dispose: () => undefined };
+  const vscode = {
+    EventEmitter,
+    workspace: {
+      // No folder is open: every pass produces the empty snapshot, so the
+      // detection signature is unchanged by construction.
+      workspaceFolders: undefined,
+      onDidChangeWorkspaceFolders: () => disposable,
+      onDidChangeConfiguration: () => disposable,
+    },
+  };
   return { ...vscode, default: vscode };
 });
 
 import {
   DEFAULT_RSTEST_CONFIG_GLOBS,
   DETECTION_WATCH_NAMES,
+  DetectionService,
   detectionWatchPatterns,
 } from './detection';
 
@@ -158,5 +192,44 @@ describe('detectionWatchPatterns', () => {
         false,
       );
     }
+  });
+});
+
+/**
+ * With no workspace folder open every pass yields the empty snapshot, so the
+ * detection signature is identical across passes by construction — exactly the
+ * shape a lockfile write or a `rstack.restart` produces in a real workspace
+ * whose `node_modules` was replaced without touching a watched file.
+ */
+describe('DetectionService — notification rules', () => {
+  const fakeOutput = () =>
+    ({
+      info: () => undefined,
+      warn: () => undefined,
+      error: () => undefined,
+    }) as unknown as vscode.LogOutputChannel;
+
+  const listen = (service: DetectionService) => {
+    const seen: DetectionSnapshot[] = [];
+    service.onDidChange((snapshot) => seen.push(snapshot));
+    return seen;
+  };
+
+  it('stays quiet when the signature did not change', async () => {
+    const service = new DetectionService(fakeOutput());
+    const seen = listen(service);
+    await service.initialize();
+    await service.refresh();
+    expect(seen).toHaveLength(0);
+    service.dispose();
+  });
+
+  it('does not notify after disposal', async () => {
+    const service = new DetectionService(fakeOutput());
+    const seen = listen(service);
+    await service.initialize();
+    service.dispose();
+    await service.refresh();
+    expect(seen).toHaveLength(0);
   });
 });

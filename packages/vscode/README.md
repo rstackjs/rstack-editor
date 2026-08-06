@@ -26,7 +26,9 @@ The extension activates on startup, then decides **per workspace folder** which 
 | Rstest | `rstest.config.{mjs,ts,js,cjs,mts,cts}` (configurable) or `rstack.config.*` |
 | rstack-cli | `rstack.config.*` or `node_modules/.bin/rs` |
 
-Config files and lockfiles are watched, so detection re-runs without a window reload. Deprecated `rslint.json` / `rslint.jsonc` configs are **not** detection signals — migrate them with `rslint --init`.
+Config files and lockfiles are watched, so detection re-runs without a window reload. When something changes that none of those files record — a reinstall that leaves the lockfile untouched, or a `node_modules` that ends up broken — run **Rstack: Relaunch Extension** from the Command Palette (also on the status bar hover) to tear every tool down and start over. To rebuild a single tool, use **Rstack: Restart Rslint** / **Restart Rstest** / **Restart rs fmt**.
+
+A restart re-resolves every binary and package version and respawns every tool process, but it cannot reload JavaScript the editor has already imported from your project — Node keeps those modules for the lifetime of the window. If a reinstall replaced `@rslint/core` in place and lint still behaves like the old version, reload the window. Deprecated `rslint.json` / `rslint.jsonc` configs are **not** detection signals — migrate them with `rslint --init`.
 
 ## Supported package versions
 
