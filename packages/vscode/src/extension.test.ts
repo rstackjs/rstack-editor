@@ -21,6 +21,16 @@ const harness = rs.hoisted(() => {
     /** Stacks whose controller rejects in `register` / `dispose`. */
     failRegister: new Set<string>(),
     failDispose: new Set<string>(),
+    /**
+     * Stacks whose `dispose` blocks until released, so a test can hold a
+     * teardown open and act while it is in flight — the Rslint client's
+     * graceful-then-forced shutdown, in miniature.
+     */
+    blockDispose: new Map<string, Promise<void>>(),
+    /** Stacks whose `dispose` has started but not yet returned. */
+    disposing: new Set<string>(),
+    /** Set once the shell tears down the output channels it owns. */
+    channelsDisposed: false,
     /** Ordered `register:<stack>` / `dispose:<stack>` trace. */
     events: [] as string[],
     /** One entry per detection pass the shell asked for. */
@@ -40,6 +50,12 @@ const harness = rs.hoisted(() => {
         },
         dispose: async () => {
           state.events.push(`dispose:${stack}`);
+          const block = state.blockDispose.get(stack);
+          if (block) {
+            state.disposing.add(stack);
+            await block;
+            state.disposing.delete(stack);
+          }
           if (state.failDispose.has(stack)) {
             throw new Error(`${stack} refuses to dispose`);
           }
@@ -73,7 +89,9 @@ rs.mock('vscode', () => {
       warn: (message: string) => record('warn', message),
       error: (message: string) => record('error', message),
       show: () => undefined,
-      dispose: () => undefined,
+      dispose: () => {
+        harness.channelsDisposed = true;
+      },
     };
   };
   const vscode = {
@@ -203,11 +221,22 @@ const run = async (command: string): Promise<void> => {
 
 const restart = (): Promise<void> => run('rstack.restart');
 
+/**
+ * Lets every already-scheduled continuation run. A macrotask turn drains the
+ * whole microtask queue behind it, so this is "whatever was going to happen
+ * without further input has happened" — not a guess at a tick count.
+ */
+const settle = (): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, 0));
+
 describe('the shell restart command', () => {
   beforeEach(async () => {
     harness.detected = new Set(['rslint', 'rstest', 'fmt']);
     harness.failRegister.clear();
     harness.failDispose.clear();
+    harness.blockDispose.clear();
+    harness.disposing.clear();
+    harness.channelsDisposed = false;
     harness.events.length = 0;
     harness.refreshes = 0;
     harness.shellLog.length = 0;
@@ -359,5 +388,40 @@ describe('the shell restart command', () => {
       'register',
       'register',
     ]);
+  });
+
+  it('does not tear down shell resources while a restart is still disposing', async () => {
+    // `retire` drops the controller from the shell's map *before* awaiting its
+    // teardown, so during a restart there is a window where nothing is
+    // registered and the Rslint client is still shutting down. A `dispose()`
+    // that only walked that map finds it empty, disposes the channels out from
+    // under the in-flight teardown, and lets `deactivate()` resolve while the
+    // child processes are still alive.
+    //
+    // The assertion is on the channels rather than on deactivate's promise:
+    // "has not resolved yet" is a race with the microtask queue, whereas "the
+    // channel this teardown is still logging to is alive" is a fact.
+    let release = (): void => undefined;
+    harness.blockDispose.set(
+      'rslint',
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    const restarting = restart();
+    await settle();
+    expect(harness.disposing.has('rslint')).toBe(true);
+
+    const shutdown = deactivate();
+    await settle();
+
+    expect(harness.disposing.has('rslint')).toBe(true);
+    expect(harness.channelsDisposed).toBe(false);
+
+    release();
+    await Promise.all([restarting, shutdown]);
+    expect(harness.disposing.has('rslint')).toBe(false);
+    expect(harness.channelsDisposed).toBe(true);
   });
 });

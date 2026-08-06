@@ -421,14 +421,25 @@ class ExtensionShell {
 
   async dispose(): Promise<void> {
     this.#disposed = true;
-    // Same shape as the restart teardown: per-stack isolation, and deactivate
-    // runs against VS Code's shutdown budget, so the slow ones (the Rslint
-    // client's graceful-then-forced kill) overlap instead of queueing.
-    await Promise.allSettled(
-      [...this.#controllers].map(([stack, controller]) =>
-        this.retire(stack, controller),
-      ),
-    );
+    // Behind the shared queue rather than beside it. `retire` drops a
+    // controller from `#controllers` before awaiting its teardown, so a
+    // restart in flight leaves a window where the map is already empty and the
+    // Rslint client is still shutting down: disposing the channels there would
+    // pull them out from under it, and `deactivate()` would resolve before the
+    // child processes are gone. The queue is what makes "whatever was in
+    // flight has finished" something this can wait for, and `#disposed` above
+    // stops that pass from rebuilding anything on its way out.
+    //
+    // The pass itself keeps the restart's shape: per-stack isolation, and
+    // deactivate runs against VS Code's shutdown budget, so the slow ones
+    // overlap instead of queueing.
+    await this.enqueue(async () => {
+      await Promise.allSettled(
+        [...this.#controllers].map(([stack, controller]) =>
+          this.retire(stack, controller),
+        ),
+      );
+    });
     for (const subscription of this.#subscriptions) {
       subscription.dispose();
     }
