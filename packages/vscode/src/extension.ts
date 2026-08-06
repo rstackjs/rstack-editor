@@ -94,7 +94,12 @@ class ExtensionShell {
     );
 
     await this.#detection.initialize();
-    await this.reconcile();
+    // On the queue, not beside it. `registerCommands` runs before this method's
+    // first await, so a restart can be invoked from the palette while detection
+    // is still initialising — and it would then race this pass, with both
+    // finding an empty controller map and building a second controller that
+    // nothing owns.
+    await this.enqueue(() => this.reconcile());
 
     void maybePromptForMigration(this.context, this.#channels.shell);
   }

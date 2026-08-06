@@ -31,6 +31,17 @@ const harness = rs.hoisted(() => {
     disposing: new Set<string>(),
     /** Set once the shell tears down the output channels it owns. */
     channelsDisposed: false,
+    /** Holds the initial detection open, so a test can act during activation. */
+    blockDetection: undefined as Promise<void> | undefined,
+    /** Stacks whose `register` blocks until released. */
+    blockRegister: new Map<string, Promise<void>>(),
+    /** Stacks whose `register` has started but not yet returned. */
+    registering: new Set<string>(),
+    /**
+     * Stacks whose teardown began while their own `register` was still in
+     * flight — the signature of two passes running at once.
+     */
+    overlaps: [] as string[],
     /** Ordered `register:<stack>` / `dispose:<stack>` trace. */
     events: [] as string[],
     /** One entry per detection pass the shell asked for. */
@@ -43,6 +54,12 @@ const harness = rs.hoisted(() => {
       return {
         register: async () => {
           state.events.push(`register:${stack}`);
+          const block = state.blockRegister.get(stack);
+          if (block) {
+            state.registering.add(stack);
+            await block;
+            state.registering.delete(stack);
+          }
           if (state.failRegister.has(stack)) {
             throw new Error(`${stack} refuses to register`);
           }
@@ -50,6 +67,9 @@ const harness = rs.hoisted(() => {
         },
         dispose: async () => {
           state.events.push(`dispose:${stack}`);
+          if (state.registering.has(stack)) {
+            state.overlaps.push(stack);
+          }
           const block = state.blockDispose.get(stack);
           if (block) {
             state.disposing.add(stack);
@@ -173,6 +193,7 @@ rs.mock('./detection', () => {
       return snapshot();
     }
     async initialize() {
+      await harness.blockDetection;
       return this.snapshot;
     }
     async refresh() {
@@ -237,6 +258,10 @@ describe('the shell restart command', () => {
     harness.blockDispose.clear();
     harness.disposing.clear();
     harness.channelsDisposed = false;
+    harness.blockDetection = undefined;
+    harness.blockRegister.clear();
+    harness.registering.clear();
+    harness.overlaps.length = 0;
     harness.events.length = 0;
     harness.refreshes = 0;
     harness.shellLog.length = 0;
@@ -388,6 +413,42 @@ describe('the shell restart command', () => {
       'register',
       'register',
     ]);
+  });
+
+  it('serialises a restart invoked while activation is still running', async () => {
+    // `registerCommands` runs before activation's first await, so the palette
+    // can reach restart while activation is still bringing stacks up. If
+    // activation's own reconcile does not ride the queue, the restart runs
+    // straight through it and retires a controller whose `register()` has not
+    // returned — that controller then goes on to publish its exports and flip
+    // `active` on, having already been disposed.
+    await deactivate();
+    harness.events.length = 0;
+    harness.refreshes = 0;
+    harness.overlaps.length = 0;
+
+    let releaseRegister = (): void => undefined;
+    harness.blockRegister.set(
+      'rslint',
+      new Promise<void>((resolve) => {
+        releaseRegister = resolve;
+      }),
+    );
+
+    const activating = activate(context);
+    await settle();
+    expect(harness.registering.has('rslint')).toBe(true);
+
+    const restarting = run('rstack.restart');
+    await settle();
+
+    // The restart must still be waiting its turn, not tearing down a stack
+    // that is in the middle of coming up.
+    expect(harness.overlaps).toEqual([]);
+
+    releaseRegister();
+    await Promise.all([activating, restarting]);
+    expect(harness.overlaps).toEqual([]);
   });
 
   it('does not tear down shell resources while a restart is still disposing', async () => {
