@@ -334,14 +334,7 @@
             "type": "boolean",
             "default": true,
             "scope": "window",
-            "markdownDescription": "Enable the `rs fmt` document formatter for detected workspace folders. Requires `#rstack.enable#`. This is a window-level kill switch; which folders are formatted is decided by detection. Phase 2 — the formatter is not registered yet."
-          },
-          "rstack.fmt.suggestDefaultFormatter": {
-            "order": 1,
-            "type": "boolean",
-            "default": true,
-            "scope": "resource",
-            "markdownDescription": "Offer a one-time prompt to set Rstack as the workspace `editor.defaultFormatter` when `rs fmt` is detected. The extension never writes `editor.defaultFormatter` without confirmation."
+            "markdownDescription": "Enable the `rs fmt` document formatter for detected workspace folders. Requires `#rstack.enable#`. This is a window-level kill switch; which folders are formatted is decided by detection."
           }
         }
       }

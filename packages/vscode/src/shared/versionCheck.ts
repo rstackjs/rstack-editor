@@ -11,12 +11,13 @@ import { readPackageJson } from './packageResolve';
  * - `@rslint/core >= 0.7.2` — first version whose package exports
  *   `./config-loader` and `./eslint-plugin`.
  * - `@rstest/core >= 0.6.0` — the existing `MIN_CORE_VERSION` upstream.
- * - `rstack >= 0.3.2` — first release containing `rs fmt --stdin-filepath`.
+ * - `rstack >= 0.3.5` — first release with the full supported config and
+ *   formatter surface.
  */
 export const SUPPORT_MATRIX = {
   '@rslint/core': '>=0.7.2',
   '@rstest/core': '>=0.6.0',
-  rstack: '>=0.3.2',
+  rstack: '>=0.3.5',
 } as const;
 
 export type SupportedPackage = keyof typeof SUPPORT_MATRIX;
