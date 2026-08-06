@@ -16,6 +16,18 @@ import { pathToFileURL } from 'node:url';
  *   exactly the bundling seam the resolve-from-project adaptation deletes.
  * - Windows: only `file:`/`data:`/`node:` URLs are accepted by Node's default
  *   ESM loader, so absolute paths are converted with `pathToFileURL`.
+ *
+ * There is deliberately no invalidation hook, and a restart does not get one.
+ * The memo below is the *second* cache in front of these modules: Node's own
+ * ESM registry is keyed by resolved URL and lives as long as the extension
+ * host, so once a path has loaded, re-importing it returns the identical
+ * module object no matter what this map says. Adding a cache-busting query to
+ * the specifier does reload the entry module, but a relative specifier inside
+ * it does not inherit the query — the result is a fresh entry wired to its own
+ * stale dependencies, which is worse than being consistently stale. A
+ * `node_modules` replaced in place under an unchanged path therefore needs a
+ * window reload; see the README's note on what restart does and does not
+ * recover.
  */
 const cache = new Map<string, Promise<unknown>>();
 
