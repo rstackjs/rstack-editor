@@ -192,10 +192,12 @@ class FmtController implements StackController {
    * "the standby tracks the active editor", so the editor is never captured
    * when the arm was scheduled.
    *
-   * Nothing formattable being active leaves the standby alone: a peek at the
-   * output panel must not cost the user their warm process. A formattable
-   * document that cannot be armed is the other case — the editor really did
-   * move on, so the standby goes with it.
+   * Nothing formattable being active leaves the standby alone, whether the
+   * active editor holds no text document at all (a settings tab, an image
+   * preview) or holds one this stack does not format. Neither is worth a kill:
+   * the reap already bounds an idle standby, and both are a keystroke away
+   * from the file that owns it. A formattable document that cannot be armed is
+   * the other case — the editor really did move on, so the standby goes too.
    */
   private armActiveEditor(): void {
     const context = this.#context;
