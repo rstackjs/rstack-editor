@@ -128,18 +128,15 @@ class FmtController implements StackController {
         this.provideDocumentFormattingEdits(document, token),
     };
     // `rs fmt` loads the project config while it drains stdin, so a parked
-    // process already carries the old config. Detection does not fire on config
-    // *content* edits — its signature only tracks which files exist — so the
-    // standby needs its own watcher over the same glob.
-    // Create and delete already arrive as detection changes (the file set is
-    // part of its signature), so this watcher covers only the content edits
-    // detection cannot see — the same split `stacks/test/project.ts` uses.
-    const configWatcher = vscode.workspace.createFileSystemWatcher(
-      RSTACK_CONFIG_GLOB,
-      true,
-      false,
-      true,
-    );
+    // process already carries the old config and every config event has to
+    // invalidate it. Detection cannot stand in for this watcher: its signature
+    // records only which config files exist, so it misses a content edit, and
+    // it misses the delete/create pair an atomic save produces for one
+    // unchanged path just the same.
+    const configWatcher =
+      vscode.workspace.createFileSystemWatcher(RSTACK_CONFIG_GLOB);
+    const onConfigEvent = (uri: vscode.Uri): void =>
+      this.invalidateStandby(`${uri.fsPath} changed`);
     this.#subscriptions.push(
       context.onDidChangeDetection((snapshot) => {
         this.#snapshot = snapshot;
@@ -156,9 +153,9 @@ class FmtController implements StackController {
         provider,
       ),
       configWatcher,
-      configWatcher.onDidChange((uri) =>
-        this.invalidateStandby(`${uri.fsPath} changed`),
-      ),
+      configWatcher.onDidCreate(onConfigEvent),
+      configWatcher.onDidChange(onConfigEvent),
+      configWatcher.onDidDelete(onConfigEvent),
       vscode.window.onDidChangeActiveTextEditor(() => this.scheduleArm()),
     );
     this.reportRunning(context, context.detection);
