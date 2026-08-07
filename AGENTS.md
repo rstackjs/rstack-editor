@@ -16,3 +16,13 @@ Unified editor support for the [Rstack](https://rstack.rs) toolchain. pnpm works
 - If extension source changed, also run the E2E slice covering the change (see `packages/vscode/AGENTS.md`). E2E launches a real VS Code and is the ground truth for editor behavior — unit tests are not a substitute.
 - Never delete `packages/vscode/.vscode-test/` — it caches the VS Code download the E2E suites reuse.
 - Report real command results only; never claim green without running.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues (`rstackjs/rstack-editor`), operated via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root, created lazily. See `docs/agents/domain.md`.

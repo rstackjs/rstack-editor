@@ -162,3 +162,6 @@ packages/vscode/LICENSE
 
 # Claude Code local worktrees
 .claude/worktrees/
+
+# Per-developer agent settings; the shared skills under .claude/skills/ are tracked.
+.claude/settings.local.json
