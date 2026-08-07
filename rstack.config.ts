@@ -45,6 +45,10 @@ define.fmt({
     'packages/vscode/tests/e2e/fixtures/**',
     'packages/vscode/tests/e2e/rstest/fixtures/**',
     'packages/vscode/tests/e2e/lint/fixtures/**',
+    // Vendored agent skills mirror mattpocock/skills byte-for-byte;
+    // skills-lock.json hashes them, so formatting causes update churn.
+    '.agents/**',
+    '.claude/skills/**',
   ],
 });
 
