@@ -24,7 +24,7 @@ export const sameStandbyKey = (left: StandbyKey, right: StandbyKey): boolean =>
   left.rsBinJs === right.rsBinJs;
 
 /**
- * How long an armed-but-unconsumed standby is kept. Reaping is not an error —
+ * How long an armed-but-unconsumed standby is kept. Expiry is not an error —
  * it reclaims the memory of a process nobody is going to use, and the next
  * eligible event arms a new one.
  */
@@ -106,7 +106,7 @@ export class FmtStandby {
       key,
       process: spawned.process,
       idleTimer: setTimeout(() => {
-        this.kill('reaped after idling');
+        this.kill('expired after idling');
       }, this.options.idleTimeoutMs ?? IDLE_TIMEOUT_MS),
     };
     this.#armed = armed;

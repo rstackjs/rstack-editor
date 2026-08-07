@@ -171,19 +171,19 @@ describe('FmtStandby', () => {
     expect(consume(standby, armed, 'x')).toBeUndefined();
   });
 
-  it('reaps a standby nobody consumed', async () => {
+  it('expires a standby nobody consumed', async () => {
     const standby = createStandby({ idleTimeoutMs: 20 });
     const armed = key(echoStub());
     standby.arm(armed);
     await eventually(
       () => standby.armedFilePath === undefined,
-      'the standby to be reaped',
+      'the standby to expire',
     );
-    expect(logs).toContain('Standby killed (reaped after idling)');
+    expect(logs).toContain('Standby killed (expired after idling)');
     expect(consume(standby, armed, 'x')).toBeUndefined();
   });
 
-  it('does not reap a standby that is serving a request', async () => {
+  it('does not expire a standby that is serving a request', async () => {
     const standby = createStandby({ idleTimeoutMs: 30 });
     const armed = key(
       writeStub(

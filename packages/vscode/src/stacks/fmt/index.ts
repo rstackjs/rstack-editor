@@ -195,7 +195,7 @@ class FmtController implements StackController {
    * Nothing formattable being active leaves the standby alone, whether the
    * active editor holds no text document at all (a settings tab, an image
    * preview) or holds one this stack does not format. Neither is worth a kill:
-   * the reap already bounds an idle standby, and both are a keystroke away
+   * an idle standby expires on its own, and both are a keystroke away
    * from the file that owns it. A formattable document that cannot be armed is
    * the other case — the editor really did move on, so the standby goes too.
    */
@@ -400,7 +400,7 @@ class FmtController implements StackController {
       this.#abortController.signal.removeEventListener('abort', abortRequest);
       // A standby serves exactly one request, and a real format request is
       // itself proof the active file is worth one — re-arm after cold serves
-      // too, so a reaped or crashed standby comes back on the next use
+      // too, so an expired or crashed standby comes back on the next use
       // instead of leaving the file cold until the editor changes. Scheduled
       // rather than immediate: spawning here would delay the edits the caller
       // is waiting for.
