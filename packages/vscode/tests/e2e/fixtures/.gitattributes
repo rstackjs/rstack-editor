@@ -1,0 +1,5 @@
+# Fixture sources must be byte-identical on every platform: the fmt E2E
+# asserts the exact formatted output, and a CRLF checkout (git autocrlf on
+# the Windows runners) would survive formatting — VS Code drops EOL-only
+# changes from computeMoreMinimalEdits, so the assertion sees \r\n.
+* text eol=lf

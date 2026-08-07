@@ -1,6 +1,6 @@
 # Rstack for VS Code
 
-One extension for the whole [Rstack](https://rstack.rs) toolchain: [Rslint](https://github.com/web-infra-dev/rslint) linting, [Rstest](https://github.com/web-infra-dev/rstest) testing, and [rstack-cli](https://github.com/rstackjs/rstack-cli) support (coming soon). It replaces the standalone `rstack.rslint` and `rstack.rstest` extensions.
+One extension for the whole [Rstack](https://rstack.rs) toolchain: [Rslint](https://github.com/web-infra-dev/rslint) linting, [Rstest](https://github.com/web-infra-dev/rstest) testing, and [rstack-cli](https://github.com/rstackjs/rstack-cli) support. It replaces the standalone `rstack.rslint` and `rstack.rstest` extensions.
 
 ## Installation
 
@@ -13,7 +13,7 @@ The extension ships no tool binaries: `@rslint/core`, `@rstest/core` and `rstack
 
 - **Linting (Rslint)** — diagnostics, quick fixes and auto-fix on save via Rslint's language server.
 - **Testing (Rstest)** — a Test Explorer tree built from your test files: run or debug individual tests, suites or files; the tree stays in sync as files change; failed tests show up as editor diagnostics.
-- **rstack-cli** — detected today, integration lands in upcoming releases, starting with formatting.
+- **rstack-cli** — document formatting through the project-local `rs fmt` CLI.
 - **One status bar item** — a single `Rstack` entry shows which tools are active in the current workspace and why.
 
 ## Detection
@@ -38,7 +38,7 @@ The project-resolved packages are checked against a support matrix at runtime; a
 | -------------- | --------- |
 | `@rslint/core` | `>=0.7.2` |
 | `@rstest/core` | `>=0.6.0` |
-| `rstack`       | `>=0.3.2` |
+| `rstack`       | `>=0.3.5` |
 
 ## Auto-fix on save (Rslint)
 
@@ -94,8 +94,9 @@ All settings live under the unified `rstack.*` namespace. There are no `rslint.*
 | `rstack.rstest.debuggerAddress` | — | Debugger address. |
 | `rstack.rstest.terminalShellPath` | — | Shell used by **Run in Terminal**. |
 | `rstack.rstest.terminalShellArgs` | `[]` | Shell args for **Run in Terminal**. |
-| `rstack.fmt.enable` | `true` | Enable/disable the formatter integration (upcoming). |
-| `rstack.fmt.suggestDefaultFormatter` | `true` | Offer to set `editor.defaultFormatter` once rstack-cli is detected. |
+| `rstack.fmt.enable` | `true` | Enable/disable the formatter integration. |
+
+To use `rs fmt` as the formatter for supported documents, opt in through your VS Code settings: `"editor.defaultFormatter": "rstack.rstack"`. The extension never changes `editor.defaultFormatter` itself.
 
 ## Migrating from the standalone extensions
 

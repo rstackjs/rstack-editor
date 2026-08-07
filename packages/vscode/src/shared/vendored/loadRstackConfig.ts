@@ -6,9 +6,9 @@
 // explicit-path config loader plus adapter exports, rslint accepting per-root
 // fallback config candidates on `rslint/configRefresh`, and a generic
 // evaluator-module seam shared by the config host and plugin workers). The
-// loader is kept for the phase-2 fmt stack (evaluating `define.fmt()`) and
-// possible future status refinements; today only
-// `nativeTypeStrippingAvailable` is consumed.
+// formatter deliberately leaves `define.fmt()` evaluation to the CLI. This
+// copy remains for the Rslint jiti preflight's `nativeTypeStrippingAvailable`
+// probe and for direct loader unit coverage.
 //
 // Vendored from rstackjs/rstack-cli `packages/rstack/src/config.ts`
 // (origin/main @ 6494ba2, rstack@0.3.2). Only three things differ from upstream:

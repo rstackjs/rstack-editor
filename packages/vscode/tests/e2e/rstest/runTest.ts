@@ -78,6 +78,9 @@ async function main() {
     extensionTestsPath,
     launchArgs: [
       workspaceFile,
+      // Keep VS Code's CI-only extension inventory and AgentHost info logs out
+      // of test output while preserving an opt-in for verbose diagnosis.
+      `--log=${process.env.VSCODE_TEST_LOG_LEVEL ?? 'warn'}`,
       // Only the extension under development runs: no user extension may
       // register a competing test controller.
       '--disable-extensions',

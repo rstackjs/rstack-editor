@@ -136,6 +136,9 @@ async function runIsolatedSuite(
         suite.workspaceEntry
           ? resolveSandboxEntry(workspaceCopy, suite.workspaceEntry)
           : workspaceCopy,
+        // Keep VS Code's CI-only extension inventory and AgentHost info logs
+        // out of test output while preserving an opt-in for diagnosis.
+        `--log=${process.env.VSCODE_TEST_LOG_LEVEL ?? 'warn'}`,
         '--disable-extensions',
         '--disable-updates',
         // The fixtures spawn project-local binaries, which Restricted Mode

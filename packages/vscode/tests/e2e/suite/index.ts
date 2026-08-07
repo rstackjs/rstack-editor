@@ -24,12 +24,23 @@ export function run(): Promise<void> {
 
   return new Promise((resolve, reject) => {
     try {
-      mocha.run((failures) => {
+      // Mocha's reporter writes to the extension host's stdout, which never
+      // reaches the harness log — the rejection message is the only channel
+      // that does, so it must name the failures itself.
+      const failed: string[] = [];
+      const runner = mocha.run((failures) => {
         if (failures > 0) {
-          reject(new Error(`${failures} E2E test(s) failed.`));
+          reject(
+            new Error(`${failures} E2E test(s) failed:\n${failed.join('\n')}`),
+          );
         } else {
           resolve();
         }
+      });
+      runner.on('fail', (test, error) => {
+        failed.push(
+          `- ${test.fullTitle()}: ${error instanceof Error ? error.message : String(error)}`,
+        );
       });
     } catch (error) {
       reject(error instanceof Error ? error : new Error(String(error)));

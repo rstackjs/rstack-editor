@@ -97,7 +97,10 @@ export class StatusBar implements vscode.Disposable {
   // disposed, and the reconcile that follows will retry it anyway).
   readonly #active = new Set<StackId>();
 
-  constructor() {
+  readonly #output: vscode.LogOutputChannel;
+
+  constructor(output: vscode.LogOutputChannel) {
+    this.#output = output;
     this.#item = vscode.window.createStatusBarItem(
       'rstack.status',
       vscode.StatusBarAlignment.Right,
@@ -125,7 +128,19 @@ export class StatusBar implements vscode.Disposable {
   }
 
   setState(stack: StackId, state: StackState): void {
+    // Transitions go to the shell log so the hover's icon always has a written
+    // "why" behind it. Same-text repeats are dropped: a stack re-reporting its
+    // current state (e.g. `running` after every format) is not a transition,
+    // and an identical text also renders identically, so the rebuild is
+    // skipped along with the log line. Text alone discriminates the state:
+    // every kind has a distinct `stateText` prefix.
+    const text = stateText(state);
+    const unchanged = text === stateText(this.stateOf(stack));
     this.#states.set(stack, state);
+    if (unchanged) {
+      return;
+    }
+    this.#output.info(`${STACK_LABELS[stack]} status: ${text}`);
     this.render();
   }
 

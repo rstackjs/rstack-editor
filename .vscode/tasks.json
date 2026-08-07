@@ -23,7 +23,11 @@
         "background": {
           "activeOnStart": true,
           "beginsPattern": "build started\\.\\.\\.",
-          "endsPattern": "built in"
+          // Not "built in" — that line fires once per target, and the tiny
+          // worker bundle finishes seconds before the extension bundle, which
+          // released the F5 launch against a half-written dist/. This line is
+          // printed once, after every target completed.
+          "endsPattern": "build completed"
         }
       },
       "presentation": {
