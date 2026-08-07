@@ -83,6 +83,10 @@ class FmtController implements StackController {
       context.onDidChangeDetection((snapshot) => {
         this.#snapshot = snapshot;
         this.#loggedOnce.clear();
+        // The reconcile leaves a still-detected controller alone, so the
+        // running reason must follow the new snapshot here rather than wait
+        // for the next successful format.
+        this.reportRunning(context, snapshot);
       }),
       vscode.languages.registerDocumentFormattingEditProvider(
         SELECTOR,
@@ -99,6 +103,11 @@ class FmtController implements StackController {
     snapshot: DetectionSnapshot,
   ): void {
     const names = snapshot.foldersFor('fmt').map((entry) => entry.folder.name);
+    if (names.length === 0) {
+      // Nothing detected means the shell is about to retire this controller;
+      // its gate state, not `running`, is the truthful report.
+      return;
+    }
     context.status.running(
       names.length <= 3
         ? `detected in ${names.join(', ')}`
