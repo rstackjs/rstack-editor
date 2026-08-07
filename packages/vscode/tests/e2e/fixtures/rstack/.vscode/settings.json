@@ -1,0 +1,11 @@
+{
+  // Playground convenience for the F5 launch: saving any file in this fixture
+  // formats it through the extension under development. The launch config's
+  // isolated `--profile` keeps personal user settings (and their
+  // language-scoped formatter overrides) out, so these two general keys are
+  // sufficient and cover every language the fmt stack registers. The E2E
+  // suites never save documents in this fixture, so the settings cannot leak
+  // into assertions.
+  "editor.defaultFormatter": "rstack.rstack",
+  "editor.formatOnSave": true
+}

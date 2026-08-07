@@ -13,6 +13,18 @@
       "args": [
         "--extensionDevelopmentPath=${workspaceFolder}/packages/vscode",
         "--disable-extensions",
+        // An isolated, auto-created profile, so personal user settings
+        // (formatters, format-on-save, keybindings) cannot leak into the
+        // playground. `--user-data-dir` would be the stronger isolation, but
+        // the extension-host debugger strips it; `--profile` is the supported
+        // mechanism for debug launches.
+        "--profile=rstack-playground",
+        // A fresh profile would otherwise prompt for workspace trust and greet
+        // with the welcome tour on every first launch.
+        "--disable-workspace-trust",
+        "--skip-welcome",
+        "--skip-release-notes",
+        "--disable-updates",
         "${workspaceFolder}/packages/vscode/${input:playgroundTarget}"
       ],
       "outFiles": ["${workspaceFolder}/packages/vscode/dist/**/*.js"],
