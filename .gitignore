@@ -149,10 +149,10 @@ tests-dist/
 
 # E2E fixtures install published npm versions on demand; only
 # their manifests and configs are tracked.
-packages/vscode/tests/e2e/fixtures/*/node_modules/
-packages/vscode/tests/e2e/fixtures/*/pnpm-lock.yaml
-packages/vscode/tests/e2e/lint/fixtures/pnpm-lock.yaml
-packages/vscode/tests/e2e/rstest/fixtures/*/pnpm-lock.yaml
+packages/vscode/e2e/fixtures/*/node_modules/
+packages/vscode/e2e/fixtures/*/pnpm-lock.yaml
+packages/vscode/e2e/lint/fixtures/pnpm-lock.yaml
+packages/vscode/e2e/rstest/fixtures/*/pnpm-lock.yaml
 
 # Build-time copy of the workspace root LICENSE (see rslib.config.mts)
 packages/vscode/LICENSE

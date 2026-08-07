@@ -10,9 +10,9 @@ define.lint(async () => {
         '**/tests-dist/**',
         '**/.vscode-test/**',
         // Fixture projects are user-land sample code, not extension source.
-        'packages/vscode/tests/e2e/fixtures/**',
-        'packages/vscode/tests/e2e/rstest/fixtures/**',
-        'packages/vscode/tests/e2e/lint/fixtures/**',
+        'packages/vscode/e2e/fixtures/**',
+        'packages/vscode/e2e/rstest/fixtures/**',
+        'packages/vscode/e2e/lint/fixtures/**',
       ],
     },
     ts.configs.recommended,
@@ -42,9 +42,9 @@ define.fmt({
   ignorePatterns: [
     // E2E fixture sources are asserted on byte-for-byte (diagnostic ranges,
     // autofix results, AST-collected line numbers) — formatting breaks them.
-    'packages/vscode/tests/e2e/fixtures/**',
-    'packages/vscode/tests/e2e/rstest/fixtures/**',
-    'packages/vscode/tests/e2e/lint/fixtures/**',
+    'packages/vscode/e2e/fixtures/**',
+    'packages/vscode/e2e/rstest/fixtures/**',
+    'packages/vscode/e2e/lint/fixtures/**',
     // Vendored agent skills mirror mattpocock/skills byte-for-byte;
     // skills-lock.json hashes them, so formatting causes update churn.
     '.agents/**',

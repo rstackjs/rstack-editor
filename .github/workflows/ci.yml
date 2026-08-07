@@ -108,7 +108,7 @@ jobs:
             vscode-test-${{ runner.os }}-
 
       # The E2E fixtures install published npm packages at test time
-      # (tests/e2e/setupFixtures.mjs, invoked by test:e2e), so this step needs
+      # (e2e/setupFixtures.mjs, invoked by test:e2e), so this step needs
       # network access.
       - name: E2E Test
         run: pnpm run test:e2e

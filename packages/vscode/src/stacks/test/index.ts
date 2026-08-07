@@ -71,7 +71,7 @@ class Rstest implements vscode.Disposable {
 
   /**
    * What upstream's `activate()` effectively exported (the `Rstest` instance):
-   * the E2E suites (`tests/e2e/rstest/`) consume `testController`, `runProfile`
+   * the E2E suites (`e2e/rstest/`) consume `testController`, `runProfile`
    * and `startTestRun`. The shell republishes this object through the
    * extension's public exports (`RstackExtensionExports.whenStackActive`).
    * All three values are stable for the lifetime of one registration; a
