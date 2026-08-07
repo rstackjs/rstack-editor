@@ -8,6 +8,20 @@ let provider: vscode.DocumentFormattingEditProvider;
 let armedFilePath: () => string | undefined;
 let lastServe: () => 'hot' | 'cold' | undefined;
 
+/**
+ * Shows a document and waits for it to own the standby. Showing it is what arms
+ * one — the invariant is that the standby tracks the active editor — but arming
+ * is debounced and an earlier test may have left a standby on another file, so
+ * the wait polls until the armed file is this one.
+ */
+const armStandbyFor = async (uri: vscode.Uri): Promise<vscode.TextEditor> => {
+  const editor = await vscode.window.showTextDocument(uri);
+  await eventually(() => {
+    assert.equal(armedFilePath(), uri.fsPath);
+  }, `the standby to be armed for ${uri.fsPath}`);
+  return editor;
+};
+
 const folderNamed = (name: string): vscode.WorkspaceFolder => {
   const folder = (vscode.workspace.workspaceFolders ?? []).find(
     (candidate) => candidate.name === name,
@@ -74,14 +88,7 @@ suite('fmt', () => {
       'src',
       'needs-format.ts',
     );
-    // Showing the document is what arms the standby: the invariant is that the
-    // standby tracks the active editor.
-    const editor = await vscode.window.showTextDocument(uri);
-    // Arming is debounced, and an earlier test may have left a standby on
-    // another file, so poll until the armed file is this one.
-    await eventually(() => {
-      assert.equal(armedFilePath(), uri.fsPath);
-    }, 'the standby to be armed for needs-format.ts');
+    const editor = await armStandbyFor(uri);
 
     const edits = await vscode.commands.executeCommand<vscode.TextEdit[]>(
       'vscode.executeFormatDocumentProvider',
@@ -107,6 +114,25 @@ suite('fmt', () => {
     // The cold path produces the same text, so only this proves the request
     // actually consumed the standby.
     assert.equal(lastServe(), 'hot');
+  });
+
+  test('clears the standby when the active editor cannot be armed', async () => {
+    await armStandbyFor(
+      vscode.Uri.joinPath(folderNamed('rstack').uri, 'src', 'needs-format.ts'),
+    );
+
+    // TypeScript, so the provider matches it, but fmt is not detected for this
+    // folder — nothing can be armed, and the previous file's standby must not
+    // outlive the editor that owned it.
+    const unarmable = vscode.Uri.joinPath(
+      folderNamed('rslint').uri,
+      'src',
+      'index.ts',
+    );
+    await vscode.window.showTextDocument(unarmable);
+    await eventually(() => {
+      assert.equal(armedFilePath(), undefined);
+    }, 'the standby to be cleared');
   });
 
   test('returns no edits for a folder where fmt is not detected', async () => {

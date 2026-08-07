@@ -190,9 +190,12 @@ class FmtController implements StackController {
   /**
    * Arms a standby for whatever the active editor is *now* — the invariant is
    * "the standby tracks the active editor", so the editor is never captured
-   * when the arm was scheduled. Ineligible editors leave the standby alone
-   * rather than killing it: a peek at the output panel must not cost the user
-   * their warm process.
+   * when the arm was scheduled.
+   *
+   * Nothing formattable being active leaves the standby alone: a peek at the
+   * output panel must not cost the user their warm process. A formattable
+   * document that cannot be armed is the other case — the editor really did
+   * move on, so the standby goes with it.
    */
   private armActiveEditor(): void {
     const context = this.#context;
@@ -219,6 +222,10 @@ class FmtController implements StackController {
       context.output.debug(
         `Standby not armed for ${document.uri.fsPath}: ${resolution.kind}`,
       );
+      // The editor still moved to another file, so the previous file's standby
+      // no longer tracks it. `arm` would have killed it; there is nothing to
+      // arm here, so this path has to.
+      standby.kill('the active editor moved to a file that cannot be armed');
       return;
     }
     standby.arm(standbyKey(document.uri, resolution.target));
