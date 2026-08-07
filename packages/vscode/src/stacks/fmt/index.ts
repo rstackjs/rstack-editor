@@ -1,11 +1,12 @@
 import path from 'node:path';
 import vscode from 'vscode';
+import { RSTACK_CONFIG_GLOB } from '../../detection';
 import {
   findPackageJsonUncached,
   readPackageJson,
 } from '../../shared/packageResolve';
 import {
-  readPackageVersion,
+  checkPackageVersion,
   reportVersionCheck,
 } from '../../shared/versionCheck';
 import type {
@@ -20,6 +21,7 @@ import {
   runRsFmt,
   stderrTail,
 } from './run';
+import { FmtStandby, type StandbyKey } from './standby';
 
 // prettier 3.9.6 getSupportInfo() vscodeLanguageIds snapshot (rs fmt's pinned
 // prettier). Revisit when the pinned prettier changes.
@@ -56,9 +58,48 @@ const SELECTOR: vscode.DocumentSelector = LANGUAGE_IDS.map((language) => ({
 }));
 
 /**
- * Spawn-per-request formatter backed by the project-resolved rstack CLI. The
- * process cwd selects the nearest governing rstack config because `rs fmt`
- * intentionally performs cwd-only config resolution.
+ * How long the active editor must hold still before it gets a standby. Arming
+ * spawns a process, so scrolling through a dozen tabs must not spawn a dozen
+ * children; the first arm at registration and the re-arm right after a consume
+ * skip the wait because both target an editor that is already settled.
+ */
+const ARM_DEBOUNCE_MS = 2_000;
+
+/** Everything a format request needs once the folder has been resolved. */
+interface FmtTarget {
+  readonly cwd: string;
+  readonly rsBinJs: string;
+}
+
+const standbyKey = (uri: vscode.Uri, target: FmtTarget): StandbyKey => ({
+  cwd: target.cwd,
+  filePath: uri.fsPath,
+  rsBinJs: target.rsBinJs,
+});
+
+/**
+ * Resolution outcome, kept free of side effects so the arming path (which must
+ * stay silent) and the format path (which reports and logs) can share it.
+ */
+type FmtResolution =
+  | { readonly kind: 'ok'; readonly target: FmtTarget }
+  | { readonly kind: 'no-folder' }
+  | { readonly kind: 'undetected'; readonly folder: vscode.WorkspaceFolder }
+  | {
+      readonly kind: 'missing-package';
+      readonly folder: vscode.WorkspaceFolder;
+      readonly cwd: string;
+    }
+  | { readonly kind: 'version-mismatch'; readonly version: string | undefined };
+
+/**
+ * Formatter backed by the project-resolved rstack CLI. The process cwd selects
+ * the nearest governing rstack config because `rs fmt` intentionally performs
+ * cwd-only config resolution.
+ *
+ * A request is served either by consuming the standby (hot) or by spawning a
+ * process for it (cold); the two paths differ only in where the process came
+ * from.
  */
 class FmtController implements StackController {
   readonly id = 'fmt' as const;
@@ -71,18 +112,40 @@ class FmtController implements StackController {
   readonly #loggedOnce = new Set<string>();
   readonly #abortController = new AbortController();
   #disposed = false;
+  #standby: FmtStandby | undefined;
+  #armTimer: NodeJS.Timeout | undefined;
+  /** E2E-only: how the most recent format request was served. */
+  #lastServe: 'hot' | 'cold' | undefined;
 
   async register(context: StackContext): Promise<Record<string, unknown>> {
     this.#context = context;
     this.#snapshot = context.detection;
+    this.#standby = new FmtStandby({
+      log: (message) => context.output.debug(message),
+    });
     const provider: vscode.DocumentFormattingEditProvider = {
       provideDocumentFormattingEdits: (document, _options, token) =>
         this.provideDocumentFormattingEdits(document, token),
     };
+    // `rs fmt` loads the project config while it drains stdin, so a parked
+    // process already carries the old config. Detection does not fire on config
+    // *content* edits — its signature only tracks which files exist — so the
+    // standby needs its own watcher over the same glob.
+    // Create and delete already arrive as detection changes (the file set is
+    // part of its signature), so this watcher covers only the content edits
+    // detection cannot see — the same split `stacks/test/project.ts` uses.
+    const configWatcher = vscode.workspace.createFileSystemWatcher(
+      RSTACK_CONFIG_GLOB,
+      true,
+      false,
+      true,
+    );
     this.#subscriptions.push(
       context.onDidChangeDetection((snapshot) => {
         this.#snapshot = snapshot;
         this.#loggedOnce.clear();
+        // The cwd, the resolved bin and the config set can all have moved.
+        this.invalidateStandby('detection changed');
         // The reconcile leaves a still-detected controller alone, so the
         // running reason must follow the new snapshot here rather than wait
         // for the next successful format.
@@ -92,9 +155,128 @@ class FmtController implements StackController {
         SELECTOR,
         provider,
       ),
+      configWatcher,
+      configWatcher.onDidChange((uri) =>
+        this.invalidateStandby(`${uri.fsPath} changed`),
+      ),
+      vscode.window.onDidChangeActiveTextEditor(() => this.scheduleArm()),
     );
     this.reportRunning(context, context.detection);
-    return { languages: LANGUAGE_IDS, provider };
+    // The editor the user is already looking at needs no settling wait, but
+    // arming spawns a process and `register()` must return fast.
+    this.scheduleArm(0);
+    return {
+      languages: LANGUAGE_IDS,
+      provider,
+      armedFilePath: (): string | undefined => this.#standby?.armedFilePath,
+      lastServe: (): 'hot' | 'cold' | undefined => this.#lastServe,
+    };
+  }
+
+  /** Kills the standby, then re-arms the active editor through the debounce. */
+  private invalidateStandby(reason: string): void {
+    this.#standby?.kill(reason);
+    this.scheduleArm();
+  }
+
+  private scheduleArm(delayMs = ARM_DEBOUNCE_MS): void {
+    clearTimeout(this.#armTimer);
+    this.#armTimer = setTimeout(() => {
+      this.#armTimer = undefined;
+      this.armActiveEditor();
+    }, delayMs);
+  }
+
+  /**
+   * Arms a standby for whatever the active editor is *now* — the invariant is
+   * "the standby tracks the active editor", so the editor is never captured
+   * when the arm was scheduled. Ineligible editors leave the standby alone
+   * rather than killing it: a peek at the output panel must not cost the user
+   * their warm process.
+   */
+  private armActiveEditor(): void {
+    const context = this.#context;
+    const standby = this.#standby;
+    if (!context || !standby) {
+      return;
+    }
+    const document = vscode.window.activeTextEditor?.document;
+    // The provider's own selector is the eligibility rule, so the two cannot
+    // drift apart.
+    if (!document || vscode.languages.match(SELECTOR, document) === 0) {
+      return;
+    }
+    // Every invalidation kills the standby before asking for a re-arm, so an
+    // armed standby on this file is still valid — and resolving is synchronous
+    // filesystem work that runs on the UI thread.
+    if (standby.armedFilePath === document.uri.fsPath) {
+      return;
+    }
+    const resolution = this.resolve(document.uri);
+    if (resolution.kind !== 'ok') {
+      // Arming is silent: an unresolvable editor only means the next format
+      // there is cold, which is exactly what happened before the standby.
+      context.output.debug(
+        `Standby not armed for ${document.uri.fsPath}: ${resolution.kind}`,
+      );
+      return;
+    }
+    standby.arm(standbyKey(document.uri, resolution.target));
+  }
+
+  /**
+   * Where a document's `rs fmt` would run. Pure: it reports no status and logs
+   * nothing, because the arming path must not move the status bar.
+   */
+  private resolve(uri: vscode.Uri): FmtResolution {
+    const snapshot = this.#snapshot;
+    const folder = vscode.workspace.getWorkspaceFolder(uri);
+    if (!snapshot || !folder) {
+      return { kind: 'no-folder' };
+    }
+    const fmtDetection = snapshot.forFolder(folder)?.stacks.fmt;
+    if (!fmtDetection?.detected) {
+      return { kind: 'undetected', folder };
+    }
+
+    const cwd = pickConfigDir(
+      uri.fsPath,
+      fmtDetection.rstackConfigFiles.map((configUri) => configUri.fsPath),
+      folder.uri.fsPath,
+    );
+    const pkgJsonPath = findPackageJsonUncached('rstack', cwd);
+    if (!pkgJsonPath) {
+      return { kind: 'missing-package', folder, cwd };
+    }
+
+    // One read for both the version and the bin entry: `resolve` now runs on
+    // the arming path too, and `readPackageJson` re-reads from disk by design.
+    const pkg = readPackageJson(pkgJsonPath);
+    const version = typeof pkg?.version === 'string' ? pkg.version : undefined;
+    if (checkPackageVersion('rstack', version).kind === 'mismatch') {
+      // Reporting stays with the caller: the arming path must not move the
+      // status bar, and the format path goes through `reportVersionCheck` so
+      // the shared contract has one implementation.
+      return { kind: 'version-mismatch', version };
+    }
+
+    const bin = pkg?.bin;
+    let binEntry = 'bin/rs.js';
+    if (typeof bin === 'string') {
+      binEntry = bin;
+    } else if (bin && typeof bin === 'object') {
+      const rs = (bin as Record<string, unknown>).rs;
+      if (typeof rs === 'string') {
+        binEntry = rs;
+      }
+    }
+    return {
+      kind: 'ok',
+      target: {
+        cwd,
+        rsBinJs: path.resolve(path.dirname(pkgJsonPath), binEntry),
+      },
+    };
   }
 
   /** `running` always carries the reason the stack is on: where it was detected. */
@@ -130,15 +312,15 @@ class FmtController implements StackController {
       return [];
     }
 
-    const folder = vscode.workspace.getWorkspaceFolder(document.uri);
-    if (!folder) {
+    const resolution = this.resolve(document.uri);
+    if (resolution.kind === 'no-folder') {
       return [];
     }
-    const fmtDetection = snapshot.forFolder(folder)?.stacks.fmt;
-    if (!fmtDetection?.detected) {
+    if (resolution.kind === 'undetected') {
       // The formatter is offered per language, so a request can land in a
       // folder without an rstack setup. That is routine, not a fault — one
       // info line per folder says why nothing happened.
+      const folder = resolution.folder;
       if (!this.#loggedOnce.has(`undetected:${folder.uri.toString()}`)) {
         this.#loggedOnce.add(`undetected:${folder.uri.toString()}`);
         context.output.info(
@@ -148,50 +330,27 @@ class FmtController implements StackController {
       return [];
     }
 
-    const cwd = pickConfigDir(
-      document.uri.fsPath,
-      fmtDetection.rstackConfigFiles.map((uri) => uri.fsPath),
-      folder.uri.fsPath,
-    );
     // Per-request logging follows prettier-vscode's shape (same in-host,
     // work-per-request architecture): a fixed entry and outcome line at info,
     // resolution detail at debug — the channel is a LogOutputChannel, so the
     // user raises the level from its context menu when needed.
     const startedAt = Date.now();
     context.output.info(`Formatting ${document.uri.fsPath}`);
-    const pkgJsonPath = findPackageJsonUncached('rstack', cwd);
-    if (!pkgJsonPath) {
-      const reason = `rstack is not installed in ${folder.name} (node_modules missing)`;
+    if (resolution.kind === 'missing-package') {
+      const reason = `rstack is not installed in ${resolution.folder.name} (node_modules missing)`;
       context.status.report({ kind: 'disabled', reason });
-      if (!this.#loggedOnce.has(`missing:${cwd}`)) {
-        this.#loggedOnce.add(`missing:${cwd}`);
-        context.output.warn(`${reason}; searched from ${cwd}`);
+      if (!this.#loggedOnce.has(`missing:${resolution.cwd}`)) {
+        this.#loggedOnce.add(`missing:${resolution.cwd}`);
+        context.output.warn(`${reason}; searched from ${resolution.cwd}`);
       }
       return [];
     }
-
-    if (
-      !reportVersionCheck(
-        context.status,
-        'rstack',
-        readPackageVersion(pkgJsonPath),
-      )
-    ) {
+    if (resolution.kind === 'version-mismatch') {
+      reportVersionCheck(context.status, 'rstack', resolution.version);
       return [];
     }
 
-    const pkg = readPackageJson(pkgJsonPath);
-    const bin = pkg?.bin;
-    let binEntry = 'bin/rs.js';
-    if (typeof bin === 'string') {
-      binEntry = bin;
-    } else if (bin && typeof bin === 'object') {
-      const rs = (bin as Record<string, unknown>).rs;
-      if (typeof rs === 'string') {
-        binEntry = rs;
-      }
-    }
-    const rsBinJs = path.resolve(path.dirname(pkgJsonPath), binEntry);
+    const { cwd, rsBinJs } = resolution.target;
     context.output.debug(`cwd: ${cwd}; bin: ${rsBinJs}`);
 
     const text = document.getText();
@@ -206,18 +365,37 @@ class FmtController implements StackController {
       requestController.abort();
     }
 
+    const key = standbyKey(document.uri, resolution.target);
+    // An already-cancelled request must not burn the standby.
+    const hot = requestController.signal.aborted
+      ? undefined
+      : this.#standby?.consume(key, {
+          text,
+          signal: requestController.signal,
+        });
+    const serve = hot ? 'hot' : 'cold';
+    this.#lastServe = serve;
+
     let result;
     try {
-      result = await runRsFmt({
-        text,
-        filePath: document.uri.fsPath,
-        cwd,
-        rsBinJs,
-        signal: requestController.signal,
-      });
+      result = await (hot ??
+        runRsFmt({
+          text,
+          filePath: document.uri.fsPath,
+          cwd,
+          rsBinJs,
+          signal: requestController.signal,
+        }));
     } finally {
       cancellation.dispose();
       this.#abortController.signal.removeEventListener('abort', abortRequest);
+      // A standby serves exactly one request, and a real format request is
+      // itself proof the active file is worth one — re-arm after cold serves
+      // too, so a reaped or crashed standby comes back on the next use
+      // instead of leaving the file cold until the editor changes. Scheduled
+      // rather than immediate: spawning here would delay the edits the caller
+      // is waiting for.
+      this.scheduleArm(0);
     }
 
     if (
@@ -246,8 +424,12 @@ class FmtController implements StackController {
         // have changed while the format was in flight.
         this.reportRunning(context, this.#snapshot ?? snapshot);
         const edit = minimalEdit(text, result.formatted);
+        // The hot/cold marker is the only way to tell from a log whether the
+        // measured time included a process start-up.
         context.output.info(
-          `Formatting completed in ${elapsed}ms${edit ? '' : ' (already formatted)'}`,
+          `Formatting completed in ${elapsed}ms (${serve}${
+            edit ? '' : ', already formatted'
+          })`,
         );
         if (!edit) {
           return [];
@@ -282,6 +464,12 @@ class FmtController implements StackController {
   dispose(): void {
     this.#disposed = true;
     this.#abortController.abort();
+    // Covers `rstack.fmt.restart` (the shell rebuilds the controller) and a
+    // workspace losing its trust: neither may leave a process behind.
+    clearTimeout(this.#armTimer);
+    this.#armTimer = undefined;
+    this.#standby?.dispose();
+    this.#standby = undefined;
     for (const subscription of this.#subscriptions.splice(0)) {
       subscription.dispose();
     }

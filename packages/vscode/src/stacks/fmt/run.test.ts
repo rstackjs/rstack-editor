@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from '@rstest/core';
 import { minimalEdit, pickConfigDir, runRsFmt, type RsFmtRun } from './run';
+import { createStubRoot, type StubRoot } from './stubProcess';
 
 describe('pickConfigDir', () => {
   let root: string;
@@ -145,26 +146,17 @@ describe('minimalEdit', () => {
 });
 
 describe('runRsFmt', () => {
-  let root: string;
+  let stubs: StubRoot;
 
   beforeEach(() => {
-    root = fs.realpathSync(
-      fs.mkdtempSync(path.join(os.tmpdir(), 'rstack-fmt-run-')),
-    );
+    stubs = createStubRoot('run');
   });
 
   afterEach(() => {
-    fs.rmSync(root, { recursive: true, force: true });
+    stubs.remove();
   });
 
-  const writeStub = (source: string): string => {
-    const filePath = path.join(
-      root,
-      `rs-${Math.random().toString(16).slice(2)}.js`,
-    );
-    fs.writeFileSync(filePath, source);
-    return filePath;
-  };
+  const writeStub = (source: string): string => stubs.write(source);
 
   const run = (
     text: string,
@@ -175,8 +167,8 @@ describe('runRsFmt', () => {
   > => {
     const options: RsFmtRun = {
       text,
-      filePath: path.join(root, 'input.ts'),
-      cwd: root,
+      filePath: path.join(stubs.path, 'input.ts'),
+      cwd: stubs.path,
       rsBinJs,
       signal,
     };
@@ -235,12 +227,16 @@ describe('runRsFmt', () => {
     const controller = new AbortController();
     controller.abort();
     await expect(
-      run('const value = 1;', path.join(root, 'missing.js'), controller.signal),
+      run(
+        'const value = 1;',
+        path.join(stubs.path, 'missing.js'),
+        controller.signal,
+      ),
     ).resolves.toEqual({ kind: 'cancelled' });
   });
 
   it('names an unloadable rs entry path', async () => {
-    const missing = path.join(root, 'missing.js');
+    const missing = path.join(stubs.path, 'missing.js');
     const result = await run('const value = 1;', missing);
     expect(result.kind).toBe('error');
     if (result.kind === 'error') {
