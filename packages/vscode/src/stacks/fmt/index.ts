@@ -242,7 +242,9 @@ class FmtController implements StackController {
     }
     switch (result.kind) {
       case 'ok': {
-        this.reportRunning(context, snapshot);
+        // The freshest snapshot, not the request's capture: detection may
+        // have changed while the format was in flight.
+        this.reportRunning(context, this.#snapshot ?? snapshot);
         const edit = minimalEdit(text, result.formatted);
         context.output.info(
           `Formatting completed in ${elapsed}ms${edit ? '' : ' (already formatted)'}`,
