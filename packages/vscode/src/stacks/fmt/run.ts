@@ -45,15 +45,19 @@ export interface RsFmtRun {
 }
 
 export type RsFmtResult =
-  | { readonly kind: 'ok'; readonly formatted: string }
-  | { readonly kind: 'skipped' }
+  // `stderr` carries the CLI's own voice (warnings on otherwise-successful
+  // runs) so the caller can surface it, the way an LSP-based tool would push
+  // `window/logMessage`.
+  | { readonly kind: 'ok'; readonly formatted: string; readonly stderr: string }
+  | { readonly kind: 'skipped'; readonly stderr: string }
   | { readonly kind: 'cancelled' }
   | { readonly kind: 'error'; readonly message: string };
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
-const stderrTail = (stderr: string): string =>
+/** Bounds any CLI stderr headed for a log line to its meaningful tail. */
+export const stderrTail = (stderr: string): string =>
   stderr.trim().split(/\r?\n/).slice(-10).join('\n');
 
 const launchError = (rsBinJs: string, detail: string): RsFmtResult => ({
@@ -137,16 +141,15 @@ export const runRsFmt = async (run: RsFmtRun): Promise<RsFmtResult> => {
       }
 
       const formatted = stdout.join('');
+      const stderrText = stderr.join('');
       if (code === 0) {
         if (formatted.length > 0 || run.text.trim() === '') {
-          settle({ kind: 'ok', formatted });
+          settle({ kind: 'ok', formatted, stderr: stderrText });
         } else {
-          settle({ kind: 'skipped' });
+          settle({ kind: 'skipped', stderr: stderrText });
         }
         return;
       }
-
-      const stderrText = stderr.join('');
       const tail = stderrTail(stderrText);
       const missingEntry = stderrText
         .split(/\r?\n/)

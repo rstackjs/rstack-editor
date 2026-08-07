@@ -18,6 +18,7 @@ import {
   minimalEdit,
   pickConfigDir,
   runRsFmt,
+  stderrTail,
 } from './run';
 
 // prettier 3.9.6 getSupportInfo() vscodeLanguageIds snapshot (rs fmt's pinned
@@ -65,7 +66,9 @@ class FmtController implements StackController {
   #context: StackContext | undefined;
   #snapshot: DetectionSnapshot | undefined;
   readonly #subscriptions: vscode.Disposable[] = [];
-  readonly #warnedCwds = new Set<string>();
+  // One-shot log lines, keyed by `<topic>:<path>`. Cleared when detection
+  // changes so a fixed setup gets a fresh explanation.
+  readonly #loggedOnce = new Set<string>();
   readonly #abortController = new AbortController();
   #disposed = false;
 
@@ -79,15 +82,28 @@ class FmtController implements StackController {
     this.#subscriptions.push(
       context.onDidChangeDetection((snapshot) => {
         this.#snapshot = snapshot;
-        this.#warnedCwds.clear();
+        this.#loggedOnce.clear();
       }),
       vscode.languages.registerDocumentFormattingEditProvider(
         SELECTOR,
         provider,
       ),
     );
-    context.status.running();
+    this.reportRunning(context, context.detection);
     return { languages: LANGUAGE_IDS, provider };
+  }
+
+  /** `running` always carries the reason the stack is on: where it was detected. */
+  private reportRunning(
+    context: StackContext,
+    snapshot: DetectionSnapshot,
+  ): void {
+    const names = snapshot.foldersFor('fmt').map((entry) => entry.folder.name);
+    context.status.running(
+      names.length <= 3
+        ? `detected in ${names.join(', ')}`
+        : `detected in ${names.length} folders`,
+    );
   }
 
   private async provideDocumentFormattingEdits(
@@ -106,10 +122,20 @@ class FmtController implements StackController {
     }
 
     const folder = vscode.workspace.getWorkspaceFolder(document.uri);
-    const fmtDetection = folder
-      ? snapshot.forFolder(folder)?.stacks.fmt
-      : undefined;
-    if (!folder || !fmtDetection?.detected) {
+    if (!folder) {
+      return [];
+    }
+    const fmtDetection = snapshot.forFolder(folder)?.stacks.fmt;
+    if (!fmtDetection?.detected) {
+      // The formatter is offered per language, so a request can land in a
+      // folder without an rstack setup. That is routine, not a fault — one
+      // info line per folder says why nothing happened.
+      if (!this.#loggedOnce.has(`undetected:${folder.uri.toString()}`)) {
+        this.#loggedOnce.add(`undetected:${folder.uri.toString()}`);
+        context.output.info(
+          `A format request in ${folder.name} was skipped: fmt is not detected there (no rstack.config.* and no rstack CLI at the folder root)`,
+        );
+      }
       return [];
     }
 
@@ -118,12 +144,18 @@ class FmtController implements StackController {
       fmtDetection.rstackConfigFiles.map((uri) => uri.fsPath),
       folder.uri.fsPath,
     );
+    // Per-request logging follows prettier-vscode's shape (same in-host,
+    // work-per-request architecture): a fixed entry and outcome line at info,
+    // resolution detail at debug — the channel is a LogOutputChannel, so the
+    // user raises the level from its context menu when needed.
+    const startedAt = Date.now();
+    context.output.info(`Formatting ${document.uri.fsPath}`);
     const pkgJsonPath = findPackageJsonUncached('rstack', cwd);
     if (!pkgJsonPath) {
       const reason = `rstack is not installed in ${folder.name} (node_modules missing)`;
       context.status.report({ kind: 'disabled', reason });
-      if (!this.#warnedCwds.has(cwd)) {
-        this.#warnedCwds.add(cwd);
+      if (!this.#loggedOnce.has(`missing:${cwd}`)) {
+        this.#loggedOnce.add(`missing:${cwd}`);
         context.output.warn(`${reason}; searched from ${cwd}`);
       }
       return [];
@@ -151,6 +183,7 @@ class FmtController implements StackController {
       }
     }
     const rsBinJs = path.resolve(path.dirname(pkgJsonPath), binEntry);
+    context.output.debug(`cwd: ${cwd}; bin: ${rsBinJs}`);
 
     const text = document.getText();
     const version = document.version;
@@ -183,13 +216,28 @@ class FmtController implements StackController {
       document.version !== version ||
       this.#disposed
     ) {
+      context.output.debug(
+        `Formatting result for ${document.uri.fsPath} discarded (document changed or request cancelled)`,
+      );
       return [];
     }
 
+    const elapsed = Date.now() - startedAt;
+    if (result.kind === 'ok' || result.kind === 'skipped') {
+      // Same tailing as the error path: a chatty warning stream must not land
+      // in the log unbounded.
+      const stderr = stderrTail(result.stderr);
+      if (stderr !== '') {
+        context.output.debug(`rs fmt stderr: ${stderr}`);
+      }
+    }
     switch (result.kind) {
       case 'ok': {
-        context.status.running();
+        this.reportRunning(context, snapshot);
         const edit = minimalEdit(text, result.formatted);
+        context.output.info(
+          `Formatting completed in ${elapsed}ms${edit ? '' : ' (already formatted)'}`,
+        );
         if (!edit) {
           return [];
         }
@@ -204,7 +252,12 @@ class FmtController implements StackController {
         ];
       }
       case 'skipped':
+        context.output.info(
+          `Skipped ${document.uri.fsPath}: rs fmt returned no output (the file is ignored or has no parser)`,
+        );
+        return [];
       case 'cancelled':
+        context.output.debug(`Formatting cancelled for ${document.uri.fsPath}`);
         return [];
       case 'error':
         context.output.error(`rs fmt failed in ${cwd}: ${result.message}`);
@@ -221,7 +274,7 @@ class FmtController implements StackController {
     for (const subscription of this.#subscriptions.splice(0)) {
       subscription.dispose();
     }
-    this.#warnedCwds.clear();
+    this.#loggedOnce.clear();
     this.#context = undefined;
     this.#snapshot = undefined;
   }

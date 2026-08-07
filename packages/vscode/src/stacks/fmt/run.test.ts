@@ -188,6 +188,7 @@ describe('runRsFmt', () => {
     await expect(run('const value = 1;\n', stub)).resolves.toEqual({
       kind: 'ok',
       formatted: 'const value = 1;\n',
+      stderr: '',
     });
   });
 
@@ -197,6 +198,7 @@ describe('runRsFmt', () => {
     await expect(run(text, stub)).resolves.toEqual({
       kind: 'ok',
       formatted: text,
+      stderr: '',
     });
   });
 

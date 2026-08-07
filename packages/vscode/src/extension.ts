@@ -40,7 +40,7 @@ type Gate =
  */
 class ExtensionShell {
   readonly #channels = new Channels();
-  readonly #statusBar = new StatusBar();
+  readonly #statusBar = new StatusBar(this.#channels.shell);
   readonly #detection: DetectionService;
   readonly #controllers = new Map<StackId, StackController>();
   readonly #subscriptions: vscode.Disposable[] = [];
