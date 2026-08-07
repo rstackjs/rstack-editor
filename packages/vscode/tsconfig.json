@@ -18,15 +18,15 @@
     "forceConsistentCasingInFileNames": true,
     "types": ["node"]
   },
-  "include": ["src", "tests/unit", "tests/e2e"],
+  "include": ["src", "tests", "e2e"],
   // The E2E fixtures are standalone projects resolving their own published
   // dependencies — not part of this repo's compilation.
   "exclude": [
     "node_modules",
     "dist",
     "tests-dist",
-    "tests/e2e/fixtures",
-    "tests/e2e/rstest/fixtures",
-    "tests/e2e/lint/fixtures"
+    "e2e/fixtures",
+    "e2e/rstest/fixtures",
+    "e2e/lint/fixtures"
   ]
 }

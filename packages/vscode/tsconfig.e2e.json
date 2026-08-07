@@ -2,11 +2,12 @@
   // The E2E harness runs inside the VS Code extension host as plain CommonJS,
   // so it is compiled with tsc (not rslib) into `tests-dist/`.
   //
-  // `rootDir` is the repo root because `tests/e2e/suite/detection.test.ts`
-  // imports the shell's own `detectFolder` and runs it against the real fixture
-  // workspaces — the extension host is the only place where `workspace.findFiles`
-  // is real. Only the two modules it needs are compiled; everything else the
-  // extension does comes from the bundle VS Code loads via `main`.
+  // `rootDir` is the package root because the suites reach outside `e2e/`:
+  // `e2e/suite/detection.test.ts` imports the shell's own `detectFolder` and
+  // runs it against the real fixture workspaces — the extension host is the
+  // only place where `workspace.findFiles` is real. tsc pulls those modules in
+  // from the suites that import them, so only what the suites actually reach is
+  // compiled; everything else comes from the bundle VS Code loads via `main`.
   "compilerOptions": {
     // `nodenext` (not plain commonjs/node10): the ported Rslint suites compile
     // `src/stacks/lint/*` into `tests-dist`, and those modules import
@@ -27,19 +28,15 @@
     "strict": true,
     "skipLibCheck": true
   },
-  "include": [
-    "tests/e2e/**/*.ts",
-    "src/shell/detection.ts",
-    "src/shell/types.ts"
-  ],
+  "include": ["e2e/**/*.ts"],
   // The fixtures are standalone projects with their own dependencies; they are
   // never compiled by this repo's tsc.
   "exclude": [
     "node_modules",
     "dist",
     "tests-dist",
-    "tests/e2e/fixtures",
-    "tests/e2e/rstest/fixtures",
-    "tests/e2e/lint/fixtures"
+    "e2e/fixtures",
+    "e2e/rstest/fixtures",
+    "e2e/lint/fixtures"
   ]
 }

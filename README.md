@@ -2,6 +2,10 @@
 
 Rstack Editor provides unified editor support for [Rstack](https://rstack.rs), the fast, unified JavaScript toolchain for developers and agents. It integrates [Rslint](https://github.com/web-infra-dev/rslint), [Rstest](https://github.com/web-infra-dev/rstest) and [rstack-cli](https://github.com/rstackjs/rstack-cli) into a single extension, so one install covers the whole toolchain.
 
+> [!IMPORTANT]
+>
+> **Work in progress.** Rstack Editor is pre-1.0 and under active development. Settings, command ids and behavior can change between releases, and not every config source is wired up yet — see the roadmap below for what works today. Bug reports and feedback are very welcome.
+
 ## Packages
 
 | Name | Description |

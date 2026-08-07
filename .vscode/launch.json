@@ -45,15 +45,15 @@
       "id": "playgroundTarget",
       "type": "pickString",
       "description": "Which fixture should the dev host open?",
-      "default": "tests/e2e/fixtures/e2e.code-workspace",
+      "default": "e2e/fixtures/e2e.code-workspace",
       "options": [
         {
           "label": "all three fixtures (multi-root)",
-          "value": "tests/e2e/fixtures/e2e.code-workspace"
+          "value": "e2e/fixtures/e2e.code-workspace"
         },
-        { "label": "rslint fixture", "value": "tests/e2e/fixtures/rslint" },
-        { "label": "rstest fixture", "value": "tests/e2e/fixtures/rstest" },
-        { "label": "rstack fixture", "value": "tests/e2e/fixtures/rstack" }
+        { "label": "rslint fixture", "value": "e2e/fixtures/rslint" },
+        { "label": "rstest fixture", "value": "e2e/fixtures/rstest" },
+        { "label": "rstack fixture", "value": "e2e/fixtures/rstack" }
       ]
     }
   ]
