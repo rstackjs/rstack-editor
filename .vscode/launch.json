@@ -12,13 +12,19 @@
       "runtimeExecutable": "${execPath}",
       "args": [
         "--extensionDevelopmentPath=${workspaceFolder}/packages/vscode",
-        "--disable-extensions",
-        // An isolated, auto-created profile, so personal user settings
-        // (formatters, format-on-save, keybindings) cannot leak into the
-        // playground. `--user-data-dir` would be the stronger isolation, but
-        // the extension-host debugger strips it; `--profile` is the supported
-        // mechanism for debug launches.
+        // An isolated, auto-created profile, so neither personal user settings
+        // (formatters, format-on-save, keybindings) nor personal extensions
+        // can leak into the playground — the profile starts with none
+        // installed, which is why `--disable-extensions` is absent: it would
+        // only add its "all installed extensions are temporarily disabled"
+        // notification to every launch. `--user-data-dir` would be the
+        // stronger isolation, but the extension-host debugger strips it;
+        // `--profile` is the supported mechanism for debug launches.
         "--profile=rstack-playground",
+        // Built-in extensions ignore the empty profile. Git is the one that
+        // speaks up: every fixture sits under this repo, so it offers to open
+        // the parent repository on each launch.
+        "--disable-extension=vscode.git",
         // A fresh profile would otherwise prompt for workspace trust and greet
         // with the welcome tour on every first launch.
         "--disable-workspace-trust",
