@@ -109,6 +109,12 @@ export const aggregateFolderStates = (
 
 class RslintController implements StackController {
   readonly id = 'rslint' as const;
+  // A `binPath`/`customBinPath` change must re-resolve the binary, which only
+  // happens on a fresh start (upstream documents `customBinPath` as requiring a
+  // reload; a restart is strictly better). A shallower local restart would
+  // replace the coordinator but keep this controller's already-resolved binary
+  // and version check.
+  readonly restartOnSettings = ['binPath', 'customBinPath', 'trace.server'];
 
   #context: StackContext | undefined;
   #logger: Logger | undefined;
@@ -134,20 +140,6 @@ class RslintController implements StackController {
       }),
       vscode.workspace.onDidChangeWorkspaceFolders((event) => {
         this.reconcileFolders(event);
-      }),
-      // A `binPath`/`customBinPath` change must re-resolve the binary, which
-      // only happens on a fresh start (upstream documents `customBinPath` as
-      // requiring a reload; a restart is strictly better). It asks the shell
-      // for a full rebuild rather than restarting locally — a local restart
-      // would replace the coordinator but keep this controller's
-      // already-resolved binary and version check.
-      vscode.workspace.onDidChangeConfiguration((event) => {
-        for (const setting of ['binPath', 'customBinPath', 'trace.server']) {
-          if (event.affectsConfiguration(`rstack.rslint.${setting}`)) {
-            void context.requestRestart(`rstack.rslint.${setting} changed`);
-            return;
-          }
-        }
       }),
     );
 
