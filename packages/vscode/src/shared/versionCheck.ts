@@ -59,10 +59,22 @@ export const readPackageVersion = (
 export const NODE_RUNTIME_RANGE = '>=22.18.0';
 
 /**
- * The whole version policy in one place: an unreadable or unparseable version
- * is `unknown` (a soft pass — it must never cost a feature), and prereleases of
- * a supported range (e.g. `1.0.0-beta.1`) are accepted, because the ecosystem
- * ships them and refusing them would strand early adopters.
+ * Classifies a version against a range; it does not decide what the classes
+ * mean. Prereleases of a supported range (e.g. `1.0.0-beta.1`) count as `ok`,
+ * because the ecosystem ships them and refusing them would strand early
+ * adopters — that part *is* policy and is uniform.
+ *
+ * What `unknown` means is the caller's to choose, and the two callers choose
+ * opposite things on purpose:
+ * - `reportVersionCheck` below soft-passes it. A package whose version cannot
+ *   be read is still installed, and there is no second candidate to fall back
+ *   to, so refusing would cost the feature for nothing.
+ * - `satisfiesFloor` in `stacks/test/nodeResolution.ts` rejects it. Runtime
+ *   candidates are an *ordered list*, so soft-passing lets a suspect PATH
+ *   `node` win over a healthy one from the user's shell.
+ *
+ * A third caller must make this choice deliberately rather than copy whichever
+ * neighbour it read first.
  */
 export const checkVersion = (
   version: string | undefined,

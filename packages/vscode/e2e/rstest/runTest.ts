@@ -9,6 +9,13 @@
  * the file it opened. The workspace file is therefore generated per run in the
  * scratch dir, so every run starts from the identical single-folder state and
  * a failure between the add and the remove never reaches the repository.
+ *
+ * Each fixture carries a `.nvmrc`: the extension's shell probe stands in the
+ * opened fixture folder and deliberately never walks upward (ADR 0001), so
+ * without a local pin a developer machine's version-manager *default* — not
+ * anything this repo controls — would decide whether the Node preflight
+ * clears the floor. Inert in CI, which puts a new-enough `node` on PATH so
+ * the shell probe never runs.
  */
 import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';

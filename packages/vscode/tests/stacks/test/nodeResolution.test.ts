@@ -1,14 +1,20 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, describe, expect, it } from '@rstest/core';
 import { NODE_RUNTIME_RANGE } from '../../../src/shared/versionCheck';
 import {
+  configuredNodeBelowFloor,
+  END_TOKEN,
   type NodeProbe,
   NodePreflightError,
   probeNodeVersion,
   probeShellNodePath,
   type ResolveWorkerNodeOptions,
-  resetWorkerNodeCache,
+  resetWorkerNodeCaches,
   resolveWorkerNode,
   resolveWorkerNodeOnce,
+  START_TOKEN,
 } from '../../../src/stacks/test/nodeResolution';
 
 // Every case injects both probes: the point is the decision table, not the
@@ -55,13 +61,30 @@ describe('resolveWorkerNode', () => {
     });
   });
 
-  it('soft-passes a PATH node whose version cannot be parsed', async () => {
+  it('falls through a PATH node whose version cannot be parsed', async () => {
+    // Runtime policy deliberately diverges from the package checks in
+    // `shared/versionCheck`, which soft-pass an unknown version: candidates
+    // here are an ordered list, so a soft pass would let a suspect PATH node
+    // beat a healthy one from the user's shell. A package check has no next
+    // candidate to fall through to.
     const resolution = await resolveWorkerNode({
       ...base,
-      probe: versionsOf({ node: { kind: 'ok' } }),
-      probeShellPath: never,
+      probe: versionsOf({
+        node: { kind: 'ok' },
+        '/versions/24/bin/node': ok('24.0.0'),
+      }),
+      probeShellPath: shellFinds('/versions/24/bin/node'),
     });
-    expect(resolution.source).toBe('path');
+    expect(resolution.source).toBe('shell');
+  });
+
+  it('fails rather than run on a node nobody could version', async () => {
+    const error = await preflightError({
+      ...base,
+      probe: versionsOf({ node: { kind: 'ok' } }),
+      probeShellPath: shellFinds(undefined),
+    });
+    expect(error.attempts.path).toBeUndefined();
   });
 
   it('accepts a prerelease of a satisfying version', async () => {
@@ -203,6 +226,18 @@ describe('NodePreflightError', () => {
     expect(message).toContain('rstack.rstest.nodeExecutable');
   });
 
+  it('states the consequence, which is what a below-floor setting does not', () => {
+    // Both failures reach the user through the same `version-mismatch` status,
+    // so the consequence clause is the only thing distinguishing "nothing will
+    // run" from "we are running with it anyway".
+    const { message } = new NodePreflightError({
+      path: '20.19.4',
+      shell: undefined,
+      shellSkipped: false,
+    });
+    expect(message).toContain('tests will not run');
+  });
+
   it('does not invent versions for candidates that found nothing', () => {
     const { message } = new NodePreflightError({
       path: undefined,
@@ -228,7 +263,7 @@ describe('NodePreflightError', () => {
 
 describe('resolveWorkerNodeOnce', () => {
   afterEach(() => {
-    resetWorkerNodeCache();
+    resetWorkerNodeCaches();
   });
 
   const options = {
@@ -242,7 +277,7 @@ describe('resolveWorkerNodeOnce', () => {
     const second = await resolveWorkerNodeOnce(options);
     expect(second).toBe(first);
 
-    resetWorkerNodeCache();
+    resetWorkerNodeCaches();
     const third = await resolveWorkerNodeOnce(options);
     expect(third).not.toBe(first);
   });
@@ -314,6 +349,74 @@ describe('resolveWorkerNodeOnce', () => {
   });
 });
 
+describe('configuredNodeBelowFloor', () => {
+  afterEach(() => {
+    resetWorkerNodeCaches();
+  });
+
+  const configured = '/opt/node/bin/node';
+  const answers = (probe: NodeProbe) => ({
+    probe: () => Promise.resolve(probe),
+  });
+
+  it('passes an explicit executable that clears the floor', async () => {
+    expect(
+      await configuredNodeBelowFloor(configured, answers(ok('24.0.0'))),
+    ).toBeUndefined();
+  });
+
+  it('names the version, the floor and the setting, and says the run goes ahead', async () => {
+    const message = await configuredNodeBelowFloor(
+      configured,
+      answers(ok('20.19.4')),
+    );
+    expect(message).toContain(configured);
+    expect(message).toContain('20.19.4');
+    expect(message).toContain(NODE_RUNTIME_RANGE);
+    expect(message).toContain('rstack.rstest.nodeExecutable');
+    // The opposite consequence from `NodePreflightError`: this one runs.
+    expect(message).toContain('running tests with it anyway');
+  });
+
+  it('reports an executable that cannot answer at all', async () => {
+    // Same policy as the ordered candidate list: an unreadable version is not
+    // a pass. Nothing is claimed about a version that was never read.
+    const message = await configuredNodeBelowFloor(
+      configured,
+      answers({ kind: 'not-found' }),
+    );
+    expect(message).toContain('version unknown');
+  });
+
+  it('probes one executable once, until the cache is reset', async () => {
+    // `resolveWorkerNodeCommand` runs on every worker spawn, so an unmemoized
+    // probe would be a process spawn per config init, per list, per run.
+    let calls = 0;
+    const counting = {
+      probe: () => {
+        calls++;
+        return Promise.resolve<NodeProbe>(ok('24.0.0'));
+      },
+    };
+    await configuredNodeBelowFloor(configured, counting);
+    await configuredNodeBelowFloor(configured, counting);
+    expect(calls).toBe(1);
+
+    resetWorkerNodeCaches();
+    await configuredNodeBelowFloor(configured, counting);
+    expect(calls).toBe(2);
+  });
+
+  it('keeps one verdict per executable, for a multi-root window', async () => {
+    expect(
+      await configuredNodeBelowFloor('/opt/old/node', answers(ok('20.19.4'))),
+    ).toBeDefined();
+    expect(
+      await configuredNodeBelowFloor('/opt/new/node', answers(ok('24.0.0'))),
+    ).toBeUndefined();
+  });
+});
+
 describe('probeNodeVersion', () => {
   it('reads the version of a real node executable', async () => {
     // The test run's own node is the one binary guaranteed to exist.
@@ -347,5 +450,29 @@ describe('probeShellNodePath', () => {
     const found = await probeShellNodePath('/bin/sh');
     expect(found).toBeDefined();
     expect(found?.startsWith('/')).toBe(true);
+  });
+
+  it('stands the spawned shell in the given cwd', async () => {
+    if (process.platform === 'win32') return;
+    // A stand-in shell that answers with its own working directory — the one
+    // thing the real script's `command -v` resolves against that the caller
+    // controls. A wrong or dropped cwd makes the paths disagree. The tmpdir
+    // is realpath'd up front so `$PWD` (from getcwd(), symlinks resolved)
+    // compares against the same form.
+    const dir = fs.mkdtempSync(
+      path.join(fs.realpathSync(os.tmpdir()), 'rstack-shell-probe-'),
+    );
+    try {
+      const fakeShell = path.join(dir, 'pwd-shell');
+      fs.writeFileSync(
+        fakeShell,
+        `#!/bin/sh\necho ${START_TOKEN}\necho "$PWD/node"\necho ${END_TOKEN}\n`,
+        { mode: 0o755 },
+      );
+      const found = await probeShellNodePath(fakeShell, dir);
+      expect(found).toBe(path.join(dir, 'node'));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -23,13 +23,13 @@ import type { TestErrorStore } from './errorStore';
 import { logger } from './logger';
 import { nodeRequire } from './nodeRequire';
 import {
-  NODE_RUNTIME_STATUS_SOURCE,
+  configuredNodeBelowFloor,
   NodePreflightError,
   type ResolveWorkerNodeOptions,
   resolveWorkerNodeOnce,
 } from './nodeResolution';
 import type { Project } from './project';
-import { status } from './status';
+import { NODE_RUNTIME_STATUS_SOURCE, status } from './status';
 import { runInTerminal as sendToTerminal, shellQuote } from './terminal';
 import { TestRunReporter } from './testRunReporter';
 import { toErrorMessage } from './utils';
@@ -41,11 +41,46 @@ export const runningWorkers = new Set<BirpcReturn<Worker, TestRunReporter>>();
  * The host-level inputs to the worker-node preflight. `notify` must not close
  * over `this`: the resolution is memoized for the extension host's lifetime, so
  * a callback capturing a `Project` would pin it and its whole test tree.
+ * `cwd` is the caller's standpoint for the shell probe — see
+ * `probeShellNodePath`.
  */
-export const workerNodeOptions = (): ResolveWorkerNodeOptions => ({
+export const workerNodeOptions = (
+  cwd: string | undefined,
+): ResolveWorkerNodeOptions => ({
   shell: vscode.env.shell || undefined,
+  cwd,
   notify: (message) => logger.info(message),
 });
+
+/**
+ * Fire-and-forget warm of the host-level preflight, so the first worker spawn
+ * awaits a settled promise instead of paying the probes on its critical path.
+ *
+ * One `find` answers both questions the warm-up has: *whether* to warm — a
+ * folder without a pinned `nodeExecutable` proves the memo has a reader, while
+ * pinned folders take the configured branch and never read it — and *where the
+ * shell probe stands* — that same folder, whose version file is the one its
+ * workers should honour. Deriving both from one query is what keeps them from
+ * disagreeing in a multi-root window where only some folders pin; the memo is
+ * first-caller-wins (ADR 0001, "Where the shell probe stands").
+ *
+ * Skipping when every folder pins is not a rounding error: whoever sets the
+ * escape hatch is usually the one whose PATH `node` is broken, the very input
+ * that drives the preflight down its slowest path (five retried spawns, then
+ * a full interactive shell).
+ */
+export const warmWorkerNodePreflight = (
+  folders: readonly vscode.WorkspaceFolder[],
+): void => {
+  const target = folders.find(
+    (folder) => !getConfigValue('nodeExecutable', folder),
+  );
+  if (target !== undefined) {
+    void resolveWorkerNodeOnce(workerNodeOptions(target.uri.fsPath)).catch(
+      () => {},
+    );
+  }
+};
 
 // Default host for a fixed debug port. The spawn (`--inspect-wait`), the port
 // preflight, and the attach config must all use the same host: on a dual-stack
@@ -147,11 +182,11 @@ export class RstestApi {
   /**
    * The node command for worker spawns — the node-preflight adaptation. Why the
    * PATH `node` cannot be trusted, and why the floor is uniform rather than
-   * per-project, lives in `nodeResolution.ts`. What is decided here is only
-   * that an explicitly configured `nodeExecutable` skips the preflight
-   * entirely: an explicit choice is the escape hatch for everything the
-   * preflight can get wrong, and a wrong one already surfaces through the
-   * spawn-error notification.
+   * per-project, lives in `nodeResolution.ts`.
+   *
+   * An explicitly configured `nodeExecutable` is honoured but probed all the
+   * same — the whys, and the by-path memo that keeps this every-spawn call at
+   * a lookup, live on `configuredNodeBelowFloor`.
    *
    * `vscode.env.shell` is read here so `nodeResolution.ts` needs no VS Code
    * import.
@@ -163,18 +198,28 @@ export class RstestApi {
     const { nodeExecutable, nodeExecArgs, configured } =
       this.resolveNodeCommand();
     if (configured) {
+      // Advisory, never gating — the message says the run is going ahead, and
+      // it does — so it is deliberately not awaited: the verdict must not sit
+      // on the spawn path. Latched under the host key for the same reason as
+      // the preflight failure below; re-reporting on a later spawn is a no-op.
+      void configuredNodeBelowFloor(nodeExecutable).then((message) => {
+        if (message) {
+          status.versionMismatch(message, NODE_RUNTIME_STATUS_SOURCE);
+        }
+      });
       return { nodeExecutable, nodeExecArgs };
     }
     try {
-      const resolution = await resolveWorkerNodeOnce(workerNodeOptions());
+      const resolution = await resolveWorkerNodeOnce(
+        workerNodeOptions(this.cwd),
+      );
       return { nodeExecutable: resolution.executable, nodeExecArgs };
     } catch (error) {
       if (error instanceof NodePreflightError) {
         // The status-aggregation adaptation: no usable runtime anywhere is the
         // same "fix your toolchain" state as an unsupported package version.
-        // Latched under the host key, not `this.statusSource`: the failure
-        // belongs to the extension host, so N projects must not file N copies,
-        // and this project's own recovery must not clear it.
+        // Latched under the host key, not `this.statusSource` — see
+        // `NODE_RUNTIME_STATUS_SOURCE`.
         status.versionMismatch(error.message, NODE_RUNTIME_STATUS_SOURCE);
       }
       throw error;

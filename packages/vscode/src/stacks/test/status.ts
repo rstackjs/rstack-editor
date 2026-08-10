@@ -1,6 +1,16 @@
 import type { StackState, StatusReporter } from '../../types';
 
 /**
+ * The latch key for facts about the extension host rather than about one
+ * resolution root — today, which Node.js the workers can run on. There is one
+ * PATH and one shell, so filing this under a project's source URI would write N
+ * entries for one fact and let any one project's unrelated recovery clear it.
+ * Declared here, beside the latch contract it participates in, rather than at
+ * the call site that happens to raise it.
+ */
+export const NODE_RUNTIME_STATUS_SOURCE = 'host:node-runtime';
+
+/**
  * The status-aggregation adaptation: the stack owns no status UI. Everything that
  * used to be a one-shot `showWarningMessage` (the `@rstest/core` version check)
  * or an unreported failure is reported through the shell's single aggregated
@@ -18,12 +28,16 @@ class StatusHolder implements StatusReporter {
   // that was neither recovered nor retried. Each latch is keyed by its
   // reporting site's identity — a master reports under its project's source
   // URI (unique per project, so sibling configs in one directory stay
-  // independent), a bridge shim resolution under its config directory; the
-  // two namespaces (URI string vs filesystem path) never collide. A recovery
-  // observed under one key must not clear another key's live failure. An
-  // entry is cleared by the code path that observes the corresponding
-  // recovery (a worker that actually spawned, a version check that passed) or
-  // by `forget` when its reporter goes away.
+  // independent), a bridge shim resolution under its config directory, and a
+  // fact about the extension host itself under `NODE_RUNTIME_STATUS_SOURCE`
+  // below; the three namespaces (URI string, filesystem path, `host:`) never
+  // collide. A recovery observed under one key must not clear another key's
+  // live failure. An entry is cleared by the code path that observes the
+  // corresponding recovery (a worker that actually spawned, a version check
+  // that passed) or by `forget` when its reporter goes away — neither of which
+  // reaches a host-scoped entry, since both are per-resolution-root. A
+  // host-scoped latch is cleared only by `bind`, i.e. by re-registering the
+  // stack, which is exactly the lifetime of the resolution it reports on.
   #crashes = new Map<string, string>();
   #mismatches = new Map<string, string>();
   #lastRunningDetail: string | undefined;
