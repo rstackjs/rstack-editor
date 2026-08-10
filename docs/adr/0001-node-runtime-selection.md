@@ -30,7 +30,7 @@ The probe stays one-per-host — one PATH, one shell, one interactive start-up c
 
 ## Where the VS Code Node runtime _is_ allowed
 
-The rule is not "never use it". The line is the **load surface**: work whose full transitive load set the extension controls (what it ships, plus N-API bindings, ABI-stable by construction) may run on the VS Code Node runtime; work that can reach arbitrary project dependencies must run on a User Node runtime. Loading a config is on the wrong side of that line — configs in this ecosystem import native bindings routinely — so config loading stays inside the worker, where the upstream machinery already puts it.
+The rule is not "never use it". The line is the **load bound**: work whose loads stay inside what the extension controls (what it ships, plus N-API bindings, ABI-stable by construction) may run on the VS Code Node runtime; work that can load arbitrary project dependencies is unbounded and must run on a User Node runtime. Loading a config is on the wrong side of that line — configs in this ecosystem import native bindings routinely — so config loading stays inside the worker, where the upstream machinery already puts it.
 
 Note that _worker_ names a process, not a runtime. The worker is our own code; the runtime it runs on is the user's.
 
@@ -38,7 +38,7 @@ Note that _worker_ names a process, not a runtime. The worker is our own code; t
 
 This decision is implemented for one path: the rstest worker. Two others sit on the wrong side of the line today, and this ADR does not move them. Naming them, so the rule is not read as an invariant the extension already holds:
 
-- **fmt** spawns the project's `rs` bin on `process.execPath` with `ELECTRON_RUN_AS_NODE=1` (`stacks/fmt/run.ts`) — the VS Code Node runtime — and `rs fmt` loads the project's config in that process (`stacks/fmt/index.ts`). Open load surface, no floor, no preflight.
+- **fmt** spawns the project's `rs` bin on `process.execPath` with `ELECTRON_RUN_AS_NODE=1` (`stacks/fmt/run.ts`) — the VS Code Node runtime — and `rs fmt` loads the project's config in that process (`stacks/fmt/index.ts`). Unbounded load, no floor, no preflight.
 - **lint** imports the project's `@rslint/core/config-loader` into the extension host and loads the user's `rslint.config.ts` there (`stacks/lint/configLoader.ts`), and runs user plugin rules on the same runtime (`stacks/lint/PluginLintPool.ts`). `stacks/lint/jitiPreflight.ts` already records the resulting divergence in so many words: that loader "runs on the extension host's Node — whose version is fixed by VS Code, not by the user — so the jiti branch can trigger in the editor even when the CLI works fine". Its answer is a diagnostic, not a runtime choice.
 
 Neither is cheap to move — each needs its own spawn-and-protocol work — and neither has a reported bug behind it yet. Known debt, deliberately: the next stack to load project code should follow the rule, and nobody should describe the rule as already universal.

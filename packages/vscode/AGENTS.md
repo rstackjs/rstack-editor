@@ -14,7 +14,7 @@ One extension replacing the standalone `rstack.rslint` and `rstack.rstest` exten
 3. **Resolve-from-project** — no tool binaries or tool packages in the VSIX; everything resolves from the user's project so the editor runs the CLI's exact versions. Version floors surface as a status, never a crash. All cooperating lint pieces (binary, config loader, plugin host) must come from one resolution root.
 4. **Status aggregation** — stacks own no UI chrome; they report to the shell's single status bar item, which always exists.
 5. **Worker-cwd decoupling** (test) — a project's cwd is explicit, not derived from the config file path; for native configs behavior stays byte-identical to upstream.
-6. **Node runtime selection** (test) — the worker's Node is a **User Node runtime** chosen by the extension against one uniform floor, never assumed from PATH; the recovery path is the user's own shell, and the dividing line is the **load surface** (terms in CONTEXT.md; the full rule and rationale in `docs/adr/0001-node-runtime-selection.md`). Implemented for the rstest worker only — fmt and lint still load project code on the VS Code Node runtime, known debt recorded in the ADR, not an invariant the extension already holds.
+6. **Node runtime selection** (test) — the worker's Node is a **User Node runtime** chosen by the extension against one uniform floor, never assumed from PATH; the recovery path is the user's own shell, and the dividing line is the **load bound** (terms in CONTEXT.md; the full rule and rationale in `docs/adr/0001-node-runtime-selection.md`). Implemented for the rstest worker only — fmt and lint still load project code on the VS Code Node runtime, known debt recorded in the ADR, not an invariant the extension already holds.
 
 ## Rules
 
