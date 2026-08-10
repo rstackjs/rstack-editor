@@ -45,21 +45,42 @@ export const readPackageVersion = (
   return typeof version === 'string' ? version : undefined;
 };
 
-export const checkPackageVersion = (
-  packageName: SupportedPackage,
+/**
+ * The floor for the Node.js a test worker runs on. Not part of
+ * `SUPPORT_MATRIX`, which is keyed by npm package name, but the same kind of
+ * fact and deliberately kept in the same file so "what does this extension
+ * require?" has one answer.
+ *
+ * Verified: 22.17.1 reports `process.features.typescript` false, 22.18.0
+ * reports `strip`. Native type stripping is what lets a worker load an
+ * `rstack.config.*` — rstack's shim loads it with `loader: 'native'` and no
+ * jiti fallback. See `stacks/test/nodeResolution.ts` for how it is probed.
+ */
+export const NODE_RUNTIME_RANGE = '>=22.18.0';
+
+/**
+ * The whole version policy in one place: an unreadable or unparseable version
+ * is `unknown` (a soft pass — it must never cost a feature), and prereleases of
+ * a supported range (e.g. `1.0.0-beta.1`) are accepted, because the ecosystem
+ * ships them and refusing them would strand early adopters.
+ */
+export const checkVersion = (
   version: string | undefined,
+  required: string,
 ): VersionCheckResult => {
   if (!version || !semver.valid(semver.coerce(version) ?? '')) {
     return { kind: 'unknown', version };
   }
-  const required = SUPPORT_MATRIX[packageName];
-  // Prereleases of a supported range (e.g. `1.0.0-beta.1`) are accepted: the
-  // ecosystem ships them and refusing them would strand early adopters.
   if (semver.satisfies(version, required, { includePrerelease: true })) {
     return { kind: 'ok', version };
   }
   return { kind: 'mismatch', version, required };
 };
+
+export const checkPackageVersion = (
+  packageName: SupportedPackage,
+  version: string | undefined,
+): VersionCheckResult => checkVersion(version, SUPPORT_MATRIX[packageName]);
 
 export const formatVersionMismatch = (
   packageName: SupportedPackage,

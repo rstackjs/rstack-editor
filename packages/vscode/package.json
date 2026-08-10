@@ -237,7 +237,7 @@
             "order": 5,
             "type": "string",
             "scope": "resource",
-            "markdownDescription": "Overrides the `node` binary used to spawn the Rstest test worker process. Provide an absolute path to a Node.js executable (for example, a version-manager or custom build). When empty, the `node` binary on `PATH` is used. Supports the `${workspaceFolder}` placeholder."
+            "markdownDescription": "Overrides the `node` binary used to spawn the Rstest test worker process. Provide an absolute path to a Node.js executable (for example, a version-manager or custom build). Setting this bypasses the extension's Node.js version check entirely, which makes it the escape hatch when no suitable Node.js can be found automatically. When empty, the extension picks one: the `node` on `PATH` if it is new enough, otherwise the one your interactive shell resolves. Supports the `${workspaceFolder}` placeholder."
           },
           "rstack.rstest.nodeExecArgs": {
             "order": 6,

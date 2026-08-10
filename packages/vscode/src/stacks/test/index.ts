@@ -7,7 +7,8 @@ import type {
 import { RstestDiagnostics } from './diagnostics';
 import { TestErrorStore, testMessageText } from './errorStore';
 import { logger } from './logger';
-import { runningWorkers } from './master';
+import { runningWorkers, workerNodeOptions } from './master';
+import { resetWorkerNodeCache, resolveWorkerNodeOnce } from './nodeResolution';
 import { Project, WorkspaceManager } from './project';
 import { status } from './status';
 import { disposeTerminal } from './terminal';
@@ -525,12 +526,22 @@ class RstestController implements StackController {
       status.unbind();
       throw error;
     }
+    // Warm the host-level node preflight while detection and the config-glob
+    // scan are still running, so the first worker spawn awaits a settled
+    // promise instead of paying the probes on the critical path. Deliberately
+    // not awaited — `register()` must return fast (adaptation #1) — and the
+    // rejection is handled by whoever actually needs the resolution.
+    void resolveWorkerNodeOnce(workerNodeOptions()).catch(() => {});
     return this.#rstest.buildExports();
   }
 
   dispose(): void {
     this.#rstest?.dispose();
     this.#rstest = undefined;
+    // The third module singleton with this exact lifetime, alongside the two
+    // binds above: a re-registered stack re-probes, which is what makes the
+    // restart command pick up a toolchain change.
+    resetWorkerNodeCache();
     status.unbind();
     logger.unbind();
   }

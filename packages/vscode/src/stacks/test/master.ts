@@ -22,6 +22,12 @@ import type { RstestDiagnostics } from './diagnostics';
 import type { TestErrorStore } from './errorStore';
 import { logger } from './logger';
 import { nodeRequire } from './nodeRequire';
+import {
+  NODE_RUNTIME_STATUS_SOURCE,
+  NodePreflightError,
+  type ResolveWorkerNodeOptions,
+  resolveWorkerNodeOnce,
+} from './nodeResolution';
 import type { Project } from './project';
 import { status } from './status';
 import { runInTerminal as sendToTerminal, shellQuote } from './terminal';
@@ -30,6 +36,16 @@ import { toErrorMessage } from './utils';
 import type { Worker } from './worker';
 
 export const runningWorkers = new Set<BirpcReturn<Worker, TestRunReporter>>();
+
+/**
+ * The host-level inputs to the worker-node preflight. `notify` must not close
+ * over `this`: the resolution is memoized for the extension host's lifetime, so
+ * a callback capturing a `Project` would pin it and its whole test tree.
+ */
+export const workerNodeOptions = (): ResolveWorkerNodeOptions => ({
+  shell: vscode.env.shell || undefined,
+  notify: (message) => logger.info(message),
+});
 
 // Default host for a fixed debug port. The spawn (`--inspect-wait`), the port
 // preflight, and the attach config must all use the same host: on a dual-stack
@@ -101,12 +117,17 @@ export class RstestApi {
     return `^${regexpEscape(testCaseNamePath.join(' '))}${isSuite ? ' ' : '$'}`;
   }
 
-  // The node executable + exec args used to run a worker or the CLI, honoring
-  // the `nodeExecutable` / `nodeExecArgs` settings (`${workspaceFolder}`
-  // expanded).
+  // The node executable + exec args honoring the `nodeExecutable` /
+  // `nodeExecArgs` settings (`${workspaceFolder}` expanded). Used verbatim by
+  // the terminal CLI, which deliberately skips the worker preflight below: the
+  // command runs inside the user's own shell, which is the very thing the
+  // preflight exists to emulate. `configured` reports whether the executable is
+  // the user's explicit choice or the bare `node` default, so the preflight
+  // does not have to read the setting a second time.
   private resolveNodeCommand(): {
     nodeExecutable: string;
     nodeExecArgs: string[];
+    configured: boolean;
   } {
     const configuredExecutable = getConfigValue(
       'nodeExecutable',
@@ -116,10 +137,48 @@ export class RstestApi {
       nodeExecutable: configuredExecutable
         ? this.expandWorkspaceFolder(configuredExecutable)
         : 'node',
+      configured: Boolean(configuredExecutable),
       nodeExecArgs: getConfigValue('nodeExecArgs', this.workspace).map((arg) =>
         this.expandWorkspaceFolder(arg),
       ),
     };
+  }
+
+  /**
+   * The node command for worker spawns — the node-preflight adaptation. Why the
+   * PATH `node` cannot be trusted, and why the floor is uniform rather than
+   * per-project, lives in `nodeResolution.ts`. What is decided here is only
+   * that an explicitly configured `nodeExecutable` skips the preflight
+   * entirely: an explicit choice is the escape hatch for everything the
+   * preflight can get wrong, and a wrong one already surfaces through the
+   * spawn-error notification.
+   *
+   * `vscode.env.shell` is read here so `nodeResolution.ts` needs no VS Code
+   * import.
+   */
+  private async resolveWorkerNodeCommand(): Promise<{
+    nodeExecutable: string;
+    nodeExecArgs: string[];
+  }> {
+    const { nodeExecutable, nodeExecArgs, configured } =
+      this.resolveNodeCommand();
+    if (configured) {
+      return { nodeExecutable, nodeExecArgs };
+    }
+    try {
+      const resolution = await resolveWorkerNodeOnce(workerNodeOptions());
+      return { nodeExecutable: resolution.executable, nodeExecArgs };
+    } catch (error) {
+      if (error instanceof NodePreflightError) {
+        // The status-aggregation adaptation: no usable runtime anywhere is the
+        // same "fix your toolchain" state as an unsupported package version.
+        // Latched under the host key, not `this.statusSource`: the failure
+        // belongs to the extension host, so N projects must not file N copies,
+        // and this project's own recovery must not clear it.
+        status.versionMismatch(error.message, NODE_RUNTIME_STATUS_SOURCE);
+      }
+      throw error;
+    }
   }
 
   // The validated absolute path to the package.json a `rstestPackagePath`
@@ -495,7 +554,8 @@ export class RstestApi {
       );
     }
     const workerPath = path.resolve(__dirname, 'worker.js');
-    const { nodeExecutable, nodeExecArgs } = this.resolveNodeCommand();
+    const { nodeExecutable, nodeExecArgs } =
+      await this.resolveWorkerNodeCommand();
     const nodeEnv = getConfigValue('nodeEnv', this.workspace);
     const debugNodeEnv = startDebugging
       ? getConfigValue('debugNodeEnv', this.workspace)
