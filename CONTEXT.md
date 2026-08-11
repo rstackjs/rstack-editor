@@ -17,6 +17,15 @@ Glossary of terms used across rstack-editor. Code, docs, commit messages and rev
 - **Preflight** — the check that picks a User Node runtime, run once per extension host before any worker is spawned. Its failure is a status, never a crash.
 - **Runtime floor** — the version range a User Node runtime must satisfy (`NODE_RUNTIME_RANGE` in `shared/versionCheck.ts`). A declared support contract, not a probed capability.
 
+## Tools and configs
+
+- **Atomic tool** — a single Rstack tool used standalone (Rstest, Rslint). Each atomic tool's CLI reads only its own native config and has no knowledge of the Rstack config. _Avoid_: standalone tool, raw tool.
+- **Native config** — the config file an atomic tool reads by itself (`rstest.config.*`, `rslint.config.*`). _Avoid_: tool config, own config.
+- **Rstack config** — the unified `rstack.config.*` file consumed by rstack-cli (`rs`), holding per-tool sections. Tools never read it themselves; `rs` hands each tool its section through a shim.
+- **Shim** — the module rstack-cli ships per tool that loads the Rstack config and exposes that tool's section through the tool's ordinary explicit-config channel. The extension points upstream machinery at the shim rather than re-implementing Rstack config semantics.
+- **Bridged project** — a test project the extension synthesizes for a directory whose test signal is a Rstack config, wired to the shim. _Avoid_: virtual project, rstack project.
+- **Ownership** — the editor-side rule assigning a directory to one tool when both a native config and a Rstack config are present there: the atomic tool's native config wins and the bridge yields. This rule exists only in the editor; upstream CLIs never face the choice, since each reads only its own config.
+
 ## fmt
 
 - **Cold format** — a format request served by spawning a fresh `rs fmt` process at request time; the request pays the full process start-up cost.

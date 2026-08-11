@@ -23,7 +23,17 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { runTests } from '@vscode/test-electron';
 
-const FIXTURE_DIRS = ['workspace-1', 'workspace-2'] as const;
+// Repo-relative fixture dirs whose installs this slice needs. workspace-2 has
+// no node_modules of its own per project; the root install serves both nested
+// projects, so the root is what the guard probes. `e2e/fixtures/rstack` is the
+// shared fixture `suite/bridge.test.ts` adds as a second workspace folder (the
+// same folder the `vscode` slice opens); the bridge resolves the rstack shim
+// from its install.
+const FIXTURE_DIRS = [
+  'e2e/rstest/fixtures/workspace-1',
+  'e2e/rstest/fixtures/workspace-2',
+  'e2e/fixtures/rstack',
+] as const;
 
 async function main() {
   // `__dirname` is `<repo>/tests-dist/e2e/rstest` (see tsconfig.e2e.json).
@@ -41,12 +51,10 @@ async function main() {
       'dist/extension.js is missing — run `pnpm build` before `pnpm test:e2e:rstest`.',
     );
   }
-  // workspace-2 has no node_modules of its own per project; the root install
-  // serves both nested projects, so the root is what the guard probes.
-  for (const name of FIXTURE_DIRS) {
-    if (!existsSync(path.join(fixturesRoot, name, 'node_modules'))) {
+  for (const dir of FIXTURE_DIRS) {
+    if (!existsSync(path.join(extensionDevelopmentPath, dir, 'node_modules'))) {
       throw new Error(
-        `the rstest/${name} E2E fixture is not installed — run \`pnpm test:e2e:fixtures\`.`,
+        `the ${dir} E2E fixture is not installed — run \`pnpm test:e2e:fixtures\`.`,
       );
     }
   }
