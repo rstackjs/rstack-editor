@@ -239,6 +239,9 @@ describe('RstestApi with an unresolvable rstestPackagePath', () => {
 describe('RstestApi with a configured nodeExecutable', () => {
   const configuredNode = '/opt/node/bin/node';
   const mismatches: string[] = [];
+  // `running` is what the holder repaints once its last latch is cleared, so
+  // counting it observes an advisory being forgotten.
+  let repaints = 0;
 
   // Adaptation #4 again: the stack reports through a singleton that no-ops
   // while unbound, which is what every other suite in this file sees.
@@ -246,7 +249,9 @@ describe('RstestApi with a configured nodeExecutable', () => {
     stack: 'rstest',
     report: () => {},
     starting: () => {},
-    running: () => {},
+    running: () => {
+      repaints += 1;
+    },
     crashed: () => {},
     versionMismatch: (detail) => mismatches.push(detail),
   };
@@ -268,6 +273,7 @@ describe('RstestApi with a configured nodeExecutable', () => {
 
   beforeEach(() => {
     mismatches.length = 0;
+    repaints = 0;
     resetWorkerNodeCaches();
     status.bind(reporter);
     settings.nodeExecutable = configuredNode;
@@ -300,6 +306,19 @@ describe('RstestApi with a configured nodeExecutable', () => {
     // Never refused: the setting is the escape hatch.
     expect(nodeExecutable).toBe(configuredNode);
     expect(mismatches).toHaveLength(1);
+  });
+
+  it('should scope the advisory to the project and forget it on dispose', async () => {
+    await seedProbe({ kind: 'ok', version: '20.19.4' });
+    const api = createApi();
+    await resolveWorkerNodeCommand(api);
+    await settleVerdict();
+    expect(mismatches).toHaveLength(1);
+    // The advisory is the project's fact: disposing the project clears its
+    // latch, and the repaint to `running` is only reachable with no latch
+    // left — a host-keyed advisory would have stayed stuck instead.
+    api.dispose();
+    expect(repaints).toBe(1);
   });
 
   // The two mid-flight races a settings-triggered restart makes reachable:

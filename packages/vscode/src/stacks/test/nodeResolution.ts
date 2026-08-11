@@ -1,4 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
+import path from 'node:path';
 import { checkVersion, NODE_RUNTIME_RANGE } from '../../shared/versionCheck';
 
 /**
@@ -180,9 +181,17 @@ export const probeShellNodePath = (
         return;
       }
       const found = output.slice(start + START_TOKEN.length, end).trim();
-      // A bare name means the shell resolved `node` to something that is not a
-      // path; spawning it would only retry PATH.
-      resolve(found === '' || !found.startsWith('/') ? undefined : found);
+      // No separator at all means the shell resolved `node` to a function or
+      // builtin rather than a path; spawning that would only retry PATH. A
+      // *relative* path is legitimate — a relative PATH entry resolves
+      // against the shell's own cwd — so it anchors where the shell stood:
+      // the given cwd, or this process's own when none was passed, which is
+      // where `spawn` put the shell.
+      if (!found.includes('/')) {
+        resolve(undefined);
+        return;
+      }
+      resolve(path.resolve(cwd ?? '.', found));
     });
   });
 

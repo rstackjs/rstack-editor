@@ -2,11 +2,14 @@ import type { StackState, StatusReporter } from '../../types';
 
 /**
  * The latch key for facts about the extension host rather than about one
- * resolution root — today, which Node.js the workers can run on. There is one
- * PATH and one shell, so filing this under a project's source URI would write N
- * entries for one fact and let any one project's unrelated recovery clear it.
- * Declared here, beside the latch contract it participates in, rather than at
- * the call site that happens to raise it.
+ * resolution root — the *automatic* preflight's verdict on which Node.js the
+ * workers can run on. There is one PATH and one shell, so filing this under a
+ * project's source URI would write N entries for one fact and let any one
+ * project's unrelated recovery clear it. A *configured* `nodeExecutable` is
+ * the opposite case — resource-scoped, one fact per project — and reports
+ * under `RstestApi.nodeRuntimeStatusSource` instead. Declared here, beside
+ * the latch contract it participates in, rather than at the call site that
+ * happens to raise it.
  */
 export const NODE_RUNTIME_STATUS_SOURCE = 'host:node-runtime';
 
@@ -28,10 +31,11 @@ class StatusHolder implements StatusReporter {
   // that was neither recovered nor retried. Each latch is keyed by its
   // reporting site's identity — a master reports under its project's source
   // URI (unique per project, so sibling configs in one directory stay
-  // independent), a bridge shim resolution under its config directory, and a
+  // independent), a bridge shim resolution under its config directory, a
   // fact about the extension host itself under `NODE_RUNTIME_STATUS_SOURCE`
-  // below; the three namespaces (URI string, filesystem path, `host:`) never
-  // collide. A recovery observed under one key must not clear another key's
+  // below, and a project's configured-runtime advisory under a
+  // `node-runtime:`-prefixed URI; the four namespaces never collide.
+  // A recovery observed under one key must not clear another key's
   // live failure. An entry is cleared by the code path that observes the
   // corresponding recovery (a worker that actually spawned, a version check
   // that passed) or by `forget` when its reporter goes away — neither of which

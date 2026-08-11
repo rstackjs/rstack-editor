@@ -186,6 +186,31 @@ export class RstestApi {
   }
 
   /**
+   * The latch key for this project's *configured* runtime advisory. Its own
+   * namespace on purpose: `nodeExecutable` is resource-scoped, so the fact is
+   * this project's — it must die with the project (`dispose` forgets it),
+   * unlike the host-wide preflight failure — but it cannot share the bare
+   * `statusSource` key either, or the core version check's `versionOk` on
+   * every spawn would erase it.
+   */
+  private get nodeRuntimeStatusSource(): string {
+    return `node-runtime:${this.statusSource}`;
+  }
+
+  /**
+   * A Node-runtime verdict, latched under `source` — dropped when this API
+   * was disposed while the verdict was in flight: the memo is reset and
+   * `status` rebound by then, so the report would land in the *replacement*
+   * registration with nothing left to clear it.
+   */
+  private reportNodeRuntimeIssue(message: string, source: string): void {
+    if (this.disposed) {
+      return;
+    }
+    status.versionMismatch(message, source);
+  }
+
+  /**
    * The node command for worker spawns — the node-preflight adaptation. Why the
    * PATH `node` cannot be trusted, and why the floor is uniform rather than
    * per-project, lives in `nodeResolution.ts`.
@@ -197,20 +222,6 @@ export class RstestApi {
    * `vscode.env.shell` is read here so `nodeResolution.ts` needs no VS Code
    * import.
    */
-  /**
-   * A Node-runtime verdict, latched under the host key (see
-   * `NODE_RUNTIME_STATUS_SOURCE`) — dropped when this API was disposed while
-   * the verdict was in flight: the memo is reset and `status` rebound by
-   * then, so the report would land in the *replacement* registration with
-   * nothing left to clear it.
-   */
-  private reportNodeRuntimeIssue(message: string): void {
-    if (this.disposed) {
-      return;
-    }
-    status.versionMismatch(message, NODE_RUNTIME_STATUS_SOURCE);
-  }
-
   private async resolveWorkerNodeCommand(): Promise<{
     nodeExecutable: string;
     nodeExecArgs: string[];
@@ -220,11 +231,10 @@ export class RstestApi {
     if (configured) {
       // Advisory, never gating — the message says the run is going ahead, and
       // it does — so it is deliberately not awaited: the verdict must not sit
-      // on the spawn path. Latched under the host key for the same reason as
-      // the preflight failure below; re-reporting on a later spawn is a no-op.
+      // on the spawn path. Re-reporting on a later spawn is a no-op.
       void configuredNodeBelowFloor(nodeExecutable).then((message) => {
         if (message) {
-          this.reportNodeRuntimeIssue(message);
+          this.reportNodeRuntimeIssue(message, this.nodeRuntimeStatusSource);
         }
       });
       return { nodeExecutable, nodeExecArgs };
@@ -238,7 +248,7 @@ export class RstestApi {
       if (error instanceof NodePreflightError) {
         // The status-aggregation adaptation: no usable runtime anywhere is the
         // same "fix your toolchain" state as an unsupported package version.
-        this.reportNodeRuntimeIssue(error.message);
+        this.reportNodeRuntimeIssue(error.message, NODE_RUNTIME_STATUS_SOURCE);
       }
       throw error;
     }
@@ -783,6 +793,7 @@ export class RstestApi {
 
   public dispose() {
     this.disposed = true;
+    status.forget(this.nodeRuntimeStatusSource);
     for (const child of this.childProcesses) {
       this.expectedExits.add(child);
       child.kill();

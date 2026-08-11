@@ -452,27 +452,49 @@ describe('probeShellNodePath', () => {
     expect(found?.startsWith('/')).toBe(true);
   });
 
-  it('stands the spawned shell in the given cwd', async () => {
-    if (process.platform === 'win32') return;
-    // A stand-in shell that answers with its own working directory — the one
-    // thing the real script's `command -v` resolves against that the caller
-    // controls. A wrong or dropped cwd makes the paths disagree. The tmpdir
-    // is realpath'd up front so `$PWD` (from getcwd(), symlinks resolved)
-    // compares against the same form.
+  // A stand-in shell answering one fixed line, run from a fresh tmpdir. The
+  // tmpdir is realpath'd up front so `$PWD` (from getcwd(), symlinks
+  // resolved) compares against `dir` directly.
+  const probeFakeShell = async (
+    answer: string,
+  ): Promise<{ found: string | undefined; dir: string }> => {
     const dir = fs.mkdtempSync(
       path.join(fs.realpathSync(os.tmpdir()), 'rstack-shell-probe-'),
     );
     try {
-      const fakeShell = path.join(dir, 'pwd-shell');
+      const fakeShell = path.join(dir, 'answer-shell');
       fs.writeFileSync(
         fakeShell,
-        `#!/bin/sh\necho ${START_TOKEN}\necho "$PWD/node"\necho ${END_TOKEN}\n`,
+        `#!/bin/sh\necho ${START_TOKEN}\necho "${answer}"\necho ${END_TOKEN}\n`,
         { mode: 0o755 },
       );
-      const found = await probeShellNodePath(fakeShell, dir);
-      expect(found).toBe(path.join(dir, 'node'));
+      return { found: await probeShellNodePath(fakeShell, dir), dir };
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  };
+
+  it('stands the spawned shell in the given cwd', async () => {
+    if (process.platform === 'win32') return;
+    // The answer is the one thing the real script's `command -v` resolves
+    // against that the caller controls; a wrong or dropped cwd makes the
+    // paths disagree.
+    const { found, dir } = await probeFakeShell('$PWD/node');
+    expect(found).toBe(path.join(dir, 'node'));
+  });
+
+  it('anchors a relative answer to the probe cwd', async () => {
+    if (process.platform === 'win32') return;
+    // A relative PATH entry makes `command -v` legitimately answer e.g.
+    // `bin/node` — which is what a terminal opened in the probe cwd would
+    // run, so that is where it anchors.
+    const { found, dir } = await probeFakeShell('bin/node');
+    expect(found).toBe(path.join(dir, 'bin', 'node'));
+  });
+
+  it('rejects a bare name, which is a shell function, not a path', async () => {
+    if (process.platform === 'win32') return;
+    const { found } = await probeFakeShell('node');
+    expect(found).toBeUndefined();
   });
 });
