@@ -115,13 +115,22 @@ rs.mock('vscode', () => {
 // the workspace `node_modules` and `@rstest/core` is genuinely missing.
 const noCoreDir = os.tmpdir();
 
+// Settings are a module-level bag every suite writes into; clearing them per
+// test keeps one suite's configuration from leaking into the next.
+afterEach(() => {
+  for (const key of Object.keys(settings)) delete settings[key];
+});
+
 const createApi = (cwd = noCoreDir) => {
   const workspace = { uri: { fsPath: cwd } };
+  // `sourceUri` backs the per-project status latch key, which the version
+  // check on the spawn path reads before anything can fail.
+  const project = { sourceUri: { toString: () => `test://${cwd}` } };
   return new RstestApi(
     workspace as any,
     cwd,
     `${cwd}/rstest.config.ts`,
-    {} as any,
+    project as any,
   );
 };
 
@@ -267,7 +276,6 @@ describe('RstestApi with a configured nodeExecutable', () => {
   afterEach(() => {
     status.unbind();
     resetWorkerNodeCaches();
-    delete settings.nodeExecutable;
   });
 
   // The verdict is reported off the spawn path, so a spawn resolves before the
@@ -292,5 +300,29 @@ describe('RstestApi with a configured nodeExecutable', () => {
     // Never refused: the setting is the escape hatch.
     expect(nodeExecutable).toBe(configuredNode);
     expect(mismatches).toHaveLength(1);
+  });
+
+  // The two mid-flight races a settings-triggered restart makes reachable:
+  // the verdict and the spawn each cross an await that can outlive `dispose()`.
+  it('should drop a verdict that settles after dispose', async () => {
+    await seedProbe({ kind: 'ok', version: '20.19.4' });
+    const api = createApi();
+    const pending = resolveWorkerNodeCommand(api);
+    api.dispose();
+    await pending;
+    await settleVerdict();
+    expect(mismatches).toEqual([]);
+  });
+
+  it('should refuse to spawn a worker after dispose', async () => {
+    // The seed keeps the configured executable's probe off the real spawn
+    // path; the package dir (not `process.cwd()`) is a cwd where
+    // `@rstest/core` resolves, so the abort observed is the disposed check
+    // and not an earlier resolution failure.
+    await seedProbe({ kind: 'ok', version: '24.0.0' });
+    const api = createApi(path.resolve(__dirname, '../../..'));
+    const spawning = api.createChildProcess();
+    api.dispose();
+    await expect(spawning).rejects.toThrow('disposed');
   });
 });

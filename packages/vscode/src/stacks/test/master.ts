@@ -41,6 +41,8 @@ export const runningWorkers = new Set<BirpcReturn<Worker, TestRunReporter>>();
  * The host-level inputs to the worker-node preflight. `notify` must not close
  * over `this`: the resolution is memoized for the extension host's lifetime, so
  * a callback capturing a `Project` would pin it and its whole test tree.
+ * (Settle-bounded reactions, like the configured-node verdict's `.then`, may
+ * capture `this` — the rule is about host-lifetime retention.)
  * `cwd` is the caller's standpoint for the shell probe — see
  * `probeShellNodePath`.
  */
@@ -109,6 +111,10 @@ export class RstestApi {
   // Processes killed on purpose outside the `$close` → `off` path (dispose,
   // failed debugger attach). Their `exit` events are not crashes.
   private readonly expectedExits = new WeakSet<ChildProcess>();
+  // Flipped by `dispose()` and checked wherever an await can outlive a
+  // restart — see `reportNodeRuntimeIssue` and the spawn abort in
+  // `createChildProcess`.
+  private disposed = false;
 
   constructor(
     private workspace: vscode.WorkspaceFolder,
@@ -191,6 +197,20 @@ export class RstestApi {
    * `vscode.env.shell` is read here so `nodeResolution.ts` needs no VS Code
    * import.
    */
+  /**
+   * A Node-runtime verdict, latched under the host key (see
+   * `NODE_RUNTIME_STATUS_SOURCE`) — dropped when this API was disposed while
+   * the verdict was in flight: the memo is reset and `status` rebound by
+   * then, so the report would land in the *replacement* registration with
+   * nothing left to clear it.
+   */
+  private reportNodeRuntimeIssue(message: string): void {
+    if (this.disposed) {
+      return;
+    }
+    status.versionMismatch(message, NODE_RUNTIME_STATUS_SOURCE);
+  }
+
   private async resolveWorkerNodeCommand(): Promise<{
     nodeExecutable: string;
     nodeExecArgs: string[];
@@ -204,7 +224,7 @@ export class RstestApi {
       // the preflight failure below; re-reporting on a later spawn is a no-op.
       void configuredNodeBelowFloor(nodeExecutable).then((message) => {
         if (message) {
-          status.versionMismatch(message, NODE_RUNTIME_STATUS_SOURCE);
+          this.reportNodeRuntimeIssue(message);
         }
       });
       return { nodeExecutable, nodeExecArgs };
@@ -218,9 +238,7 @@ export class RstestApi {
       if (error instanceof NodePreflightError) {
         // The status-aggregation adaptation: no usable runtime anywhere is the
         // same "fix your toolchain" state as an unsupported package version.
-        // Latched under the host key, not `this.statusSource` — see
-        // `NODE_RUNTIME_STATUS_SOURCE`.
-        status.versionMismatch(error.message, NODE_RUNTIME_STATUS_SOURCE);
+        this.reportNodeRuntimeIssue(error.message);
       }
       throw error;
     }
@@ -341,19 +359,24 @@ export class RstestApi {
       // The status-aggregation adaptation: the one-shot `showWarningMessage`
       // becomes the shared `version mismatch` status bar state with actual vs
       // required versions. The floor is the same `>= 0.6.0`.
-      if (
-        !reportVersionCheck(
-          status,
-          '@rstest/core',
-          coreVersion,
-          this.statusSource,
-        )
-      ) {
-        logger.error(
-          `Unsupported @rstest/core version ${coreVersion ?? 'unknown'} resolved from ${this.cwd}`,
-        );
-      } else {
-        status.versionOk(this.statusSource);
+      // Skipped after dispose: the project's status was already forgotten,
+      // and a mismatch re-latched now — for a root that may never come back —
+      // would have nothing left to clear it.
+      if (!this.disposed) {
+        if (
+          !reportVersionCheck(
+            status,
+            '@rstest/core',
+            coreVersion,
+            this.statusSource,
+          )
+        ) {
+          logger.error(
+            `Unsupported @rstest/core version ${coreVersion ?? 'unknown'} resolved from ${this.cwd}`,
+          );
+        } else {
+          status.versionOk(this.statusSource);
+        }
       }
 
       return nodeExport;
@@ -574,6 +597,12 @@ export class RstestApi {
     startDebugging?: boolean,
     testRun?: vscode.TestRun,
   ) {
+    // Cheap fast-fail; the load-bearing check is the one after the Node
+    // preflight below, which covers a dispose landing mid-await. This one
+    // just spares a retired master the package resolution and probe costs.
+    if (this.disposed) {
+      throw new Error('worker spawn aborted: this master is disposed');
+    }
     const rstestPath = this.resolveRstestPath();
     if (!rstestPath) {
       throw new Error('Failed to resolve rstest path');
@@ -601,6 +630,14 @@ export class RstestApi {
     const workerPath = path.resolve(__dirname, 'worker.js');
     const { nodeExecutable, nodeExecArgs } =
       await this.resolveWorkerNodeCommand();
+    // A restart may have retired this API while the preflight above was
+    // pending. Spawning now would produce the one worker `dispose()` cannot
+    // kill, running on the very resolution the restart exists to replace.
+    if (this.disposed) {
+      throw new Error(
+        'worker spawn aborted: this master was disposed while its Node runtime was being resolved',
+      );
+    }
     const nodeEnv = getConfigValue('nodeEnv', this.workspace);
     const debugNodeEnv = startDebugging
       ? getConfigValue('debugNodeEnv', this.workspace)
@@ -745,6 +782,7 @@ export class RstestApi {
   }
 
   public dispose() {
+    this.disposed = true;
     for (const child of this.childProcesses) {
       this.expectedExits.add(child);
       child.kill();
