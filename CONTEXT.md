@@ -15,7 +15,7 @@ Glossary of terms used across rstack-editor. Code, docs, commit messages and rev
 - **User Node runtime** — the Node.js the user's own environment provides, discovered by the extension rather than shipped with it. _Avoid_: worker runtime, project-side Node.
 - **Load bound** — the limit on what a piece of work can end up loading: what the extension ships, plus ABI-stable N-API bindings. Work that stays inside the bound may run on the VS Code Node runtime; work that can load project code has no load bound and belongs on a User Node runtime. _Avoid_: load surface.
 - **Preflight** — the check that picks a User Node runtime, run once per extension host before any worker is spawned. Its failure is a status, never a crash.
-- **Runtime floor** — the minimum Node.js version supported for a User Node runtime. A declared support contract, not a probed capability.
+- **Runtime floor** — the version range a User Node runtime must satisfy (`NODE_RUNTIME_RANGE` in `shared/versionCheck.ts`). A declared support contract, not a probed capability.
 
 ## fmt
 

@@ -21,11 +21,10 @@ const IDLE_ITEM_TEXT = '$(zap) Rstack';
  * hover body. It is a property of the state kind rather than of the message,
  * so a state added here has to answer the question once and no call site
  * special-cases a particular status. Say yes for the states the user cannot
- * act on without reading the words ("crashed — <stderr>", "no Node.js
- * >=22.18.0 is available"); say no for the ones whose detail is progress
- * bookkeeping ("running — 2 folders"), which would otherwise put a second row
- * under every stack in the healthy case and double the card's height for
- * nothing.
+ * act on without reading the words ("crashed — <stderr>", "no Node.js 22.18+
+ * … is available"); say no for the ones whose detail is progress bookkeeping
+ * ("running — 2 folders"), which would otherwise put a second row under every
+ * stack in the healthy case and double the card's height for nothing.
  *
  * `severity` ranks the states so the item can show the worst one across stacks,
  * and `item` is how that winner paints itself — absent means the idle look.

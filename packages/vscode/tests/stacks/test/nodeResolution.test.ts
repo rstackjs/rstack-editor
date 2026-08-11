@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from '@rstest/core';
-import { NODE_RUNTIME_RANGE } from '../../../src/shared/versionCheck';
+import { NODE_RUNTIME_LABEL } from '../../../src/shared/versionCheck';
 import {
   configuredNodeBelowFloor,
   END_TOKEN,
@@ -92,7 +92,7 @@ describe('resolveWorkerNode', () => {
     // that the node floor now follows the same rule as every package floor.
     const resolution = await resolveWorkerNode({
       ...base,
-      probe: versionsOf({ node: ok('23.0.0-nightly20260101') }),
+      probe: versionsOf({ node: ok('24.0.0-nightly20260101') }),
       probeShellPath: never,
     });
     expect(resolution.source).toBe('path');
@@ -112,6 +112,20 @@ describe('resolveWorkerNode', () => {
       source: 'shell',
       version: '24.0.0',
     });
+  });
+
+  it('falls through a pre-23.6 Node 23, which does not strip types', async () => {
+    // 23.0–23.5 sit above 22.18.0 yet predate default type stripping — the
+    // hole `NODE_RUNTIME_RANGE`'s disjunction encodes.
+    const resolution = await resolveWorkerNode({
+      ...base,
+      probe: versionsOf({
+        node: ok('23.5.0'),
+        '/versions/24/bin/node': ok('24.0.0'),
+      }),
+      probeShellPath: shellFinds('/versions/24/bin/node'),
+    });
+    expect(resolution.source).toBe('shell');
   });
 
   it('falls back to the shell node when no PATH node runs at all', async () => {
@@ -220,7 +234,7 @@ describe('NodePreflightError', () => {
       shell: '22.14.0',
       shellSkipped: false,
     });
-    expect(message).toContain(NODE_RUNTIME_RANGE);
+    expect(message).toContain(NODE_RUNTIME_LABEL);
     expect(message).toContain('PATH: 20.19.4');
     expect(message).toContain('interactive shell: 22.14.0');
     expect(message).toContain('rstack.rstest.nodeExecutable');
@@ -372,7 +386,7 @@ describe('configuredNodeBelowFloor', () => {
     );
     expect(message).toContain(configured);
     expect(message).toContain('20.19.4');
-    expect(message).toContain(NODE_RUNTIME_RANGE);
+    expect(message).toContain(NODE_RUNTIME_LABEL);
     expect(message).toContain('rstack.rstest.nodeExecutable');
     // The opposite consequence from `NodePreflightError`: this one runs.
     expect(message).toContain('running tests with it anyway');

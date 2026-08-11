@@ -1,6 +1,10 @@
 import { execFile, spawn } from 'node:child_process';
 import path from 'node:path';
-import { checkVersion, NODE_RUNTIME_RANGE } from '../../shared/versionCheck';
+import {
+  checkVersion,
+  NODE_RUNTIME_LABEL,
+  NODE_RUNTIME_RANGE,
+} from '../../shared/versionCheck';
 
 /**
  * Choosing the Node.js a test worker runs on.
@@ -97,7 +101,7 @@ const formatNodePreflightFailure = (attempts: NodeAttempts): string => {
   // `version-mismatch` status, and the outcomes are opposite — nothing runs
   // here, the run goes ahead there. The sentence is the only thing that tells
   // them apart.
-  return `No Node.js ${NODE_RUNTIME_RANGE} is available to run tests (${candidates}). Rstest needs it to load TypeScript config files. Install a newer Node.js, or set "rstack.rstest.nodeExecutable" to one; until then tests will not run.`;
+  return `No Node.js ${NODE_RUNTIME_LABEL} is available to run tests (${candidates}). Rstest needs it to load TypeScript config files. Install a newer Node.js, or set "rstack.rstest.nodeExecutable" to one; until then tests will not run.`;
 };
 
 /** No candidate satisfied `NODE_RUNTIME_RANGE`. */
@@ -349,7 +353,7 @@ const formatConfiguredNodeBelowFloor = (
   executable: string,
   version: string | undefined,
 ): string =>
-  `The Node.js set in "rstack.rstest.nodeExecutable" (${executable}, version ${version ?? 'unknown'}) does not satisfy ${NODE_RUNTIME_RANGE}, which Rstest needs to load TypeScript config files. Rstack is running tests with it anyway because the setting is your explicit choice; point it at a newer Node.js, or clear it to let the extension pick one.`;
+  `The Node.js set in "rstack.rstest.nodeExecutable" (${executable}, version ${version ?? 'unknown'}) does not satisfy ${NODE_RUNTIME_LABEL}, which Rstest needs to load TypeScript config files. Rstack is running tests with it anyway because the setting is your explicit choice; point it at a newer Node.js, or clear it to let the extension pick one.`;
 
 /**
  * The message for a configured executable that falls short of the floor, or

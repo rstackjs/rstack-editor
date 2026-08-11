@@ -1,8 +1,10 @@
 import { describe, expect, it } from '@rstest/core';
 import {
   checkPackageVersion,
+  checkVersion,
   formatVersionMismatch,
   isSupportedConfigDiscoveryProtocolVersion,
+  NODE_RUNTIME_RANGE,
   SUPPORT_MATRIX,
 } from '../src/shared/versionCheck';
 
@@ -41,6 +43,15 @@ describe('checkPackageVersion', () => {
   it('never hard-fails on an unreadable version', () => {
     expect(checkPackageVersion('rstack', undefined).kind).toBe('unknown');
     expect(checkPackageVersion('rstack', 'not-a-version').kind).toBe('unknown');
+  });
+});
+
+describe('node runtime range', () => {
+  it('pins every edge, including the 23.x type-stripping hole', () => {
+    expect(checkVersion('22.17.1', NODE_RUNTIME_RANGE).kind).toBe('mismatch');
+    expect(checkVersion('22.18.0', NODE_RUNTIME_RANGE).kind).toBe('ok');
+    expect(checkVersion('23.5.0', NODE_RUNTIME_RANGE).kind).toBe('mismatch');
+    expect(checkVersion('23.6.0', NODE_RUNTIME_RANGE).kind).toBe('ok');
   });
 });
 

@@ -51,12 +51,24 @@ export const readPackageVersion = (
  * fact and deliberately kept in the same file so "what does this extension
  * require?" has one answer.
  *
- * Verified: 22.17.1 reports `process.features.typescript` false, 22.18.0
- * reports `strip`. Native type stripping is what lets a worker load an
- * `rstack.config.*` — rstack's shim loads it with `loader: 'native'` and no
- * jiti fallback. See `stacks/test/nodeResolution.ts` for how it is probed.
+ * Native type stripping is what lets a worker load an `rstack.config.*` —
+ * rstack's shim loads it with `loader: 'native'` and no jiti fallback. It was
+ * unflagged in 23.6.0 and backported to the LTS line in 22.18.0, so 23.0–23.5
+ * compare above 22.18.0 yet predate it — hence a disjunction, not a plain
+ * floor. Verified: 22.17.1 reports `process.features.typescript` false,
+ * 22.18.0 reports `strip`. See `stacks/test/nodeResolution.ts` for how
+ * candidates are probed.
  */
-export const NODE_RUNTIME_RANGE = '>=22.18.0';
+export const NODE_RUNTIME_RANGE = '^22.18.0 || >=23.6.0';
+
+/**
+ * `NODE_RUNTIME_RANGE` for human eyes, interpolated into the user-facing
+ * messages in `stacks/test/nodeResolution.ts`. The raw range reads as npm
+ * jargon in a status-bar sentence — a user on 23.2 would have to parse a `^`
+ * to learn why they were refused. Logs keep the raw range, the precise
+ * register there. Keep the two in lockstep.
+ */
+export const NODE_RUNTIME_LABEL = '22.18+ (excluding 23.0–23.5)';
 
 /**
  * Classifies a version against a range; it does not decide what the classes

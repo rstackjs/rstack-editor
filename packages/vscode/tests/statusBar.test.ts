@@ -8,6 +8,7 @@
  */
 import { beforeEach, describe, expect, it, rs } from '@rstest/core';
 import type vscode from 'vscode';
+import { NODE_RUNTIME_LABEL } from '../src/shared/versionCheck';
 
 interface FakeItem {
   name: string;
@@ -120,8 +121,7 @@ describe('StatusBar hover', () => {
     const { bar, html } = build();
     bar.setState('rstest', {
       kind: 'version-mismatch',
-      detail:
-        'No Node.js >=22.18.0 is available to run tests. Tests will not run.',
+      detail: `No Node.js ${NODE_RUNTIME_LABEL} is available to run tests. Tests will not run.`,
     });
     // In the table, but under its own divider — and it cannot stretch the
     // rows above it, because the table's width is pinned. One cell, left for
@@ -134,7 +134,7 @@ describe('StatusBar hover', () => {
       '<td colspan="3">' +
         '<span style="color:var(--vscode-editorWarning-foreground);">' +
         '$(warning)</span>&nbsp;<b>Rstest</b><br>' +
-        'No Node.js &gt;=22.18.0 is available to run tests. ' +
+        `No Node.js ${NODE_RUNTIME_LABEL} is available to run tests. ` +
         'Tests will not run.</td>',
     ]);
     // A notice widens the card; quiet again, it narrows back.
@@ -143,8 +143,7 @@ describe('StatusBar hover', () => {
     expect(html()).toContain('<table width="140">');
     bar.setState('rstest', {
       kind: 'version-mismatch',
-      detail:
-        'No Node.js >=22.18.0 is available to run tests. Tests will not run.',
+      detail: `No Node.js ${NODE_RUNTIME_LABEL} is available to run tests. Tests will not run.`,
     });
     // The icon and its warning colour are untouched.
     expect(rows[1]).toContain('<b>Rstest</b>');
