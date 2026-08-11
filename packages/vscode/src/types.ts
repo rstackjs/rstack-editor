@@ -105,17 +105,6 @@ export interface StackContext {
    * only has to reconcile its own per-folder runtimes.
    */
   readonly onDidChangeDetection: vscode.Event<DetectionSnapshot>;
-  /**
-   * Asks the shell to rebuild this stack from scratch — the same thing
-   * `rstack.<stack>.restart` does. A stack cannot rebuild itself (its own
-   * controller is what gets replaced), and settling for a shallower local
-   * restart would keep the controller's already-resolved binary and version
-   * check, which is the staleness the rebuild exists to clear.
-   *
-   * `reason` goes to the shell log, so a restart nobody asked for out loud
-   * still says where it came from.
-   */
-  readonly requestRestart: (reason: string) => Promise<void>;
 }
 
 /**
@@ -134,6 +123,18 @@ export interface StackContext {
  */
 export interface StackController {
   readonly id: StackId;
+  /**
+   * Setting names under `rstack.<id>.` whose change must rebuild this stack,
+   * because their value is consumed once at registration (a resolved binary, a
+   * probed Node) and a live controller would keep answering with the stale one.
+   *
+   * Declared as data because restart is the shell's concern: the shell owns the
+   * listener and the rebuild, so a stack states *what* moves it, never *how* to
+   * move itself. A stack that watches this itself would also have to get the
+   * teardown ordering right — a change landing mid-rebuild must not queue a
+   * second one — which the shell already handles by iterating live controllers.
+   */
+  readonly restartOnSettings?: readonly string[];
   register(context: StackContext): Promise<Record<string, unknown> | void>;
   /** Teardown may be asynchronous (stopping a language server, workers). */
   dispose(): void | Promise<void>;

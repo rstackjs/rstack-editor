@@ -5,15 +5,16 @@ One extension replacing the standalone `rstack.rslint` and `rstack.rstest` exten
 ## The copies are intentional
 
 - `stacks/lint` and `stacks/test` are deliberate near-verbatim copies of the upstream extensions, kept close to upstream so changes can be synced by diffing. Do NOT deduplicate or refactor across the two stacks — the duplication is the point; consolidation is a later, explicit phase.
-- The copies diverge from upstream in exactly five ways (the "adaptations" below). When syncing upstream, preserve them. A sixth divergence is either a bug or must be added to this list.
+- The copies diverge from upstream in exactly six ways (the "adaptations" below). When syncing upstream, preserve them. A seventh divergence is either a bug or must be added to this list.
 
-## The five adaptations
+## The six adaptations
 
 1. **Shell activation** — stacks never self-activate; `register()` returns fast and never blocks on starting a server/worker.
 2. **Namespace** — everything user-visible is `rstack.*`. Legacy `rslint.*` / `rstest.*` names appear only in the migration mapping. Command IDs were renamed without aliases (breaking old keybindings was an accepted cost).
 3. **Resolve-from-project** — no tool binaries or tool packages in the VSIX; everything resolves from the user's project so the editor runs the CLI's exact versions. Version floors surface as a status, never a crash. All cooperating lint pieces (binary, config loader, plugin host) must come from one resolution root.
 4. **Status aggregation** — stacks own no UI chrome; they report to the shell's single status bar item, which always exists.
 5. **Worker-cwd decoupling** (test) — a project's cwd is explicit, not derived from the config file path; for native configs behavior stays byte-identical to upstream.
+6. **Node runtime selection** (test) — the worker's Node is a **User Node runtime** chosen by the extension against one uniform floor, never assumed from PATH; the recovery path is the user's own shell, and the dividing line is the **load bound** (terms in CONTEXT.md; the full rule and rationale in `docs/adr/0001-node-runtime-selection.md`). Implemented for the rstest worker only — fmt and lint still load project code on the VS Code Node runtime, known debt recorded in the ADR, not an invariant the extension already holds.
 
 ## Rules
 
@@ -34,6 +35,9 @@ One extension replacing the standalone `rstack.rslint` and `rstack.rstest` exten
 - The fmt stack is a spawn-per-request `rs fmt --stdin-filepath` MVP. Its cwd is the governing config directory because rs fmt resolves config from cwd only, and formatting errors are log-only by design. A single pre-spawned standby that tracks the active editor (see CONTEXT.md) is the accepted, bounded exception to "no warm tier". Do not grow it into a daemon: no long-lived protocol, no process pool, no cross-request state. The endgame is an upstream LSP; the standby retires with it.
 - `projectModules.ts` has no cache-invalidation hook and restart must not grow one. Node's ESM registry is keyed by resolved URL and process-lifetime, so clearing the local memo hands back the identical module object (verified); a `?epoch=` query does reload the entry but relative specifiers inside it do not inherit the query, yielding a fresh entry over stale dependencies. In-place reinstalls under an unchanged path need a window reload — say so, don't fake it.
 - The VSIX is platform-targeted for exactly one reason: the test stack's AST collection loads a native parser binding. Do not add another native dependency — it multiplies the release matrix.
+- `stacks/test/nodeResolution.ts` takes its shell and its notify callback as options instead of importing `vscode` and the stack's `logger` singleton, unlike its neighbours. That is not stylistic: it keeps `resolveWorkerNode` a pure decision table over its inputs, which is what makes the case-by-case unit tests possible without a `vscode` stub. Move it to `shared/` when a second stack has to run user code on a User Node runtime — but not for a caller that only runs _our_ code on the VS Code Node runtime (fmt, the lint plugin host), which has no candidate to choose between and only needs `nativeTypeStrippingAvailable()`.
+- The uniform Node floor deliberately exceeds `@rstest/core`'s own `engines` (`^20.19.0 || >=22.12.0`), because the strictest thing a worker does is load an `rstack.config.*` through rstack's shim, which hardcodes `loader: 'native'` with no jiti fallback and so needs native type stripping (22.18+; on the 23.x line only from 23.6). Do not specialise the floor per project — that was considered and rejected. Why, and what else was rejected: `docs/adr/0001-node-runtime-selection.md`.
+- Bun is not a supported worker runtime (it segfaults running `@rstest/core`). If that is ever revisited, gate it on an explicit setting — never on `bun.lock`, since bun-as-package-manager still runs the `rs` bin through its `#!/usr/bin/env node` shebang.
 
 ## Testing
 

@@ -22,14 +22,67 @@ import type { RstestDiagnostics } from './diagnostics';
 import type { TestErrorStore } from './errorStore';
 import { logger } from './logger';
 import { nodeRequire } from './nodeRequire';
+import {
+  configuredNodeBelowFloor,
+  NodePreflightError,
+  type ResolveWorkerNodeOptions,
+  resolveWorkerNodeOnce,
+} from './nodeResolution';
 import type { Project } from './project';
-import { status } from './status';
+import { NODE_RUNTIME_STATUS_SOURCE, status } from './status';
 import { runInTerminal as sendToTerminal, shellQuote } from './terminal';
 import { TestRunReporter } from './testRunReporter';
 import { toErrorMessage } from './utils';
 import type { Worker } from './worker';
 
 export const runningWorkers = new Set<BirpcReturn<Worker, TestRunReporter>>();
+
+/**
+ * The host-level inputs to the worker-node preflight. `notify` must not close
+ * over `this`: the resolution is memoized for the extension host's lifetime, so
+ * a callback capturing a `Project` would pin it and its whole test tree.
+ * (Settle-bounded reactions, like the configured-node verdict's `.then`, may
+ * capture `this` — the rule is about host-lifetime retention.)
+ * `cwd` is the caller's standpoint for the shell probe — see
+ * `probeShellNodePath`.
+ */
+export const workerNodeOptions = (
+  cwd: string | undefined,
+): ResolveWorkerNodeOptions => ({
+  shell: vscode.env.shell || undefined,
+  cwd,
+  notify: (message) => logger.info(message),
+});
+
+/**
+ * Fire-and-forget warm of the host-level preflight, so the first worker spawn
+ * awaits a settled promise instead of paying the probes on its critical path.
+ *
+ * One `find` answers both questions the warm-up has: *whether* to warm — a
+ * folder without a pinned `nodeExecutable` proves the memo has a reader, while
+ * pinned folders take the configured branch and never read it — and *where the
+ * shell probe stands* — that same folder, whose version file is the one its
+ * workers should honour. Deriving both from one query is what keeps them from
+ * disagreeing in a multi-root window where only some folders pin; the memo is
+ * first-caller-wins (ADR 0001, "Where the shell probe stands").
+ *
+ * Skipping when every folder pins is not a rounding error: whoever sets the
+ * escape hatch is usually the one whose PATH `node` is broken, the very input
+ * that drives the preflight down its slowest path (five retried spawns, then
+ * a full interactive shell).
+ */
+export const warmWorkerNodePreflight = (
+  folders: readonly vscode.WorkspaceFolder[],
+): void => {
+  const target = folders.find(
+    (folder) => !getConfigValue('nodeExecutable', folder),
+  );
+  if (target !== undefined) {
+    void resolveWorkerNodeOnce(workerNodeOptions(target.uri.fsPath)).catch(
+      () => {},
+    );
+  }
+};
 
 // Default host for a fixed debug port. The spawn (`--inspect-wait`), the port
 // preflight, and the attach config must all use the same host: on a dual-stack
@@ -58,6 +111,10 @@ export class RstestApi {
   // Processes killed on purpose outside the `$close` → `off` path (dispose,
   // failed debugger attach). Their `exit` events are not crashes.
   private readonly expectedExits = new WeakSet<ChildProcess>();
+  // Flipped by `dispose()` and checked wherever an await can outlive a
+  // restart — see `reportNodeRuntimeIssue` and the spawn abort in
+  // `createChildProcess`.
+  private disposed = false;
 
   constructor(
     private workspace: vscode.WorkspaceFolder,
@@ -101,12 +158,17 @@ export class RstestApi {
     return `^${regexpEscape(testCaseNamePath.join(' '))}${isSuite ? ' ' : '$'}`;
   }
 
-  // The node executable + exec args used to run a worker or the CLI, honoring
-  // the `nodeExecutable` / `nodeExecArgs` settings (`${workspaceFolder}`
-  // expanded).
+  // The node executable + exec args honoring the `nodeExecutable` /
+  // `nodeExecArgs` settings (`${workspaceFolder}` expanded). Used verbatim by
+  // the terminal CLI, which deliberately skips the worker preflight below: the
+  // command runs inside the user's own shell, which is the very thing the
+  // preflight exists to emulate. `configured` reports whether the executable is
+  // the user's explicit choice or the bare `node` default, so the preflight
+  // does not have to read the setting a second time.
   private resolveNodeCommand(): {
     nodeExecutable: string;
     nodeExecArgs: string[];
+    configured: boolean;
   } {
     const configuredExecutable = getConfigValue(
       'nodeExecutable',
@@ -116,10 +178,80 @@ export class RstestApi {
       nodeExecutable: configuredExecutable
         ? this.expandWorkspaceFolder(configuredExecutable)
         : 'node',
+      configured: Boolean(configuredExecutable),
       nodeExecArgs: getConfigValue('nodeExecArgs', this.workspace).map((arg) =>
         this.expandWorkspaceFolder(arg),
       ),
     };
+  }
+
+  /**
+   * The latch key for this project's *configured* runtime advisory. Its own
+   * namespace on purpose: `nodeExecutable` is resource-scoped, so the fact is
+   * this project's — it must die with the project (`dispose` forgets it),
+   * unlike the host-wide preflight failure — but it cannot share the bare
+   * `statusSource` key either, or the core version check's `versionOk` on
+   * every spawn would erase it.
+   */
+  private get nodeRuntimeStatusSource(): string {
+    return `node-runtime:${this.statusSource}`;
+  }
+
+  /**
+   * A Node-runtime verdict, latched under `source` — dropped when this API
+   * was disposed while the verdict was in flight: the memo is reset and
+   * `status` rebound by then, so the report would land in the *replacement*
+   * registration with nothing left to clear it.
+   */
+  private reportNodeRuntimeIssue(message: string, source: string): void {
+    if (this.disposed) {
+      return;
+    }
+    status.versionMismatch(message, source);
+  }
+
+  /**
+   * The node command for worker spawns — the node-preflight adaptation. Why the
+   * PATH `node` cannot be trusted, and why the floor is uniform rather than
+   * per-project, lives in `nodeResolution.ts`.
+   *
+   * An explicitly configured `nodeExecutable` is honoured but probed all the
+   * same — the whys, and the by-path memo that keeps this every-spawn call at
+   * a lookup, live on `configuredNodeBelowFloor`.
+   *
+   * `vscode.env.shell` is read here so `nodeResolution.ts` needs no VS Code
+   * import.
+   */
+  private async resolveWorkerNodeCommand(): Promise<{
+    nodeExecutable: string;
+    nodeExecArgs: string[];
+  }> {
+    const { nodeExecutable, nodeExecArgs, configured } =
+      this.resolveNodeCommand();
+    if (configured) {
+      // Advisory, never gating — the message says the run is going ahead, and
+      // it does — so it is deliberately not awaited: the verdict must not sit
+      // on the spawn path. Re-reporting on a later spawn is a no-op.
+      void configuredNodeBelowFloor(nodeExecutable).then((message) => {
+        if (message) {
+          this.reportNodeRuntimeIssue(message, this.nodeRuntimeStatusSource);
+        }
+      });
+      return { nodeExecutable, nodeExecArgs };
+    }
+    try {
+      const resolution = await resolveWorkerNodeOnce(
+        workerNodeOptions(this.cwd),
+      );
+      return { nodeExecutable: resolution.executable, nodeExecArgs };
+    } catch (error) {
+      if (error instanceof NodePreflightError) {
+        // The status-aggregation adaptation: no usable runtime anywhere is the
+        // same "fix your toolchain" state as an unsupported package version.
+        this.reportNodeRuntimeIssue(error.message, NODE_RUNTIME_STATUS_SOURCE);
+      }
+      throw error;
+    }
   }
 
   // The validated absolute path to the package.json a `rstestPackagePath`
@@ -237,19 +369,24 @@ export class RstestApi {
       // The status-aggregation adaptation: the one-shot `showWarningMessage`
       // becomes the shared `version mismatch` status bar state with actual vs
       // required versions. The floor is the same `>= 0.6.0`.
-      if (
-        !reportVersionCheck(
-          status,
-          '@rstest/core',
-          coreVersion,
-          this.statusSource,
-        )
-      ) {
-        logger.error(
-          `Unsupported @rstest/core version ${coreVersion ?? 'unknown'} resolved from ${this.cwd}`,
-        );
-      } else {
-        status.versionOk(this.statusSource);
+      // Skipped after dispose: the project's status was already forgotten,
+      // and a mismatch re-latched now — for a root that may never come back —
+      // would have nothing left to clear it.
+      if (!this.disposed) {
+        if (
+          !reportVersionCheck(
+            status,
+            '@rstest/core',
+            coreVersion,
+            this.statusSource,
+          )
+        ) {
+          logger.error(
+            `Unsupported @rstest/core version ${coreVersion ?? 'unknown'} resolved from ${this.cwd}`,
+          );
+        } else {
+          status.versionOk(this.statusSource);
+        }
       }
 
       return nodeExport;
@@ -470,6 +607,12 @@ export class RstestApi {
     startDebugging?: boolean,
     testRun?: vscode.TestRun,
   ) {
+    // Cheap fast-fail; the load-bearing check is the one after the Node
+    // preflight below, which covers a dispose landing mid-await. This one
+    // just spares a retired master the package resolution and probe costs.
+    if (this.disposed) {
+      throw new Error('worker spawn aborted: this master is disposed');
+    }
     const rstestPath = this.resolveRstestPath();
     if (!rstestPath) {
       throw new Error('Failed to resolve rstest path');
@@ -495,7 +638,16 @@ export class RstestApi {
       );
     }
     const workerPath = path.resolve(__dirname, 'worker.js');
-    const { nodeExecutable, nodeExecArgs } = this.resolveNodeCommand();
+    const { nodeExecutable, nodeExecArgs } =
+      await this.resolveWorkerNodeCommand();
+    // A restart may have retired this API while the preflight above was
+    // pending. Spawning now would produce the one worker `dispose()` cannot
+    // kill, running on the very resolution the restart exists to replace.
+    if (this.disposed) {
+      throw new Error(
+        'worker spawn aborted: this master was disposed while its Node runtime was being resolved',
+      );
+    }
     const nodeEnv = getConfigValue('nodeEnv', this.workspace);
     const debugNodeEnv = startDebugging
       ? getConfigValue('debugNodeEnv', this.workspace)
@@ -640,6 +792,8 @@ export class RstestApi {
   }
 
   public dispose() {
+    this.disposed = true;
+    status.forget(this.nodeRuntimeStatusSource);
     for (const child of this.childProcesses) {
       this.expectedExits.add(child);
       child.kill();

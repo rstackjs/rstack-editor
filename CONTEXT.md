@@ -9,6 +9,14 @@ Glossary of terms used across rstack-editor. Code, docs, commit messages and rev
 - **Detection** — the per-workspace-folder scan deciding which stacks a folder lights up. Detection signals are config files and installed tool binaries, never user settings.
 - **Gate** — the per-stack activation condition: detected, workspace trusted, and the enable settings on.
 
+## Runtimes
+
+- **VS Code Node runtime** — the Node.js shipped inside VS Code, which the extension host itself runs on. Its version follows VS Code's release cadence, and it is Electron's Node, on a different ABI line from plain Node. _Avoid_: host runtime, extension host runtime.
+- **User Node runtime** — the Node.js the user's own environment provides, discovered by the extension rather than shipped with it. _Avoid_: worker runtime, project-side Node.
+- **Load bound** — the limit on what a piece of work can end up loading: what the extension ships, plus ABI-stable N-API bindings. Work that stays inside the bound may run on the VS Code Node runtime; work that can load project code has no load bound and belongs on a User Node runtime. _Avoid_: load surface.
+- **Preflight** — the check that picks a User Node runtime, run once per extension host before any worker is spawned. Its failure is a status, never a crash.
+- **Runtime floor** — the version range a User Node runtime must satisfy (`NODE_RUNTIME_RANGE` in `shared/versionCheck.ts`). A declared support contract, not a probed capability.
+
 ## fmt
 
 - **Cold format** — a format request served by spawning a fresh `rs fmt` process at request time; the request pays the full process start-up cost.

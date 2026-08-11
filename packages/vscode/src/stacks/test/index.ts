@@ -7,7 +7,8 @@ import type {
 import { RstestDiagnostics } from './diagnostics';
 import { TestErrorStore, testMessageText } from './errorStore';
 import { logger } from './logger';
-import { runningWorkers } from './master';
+import { runningWorkers, warmWorkerNodePreflight } from './master';
+import { resetWorkerNodeCaches } from './nodeResolution';
 import { Project, WorkspaceManager } from './project';
 import { status } from './status';
 import { disposeTerminal } from './terminal';
@@ -505,6 +506,15 @@ class Rstest implements vscode.Disposable {
 
 class RstestController implements StackController {
   readonly id = 'rstest' as const;
+  // The worker runtime is resolved once per registration and the memo in
+  // `nodeResolution.ts` caches the *rejection* as well as the success, so
+  // without a rebuild a user who reads the "no usable Node" status and then
+  // sets `nodeExecutable` gets no reaction at all — and one who removes it
+  // again keeps a populated tree whose every run now fails. Only the setting
+  // qualifies: installing a newer Node on the machine is not observable by the
+  // extension and stays a manual restart, the deliberate half of the deal (see
+  // `docs/adr/0001-node-runtime-selection.md`).
+  readonly restartOnSettings = ['nodeExecutable'];
 
   #rstest: Rstest | undefined;
 
@@ -525,12 +535,25 @@ class RstestController implements StackController {
       status.unbind();
       throw error;
     }
+    // Not awaited — `register()` must return fast (adaptation #1) — and the
+    // rejection is handled by whoever actually needs the resolution. Only the
+    // folders detection picked are considered: they are the ones that will
+    // spawn workers, and they are file-scheme by construction, so the probe
+    // never stands in a virtual folder's meaningless `fsPath`.
+    warmWorkerNodePreflight(
+      context.detection.foldersFor('rstest').map(({ folder }) => folder),
+    );
     return this.#rstest.buildExports();
   }
 
   dispose(): void {
     this.#rstest?.dispose();
     this.#rstest = undefined;
+    // The third module singleton with this exact lifetime, alongside the two
+    // binds above: a re-registered stack re-probes, which is what makes the
+    // restart command pick up a toolchain change — and what
+    // `restartOnSettings` relies on, rather than resetting the memo itself.
+    resetWorkerNodeCaches();
     status.unbind();
     logger.unbind();
   }

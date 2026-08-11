@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, rs } from '@rstest/core';
 import type vscode from 'vscode';
 
 interface FakeController {
+  readonly restartOnSettings?: readonly string[];
   register(): Promise<Record<string, unknown>>;
   dispose(): Promise<void>;
 }
@@ -53,6 +54,12 @@ const harness = rs.hoisted(() => {
     shellLog: [] as string[],
     commands: new Map<string, (...args: unknown[]) => unknown>(),
     contextKeys: new Map<string, boolean>(),
+    /** What each stack's controller declares as restart-triggering settings. */
+    restartOnSettings: new Map<string, readonly string[]>(),
+    /** Every configuration listener the shell installed. */
+    configListeners: [] as ((event: {
+      affectsConfiguration(section: string): boolean;
+    }) => void)[],
   });
   const state = {
     ...defaults(),
@@ -61,6 +68,7 @@ const harness = rs.hoisted(() => {
     },
     controller(stack: string): FakeController {
       return {
+        restartOnSettings: state.restartOnSettings.get(stack),
         register: async () => {
           state.events.push(`register:${stack}`);
           const block = state.blockRegister.get(stack);
@@ -181,7 +189,14 @@ rs.mock('vscode', () => {
       getConfiguration: () => ({
         get: (_key: string, fallback?: unknown) => fallback,
       }),
-      onDidChangeConfiguration: () => disposable,
+      onDidChangeConfiguration: (
+        listener: (event: {
+          affectsConfiguration(section: string): boolean;
+        }) => void,
+      ) => {
+        harness.configListeners.push(listener);
+        return disposable;
+      },
       onDidChangeWorkspaceFolders: () => disposable,
       onDidGrantWorkspaceTrust: () => disposable,
     },
@@ -251,12 +266,104 @@ const run = async (command: string): Promise<void> => {
 const restart = (): Promise<void> => run('rstack.restart');
 
 /**
+ * Fires a configuration change naming exactly one section, the way VS Code
+ * reports one setting moving. Narrow on purpose: a fake that answered `true`
+ * for every section could not tell a gate change from a restart-triggering one.
+ */
+const changeSetting = (...sections: string[]): void => {
+  for (const listener of harness.configListeners) {
+    listener({ affectsConfiguration: (asked) => sections.includes(asked) });
+  }
+};
+
+/**
  * Lets every already-scheduled continuation run. A macrotask turn drains the
  * whole microtask queue behind it, so this is "whatever was going to happen
  * without further input has happened" — not a guess at a tick count.
  */
 const settle = (): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, 0));
+
+/**
+ * Restart is a shell concern, so *which settings trigger one* is too: a stack
+ * declares `restartOnSettings` as data and the shell owns the listener and the
+
+ * rebuild. These cases pin that seam — a stack watching configuration itself
+ * would have to re-derive the gate exclusion and the mid-rebuild ordering the
+ * shell already gets right.
+ */
+describe('restart-triggering settings', () => {
+  beforeEach(async () => {
+    harness.reset();
+    harness.detected = new Set(['rslint', 'rstest', 'fmt']);
+    harness.restartOnSettings = new Map([
+      ['rstest', ['nodeExecutable']],
+      ['rslint', ['binPath', 'customBinPath']],
+    ]);
+    await activate(context);
+    harness.events.length = 0;
+  });
+
+  afterEach(async () => {
+    await deactivate();
+  });
+
+  it("still rebuilds a stack when another stack's gate moved too", async () => {
+    // One event covers a whole batch — saving settings.json moves everything
+    // at once. A gate change used to short-circuit the whole listener, so the
+    // restart was dropped on the floor with no trace.
+    changeSetting('rstack.rslint.enable', 'rstack.rstest.nodeExecutable');
+    await settle();
+    expect(stacksOf('register')).toContain('rstest');
+  });
+
+  it('leaves a stack whose own gate moved to the reconcile', async () => {
+    // Both moved for the same stack: rebuilding it here would fight a
+    // reconcile that may be retiring it.
+    changeSetting('rstack.rstest.enable', 'rstack.rstest.nodeExecutable');
+    await settle();
+    expect(stacksOf('register')).not.toContain('rstest');
+  });
+
+  it('rebuilds only the stack that declared the setting', async () => {
+    changeSetting('rstack.rstest.nodeExecutable');
+    await settle();
+    expect(stacksOf('dispose')).toEqual(['rstest']);
+    expect(stacksOf('register')).toEqual(['rstest']);
+  });
+
+  it('honours every setting a stack declares, not just the first', async () => {
+    changeSetting('rstack.rslint.customBinPath');
+    await settle();
+    expect(stacksOf('register')).toEqual(['rslint']);
+  });
+
+  it('ignores a setting no stack declared', async () => {
+    changeSetting('rstack.rstest.nodeExecArgs');
+    await settle();
+    expect(harness.events).toEqual([]);
+  });
+
+  it('ignores a declared name under another stack namespace', async () => {
+    // The section is built as `rstack.<stack>.<setting>`, so rslint's binPath
+    // must not move rstest even though both are declared somewhere.
+    changeSetting('rstack.rstest.binPath');
+    await settle();
+    expect(harness.events).toEqual([]);
+  });
+
+  it('leaves a stack behind a closed gate alone', async () => {
+    // Only live controllers are iterated: there is nothing to rebuild for a
+    // stack that never registered, and a restart would fight the gate.
+    harness.detected = new Set(['rslint', 'fmt']);
+    await run('rstack.restart');
+    harness.events.length = 0;
+
+    changeSetting('rstack.rstest.nodeExecutable');
+    await settle();
+    expect(harness.events).toEqual([]);
+  });
+});
 
 describe('the shell restart command', () => {
   beforeEach(async () => {

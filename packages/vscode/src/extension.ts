@@ -68,13 +68,37 @@ class ExtensionShell {
         this.scheduleReconcile();
       }),
       vscode.workspace.onDidChangeConfiguration((event) => {
-        const affectsGate =
-          event.affectsConfiguration('rstack.enable') ||
-          STACK_IDS.some((stack) =>
-            event.affectsConfiguration(`rstack.${stack}.enable`),
-          );
-        if (affectsGate) {
+        // One event covers a whole batch of edits — saving settings.json moves
+        // everything at once — so the two paths are decided per stack rather
+        // than one short-circuiting the other. A stack whose gate moved is the
+        // reconcile's to deal with, and rebuilding it here would fight that:
+        // it may be on its way out.
+        const gated = new Set(
+          STACK_IDS.filter(
+            (stack) =>
+              event.affectsConfiguration('rstack.enable') ||
+              event.affectsConfiguration(`rstack.${stack}.enable`),
+          ),
+        );
+        if (gated.size > 0) {
           this.scheduleReconcile();
+        }
+        // A reconcile deliberately leaves a live stack alone, so a setting a
+        // controller consumed at registration needs the restart path instead.
+        // Only live controllers are iterated: a stack behind a closed gate has
+        // nothing to rebuild, and one already being retired is gone from the
+        // map, which is what keeps a change landing mid-rebuild from queuing a
+        // second one.
+        for (const [stack, controller] of this.#controllers) {
+          if (gated.has(stack)) {
+            continue;
+          }
+          const moved = controller.restartOnSettings?.find((setting) =>
+            event.affectsConfiguration(`rstack.${stack}.${setting}`),
+          );
+          if (moved) {
+            void this.restart(stack, `rstack.${stack}.${moved} changed`);
+          }
         }
       }),
       // Restricted Mode shows the status bar only; trust unlocks the stacks
@@ -122,7 +146,7 @@ class ExtensionShell {
       // Owned by the shell, not the stack: a stack cannot rebuild itself, and
       // the shallower alternative (bouncing just the tool's own process) leaves
       // the controller's package resolution and version check stale. Stacks
-      // reach the same operation through `StackContext.requestRestart`.
+      // reach the same operation by declaring `restartOnSettings`.
       register(stackCommand(stack, 'restart'), () => this.restart(stack));
     }
   }
@@ -212,7 +236,7 @@ class ExtensionShell {
    * still passes the gate, from scratch.
    *
    * `reason` is for the callers that are not a user picking the command —
-   * `StackContext.requestRestart` passes what moved.
+   * `restartOnSettings` passes what moved.
    */
   restart(stack?: StackId, reason?: string): Promise<void> {
     return this.enqueue(() => this.runRestart(stack, reason));
@@ -348,7 +372,6 @@ class ExtensionShell {
         status: this.#statusBar.reporterFor(stack),
         detection: snapshot,
         onDidChangeDetection: this.#detectionEmitter.event,
-        requestRestart: (reason) => this.restart(stack, reason),
       });
       // Retiring it here rather than leaving it to the queued teardown skips
       // publishing exports and flipping `active` on for a stack the extension

@@ -45,21 +45,66 @@ export const readPackageVersion = (
   return typeof version === 'string' ? version : undefined;
 };
 
-export const checkPackageVersion = (
-  packageName: SupportedPackage,
+/**
+ * The floor for the Node.js a test worker runs on. Not part of
+ * `SUPPORT_MATRIX`, which is keyed by npm package name, but the same kind of
+ * fact and deliberately kept in the same file so "what does this extension
+ * require?" has one answer.
+ *
+ * Native type stripping is what lets a worker load an `rstack.config.*` —
+ * rstack's shim loads it with `loader: 'native'` and no jiti fallback. It was
+ * unflagged in 23.6.0 and backported to the LTS line in 22.18.0, so 23.0–23.5
+ * compare above 22.18.0 yet predate it — hence a disjunction, not a plain
+ * floor. Verified: 22.17.1 reports `process.features.typescript` false,
+ * 22.18.0 reports `strip`. See `stacks/test/nodeResolution.ts` for how
+ * candidates are probed.
+ */
+export const NODE_RUNTIME_RANGE = '^22.18.0 || >=23.6.0';
+
+/**
+ * `NODE_RUNTIME_RANGE` for human eyes, interpolated into the user-facing
+ * messages in `stacks/test/nodeResolution.ts`. The raw range reads as npm
+ * jargon in a status-bar sentence — a user on 23.2 would have to parse a `^`
+ * to learn why they were refused. Logs keep the raw range, the precise
+ * register there. Keep the two in lockstep.
+ */
+export const NODE_RUNTIME_LABEL = '22.18+ (excluding 23.0–23.5)';
+
+/**
+ * Classifies a version against a range; it does not decide what the classes
+ * mean. Prereleases of a supported range (e.g. `1.0.0-beta.1`) count as `ok`,
+ * because the ecosystem ships them and refusing them would strand early
+ * adopters — that part *is* policy and is uniform.
+ *
+ * What `unknown` means is the caller's to choose, and the two callers choose
+ * opposite things on purpose:
+ * - `reportVersionCheck` below soft-passes it. A package whose version cannot
+ *   be read is still installed, and there is no second candidate to fall back
+ *   to, so refusing would cost the feature for nothing.
+ * - `satisfiesFloor` in `stacks/test/nodeResolution.ts` rejects it. Runtime
+ *   candidates are an *ordered list*, so soft-passing lets a suspect PATH
+ *   `node` win over a healthy one from the user's shell.
+ *
+ * A third caller must make this choice deliberately rather than copy whichever
+ * neighbour it read first.
+ */
+export const checkVersion = (
   version: string | undefined,
+  required: string,
 ): VersionCheckResult => {
   if (!version || !semver.valid(semver.coerce(version) ?? '')) {
     return { kind: 'unknown', version };
   }
-  const required = SUPPORT_MATRIX[packageName];
-  // Prereleases of a supported range (e.g. `1.0.0-beta.1`) are accepted: the
-  // ecosystem ships them and refusing them would strand early adopters.
   if (semver.satisfies(version, required, { includePrerelease: true })) {
     return { kind: 'ok', version };
   }
   return { kind: 'mismatch', version, required };
 };
+
+export const checkPackageVersion = (
+  packageName: SupportedPackage,
+  version: string | undefined,
+): VersionCheckResult => checkVersion(version, SUPPORT_MATRIX[packageName]);
 
 export const formatVersionMismatch = (
   packageName: SupportedPackage,

@@ -5,6 +5,13 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, rs } from '@rstest/core';
 import { logger } from '../../../src/stacks/test/logger';
 import { RstestApi } from '../../../src/stacks/test/master';
+import {
+  type NodeProbe,
+  configuredNodeBelowFloor,
+  resetWorkerNodeCaches,
+} from '../../../src/stacks/test/nodeResolution';
+import { status } from '../../../src/stacks/test/status';
+import type { StatusReporter } from '../../../src/types';
 
 // The Rstest runner injects its own `@rstest/core` into every resolution path so
 // that test files can import it, which makes "the project has no @rstest/core"
@@ -108,13 +115,22 @@ rs.mock('vscode', () => {
 // the workspace `node_modules` and `@rstest/core` is genuinely missing.
 const noCoreDir = os.tmpdir();
 
+// Settings are a module-level bag every suite writes into; clearing them per
+// test keeps one suite's configuration from leaking into the next.
+afterEach(() => {
+  for (const key of Object.keys(settings)) delete settings[key];
+});
+
 const createApi = (cwd = noCoreDir) => {
   const workspace = { uri: { fsPath: cwd } };
+  // `sourceUri` backs the per-project status latch key, which the version
+  // check on the spawn path reads before anything can fail.
+  const project = { sourceUri: { toString: () => `test://${cwd}` } };
   return new RstestApi(
     workspace as any,
     cwd,
     `${cwd}/rstest.config.ts`,
-    {} as any,
+    project as any,
   );
 };
 
@@ -213,5 +229,119 @@ describe('RstestApi with an unresolvable rstestPackagePath', () => {
     expect(shownMessages).toHaveLength(1);
     expect(shownMessages[0]).toContain('rstack.rstest.rstestPackagePath');
     expect(createdTerminals).toEqual([]);
+  });
+});
+
+// An explicit `nodeExecutable` is the escape hatch and is always honoured — but
+// a setting pointed at a Node that has since fallen below the floor is the very
+// failure the worker-runtime adaptation exists to catch, and the spawn succeeds,
+// so nothing else would ever say so.
+describe('RstestApi with a configured nodeExecutable', () => {
+  const configuredNode = '/opt/node/bin/node';
+  const mismatches: string[] = [];
+  // `running` is what the holder repaints once its last latch is cleared, so
+  // counting it observes an advisory being forgotten.
+  let repaints = 0;
+
+  // Adaptation #4 again: the stack reports through a singleton that no-ops
+  // while unbound, which is what every other suite in this file sees.
+  const reporter: StatusReporter = {
+    stack: 'rstest',
+    report: () => {},
+    starting: () => {},
+    running: () => {
+      repaints += 1;
+    },
+    crashed: () => {},
+    versionMismatch: (detail) => mismatches.push(detail),
+  };
+
+  // Seeding the memo is how the probe is injected: `resolveWorkerNodeCommand`
+  // takes no probe option (it is called from deep inside a spawn path), and the
+  // memo is keyed by executable path, so a seeded entry is the answer it gets.
+  const seedProbe = (probe: NodeProbe) =>
+    configuredNodeBelowFloor(configuredNode, {
+      probe: () => Promise.resolve(probe),
+    });
+
+  // Reaching the private method keeps these cases on the decision under test
+  // instead of spawning a real worker process for each one.
+  const resolveWorkerNodeCommand = (api: RstestApi) =>
+    (api as any).resolveWorkerNodeCommand() as Promise<{
+      nodeExecutable: string;
+    }>;
+
+  beforeEach(() => {
+    mismatches.length = 0;
+    repaints = 0;
+    resetWorkerNodeCaches();
+    status.bind(reporter);
+    settings.nodeExecutable = configuredNode;
+  });
+
+  afterEach(() => {
+    status.unbind();
+    resetWorkerNodeCaches();
+  });
+
+  // The verdict is reported off the spawn path, so a spawn resolves before the
+  // report lands; awaiting the (memoized) verdict is what settles it.
+  const settleVerdict = () => configuredNodeBelowFloor(configuredNode);
+
+  it('should stay silent when the configured executable clears the floor', async () => {
+    await seedProbe({ kind: 'ok', version: '24.0.0' });
+    const { nodeExecutable } = await resolveWorkerNodeCommand(createApi());
+    await settleVerdict();
+    expect(nodeExecutable).toBe(configuredNode);
+    expect(mismatches).toEqual([]);
+  });
+
+  // The wording itself is `nodeResolution.test.ts`'s to pin; what this level
+  // owns is the wiring — a verdict reaches the status, and the executable is
+  // handed back regardless.
+  it('should report a below-floor executable and still run with it', async () => {
+    await seedProbe({ kind: 'ok', version: '20.19.4' });
+    const { nodeExecutable } = await resolveWorkerNodeCommand(createApi());
+    await settleVerdict();
+    // Never refused: the setting is the escape hatch.
+    expect(nodeExecutable).toBe(configuredNode);
+    expect(mismatches).toHaveLength(1);
+  });
+
+  it('should scope the advisory to the project and forget it on dispose', async () => {
+    await seedProbe({ kind: 'ok', version: '20.19.4' });
+    const api = createApi();
+    await resolveWorkerNodeCommand(api);
+    await settleVerdict();
+    expect(mismatches).toHaveLength(1);
+    // The advisory is the project's fact: disposing the project clears its
+    // latch, and the repaint to `running` is only reachable with no latch
+    // left — a host-keyed advisory would have stayed stuck instead.
+    api.dispose();
+    expect(repaints).toBe(1);
+  });
+
+  // The two mid-flight races a settings-triggered restart makes reachable:
+  // the verdict and the spawn each cross an await that can outlive `dispose()`.
+  it('should drop a verdict that settles after dispose', async () => {
+    await seedProbe({ kind: 'ok', version: '20.19.4' });
+    const api = createApi();
+    const pending = resolveWorkerNodeCommand(api);
+    api.dispose();
+    await pending;
+    await settleVerdict();
+    expect(mismatches).toEqual([]);
+  });
+
+  it('should refuse to spawn a worker after dispose', async () => {
+    // The seed keeps the configured executable's probe off the real spawn
+    // path; the package dir (not `process.cwd()`) is a cwd where
+    // `@rstest/core` resolves, so the abort observed is the disposed check
+    // and not an earlier resolution failure.
+    await seedProbe({ kind: 'ok', version: '24.0.0' });
+    const api = createApi(path.resolve(__dirname, '../../..'));
+    const spawning = api.createChildProcess();
+    api.dispose();
+    await expect(spawning).rejects.toThrow('disposed');
   });
 });
