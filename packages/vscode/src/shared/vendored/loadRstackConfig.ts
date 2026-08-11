@@ -1,14 +1,13 @@
 // TODO: revisit asking rstack-cli to export loadRstackConfig from the root entry.
 // An official export would delete this vendored copy, whose globalThis session key is internal API.
 //
-// NOTE(rstack-bridge): the rslint bridge — this loader's main consumer — was
-// deliberately removed; rebuilding it needs upstream work (rstack publishing an
-// explicit-path config loader plus adapter exports, rslint accepting per-root
-// fallback config candidates on `rslint/configRefresh`, and a generic
-// evaluator-module seam shared by the config host and plugin workers). The
-// formatter deliberately leaves `define.fmt()` evaluation to the CLI. This
-// copy remains for the Rslint jiti preflight's `nativeTypeStrippingAvailable`
-// probe and for direct loader unit coverage.
+// NOTE: no stack evaluates an Rstack config through this copy. The lint bridge
+// deliberately does not: it generates a shim that calls the *project's own*
+// `rstack/config` export (`stacks/lint/rstackBridge.ts`), so the editor's
+// results come from the exact loader the CLI uses instead of a vendored one
+// that could drift. The formatter leaves `define.fmt()` evaluation to the CLI.
+// This copy remains for `nativeTypeStrippingAvailable` — the probe behind both
+// loader preflights — and for direct loader unit coverage.
 //
 // Vendored from rstackjs/rstack-cli `packages/rstack/src/config.ts`
 // (origin/main @ 6494ba2, rstack@0.3.2). Only three things differ from upstream:

@@ -76,6 +76,8 @@ async function runIsolatedSuite(
   extensionDevelopmentPath: string,
   vscodeExecutablePath: string,
   suite: TestSuite,
+  /** The fixture's package boundary — resolved (and checked) by the caller. */
+  packageRoot: string,
 ): Promise<void> {
   // Go discovery intentionally searches strict cwd ancestors, so keep each
   // fixture in a clean physical workspace outside this repository. Use short
@@ -92,10 +94,16 @@ async function runIsolatedSuite(
     // Suites intentionally create, rewrite, and delete config files. Run them
     // against a private copy so even an Extension Host crash cannot mutate a
     // tracked fixture in the checkout.
+    //
+    // `node_modules` is never copied: the dependency lookup is preserved by
+    // symlinking the install root's `node_modules` next to the copy (below),
+    // which is both faster and the only shape that works for a fixture whose
+    // install root *is* the workspace (the shared `rstack` fixture).
     await fs.promises.cp(suite.workspace, workspaceCopy, {
       recursive: true,
       force: false,
       errorOnExist: true,
+      filter: (source) => path.basename(source) !== 'node_modules',
     });
     const expectedWorkspaceFolders = await Promise.all(
       (suite.workspaceFolders ?? ['.']).map((folder) =>
@@ -117,7 +125,6 @@ async function runIsolatedSuite(
     // Preserve the fixture install root's package boundary and dependency
     // lookup (the project-resolved `@rslint/core`) without
     // placing a writable node_modules link inside the test workspace.
-    const packageRoot = await findPackageRoot(suite.workspace);
     await fs.promises.copyFile(
       path.join(packageRoot, 'package.json'),
       path.join(profileRoot, 'package.json'),
@@ -193,25 +200,6 @@ async function main(): Promise<void> {
       'dist/extension.js is missing — run `pnpm build` before `pnpm test:e2e:lint`.',
     );
   }
-  // One shared install root serves every lint fixture workspace (published
-  // @rslint/core) — that is what the guard probes.
-  if (!fs.existsSync(path.join(fixturesRoot, 'node_modules'))) {
-    throw new Error(
-      'the lint E2E fixtures are not installed — run `pnpm test:e2e:fixtures lint`.',
-    );
-  }
-
-  // Resolve the executable once so every suite explicitly uses the same one.
-  // `VSCODE_TEST_EXECUTABLE`/`VSCODE_TEST_VERSION` mirror the other runners in
-  // this repo; a cached download under `.vscode-test/` is reused.
-  const vscodeExecutablePath =
-    process.env.VSCODE_TEST_EXECUTABLE ||
-    (await downloadAndUnzipVSCode({
-      version: process.env.VSCODE_TEST_VERSION ?? 'stable',
-      timeout: 60_000,
-      extensionDevelopmentPath,
-    }));
-
   const suites: TestSuite[] = [
     {
       // Upstream "JSON config tests": same suite, JS-config fixture (JSON
@@ -269,6 +257,16 @@ async function main(): Promise<void> {
       workspace: fixture('eslint-plugins'),
       tests: suiteDir('suite-eslint-plugins'),
     },
+    {
+      // Not a ported suite and not a `fixtures/` workspace: the bridge needs a
+      // project that installs `rstack` itself, which is the shared `rstack`
+      // fixture (also used by the vscode and rstest slices). Its install root
+      // *is* the workspace, which the sandbox handles by never copying
+      // `node_modules` and symlinking the install root's next to the copy.
+      name: 'Rstack config bridge tests',
+      workspace: path.join(extensionDevelopmentPath, 'e2e/fixtures/rstack'),
+      tests: suiteDir('suite-rstack-bridge'),
+    },
   ];
 
   // Optional development filter: `RSTACK_LINT_E2E_SUITES="No config,Monorepo"`
@@ -292,14 +290,44 @@ async function main(): Promise<void> {
     );
   }
 
-  const failures: unknown[] = [];
+  // Every fixture workspace resolves its dependencies from its own package
+  // boundary — one shared install root for the ported suites, the `rstack`
+  // fixture itself for the bridge suite (it is the project that has to provide
+  // `rstack`). The same walk-up the sandbox uses answers "is it installed", so
+  // the check is one rule over the *selected* suites: a filtered run must not
+  // demand fixtures no selected suite touches.
+  const packageRoots = new Map<TestSuite, string>();
   for (const suite of selectedSuites) {
+    const packageRoot = await findPackageRoot(suite.workspace);
+    if (!fs.existsSync(path.join(packageRoot, 'node_modules'))) {
+      throw new Error(
+        `the E2E fixture for "${suite.name}" is not installed: ${packageRoot} has no node_modules — run \`pnpm test:e2e:fixtures\`.`,
+      );
+    }
+    packageRoots.set(suite, packageRoot);
+  }
+
+  // Resolve the executable once so every suite explicitly uses the same one.
+  // `VSCODE_TEST_EXECUTABLE`/`VSCODE_TEST_VERSION` mirror the other runners in
+  // this repo; a cached download under `.vscode-test/` is reused.
+  const vscodeExecutablePath =
+    process.env.VSCODE_TEST_EXECUTABLE ||
+    (await downloadAndUnzipVSCode({
+      version: process.env.VSCODE_TEST_VERSION ?? 'stable',
+      timeout: 60_000,
+      extensionDevelopmentPath,
+    }));
+
+  const failures: unknown[] = [];
+  // Insertion order is `selectedSuites` order.
+  for (const [suite, packageRoot] of packageRoots) {
     console.log(`\n=== ${suite.name} ===`);
     try {
       await runIsolatedSuite(
         extensionDevelopmentPath,
         vscodeExecutablePath,
         suite,
+        packageRoot,
       );
     } catch (error) {
       console.error(`${suite.name} failed:`, error);

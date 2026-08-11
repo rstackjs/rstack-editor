@@ -1,4 +1,12 @@
 import vscode from 'vscode';
+// The Ownership rule for lint lives with the bridge that implements it: the
+// shell asks it whether the stack lights up, the stack asks it which mode to
+// start in. It is a pure module over strings and pulls no `vscode` in, which is
+// also why it — not this file — owns the Rstack config name list.
+import {
+  lintIsDetected,
+  RSTACK_CONFIG_PROBE_ORDER,
+} from './stacks/lint/rstackBridge';
 import {
   type DetectionSnapshot,
   type FolderDetection,
@@ -8,23 +16,22 @@ import {
 } from './types';
 
 /**
- * `rstack.config.*` is a config source for Rstest and rs fmt:
- * an rstack-cli user may only have `rstack.config.ts` with `define.test()` /
- * `define.fmt()`.
+ * `rstack.config.*` is a config source for every stack: an rstack-cli user may
+ * only have `rstack.config.ts` with `define.test()` / `define.fmt()` /
+ * `define.lint()`.
  *
- * TODO(rstack-bridge): Rslint is deliberately NOT lit by `rstack.config.*` for
- * now — the earlier lint bridge had no complete final data path and was
- * removed. Rebuilding it needs upstream work: rstack publishing an
- * explicit-path config loader plus adapter exports, rslint accepting per-root
- * fallback config candidates on `rslint/configRefresh`, and a generic
- * evaluator-module seam shared by the config host and plugin workers.
+ * Rstest and rs fmt are lit by an `rstack.config.*` **anywhere** in the folder.
+ * Rslint is not: it is lit only for a *bridged folder* — no native
+ * `rslint.config.*` anywhere plus an `rstack.config.*` at the folder root. That
+ * asymmetry is the language server's, not a policy choice; the rule and its
+ * rationale live in `stacks/lint/rstackBridge.ts`, which owns the decision for
+ * both this pass and the stack itself.
+ *
+ * The names themselves are that module's `RSTACK_CONFIG_PROBE_ORDER` — one
+ * order-sensitive list for the whole extension, re-exported here under the
+ * name the watch table and the test stack already use.
  */
-export const RSTACK_CONFIG_NAMES = [
-  'rstack.config.ts',
-  'rstack.config.js',
-  'rstack.config.mts',
-  'rstack.config.mjs',
-] as const;
+export const RSTACK_CONFIG_NAMES = RSTACK_CONFIG_PROBE_ORDER;
 
 export const RSTACK_CONFIG_GLOB = '**/rstack.config.{ts,js,mts,mjs}';
 
@@ -189,9 +196,14 @@ export const detectFolder = async (
 
   const stacks: Record<StackId, StackDetection> = {
     rslint: {
-      // TODO(rstack-bridge): `rstack.config.*` deliberately does not light
-      // Rslint (see the RSTACK_CONFIG_NAMES doc comment).
-      detected: rslintConfigFiles.length > 0,
+      // Native config anywhere, or a bridged folder (root `rstack.config.*`
+      // and no native config anywhere). A `rstack.config.*` in a subdirectory
+      // alone does not light lint — see `stacks/lint/rstackBridge.ts`.
+      detected: lintIsDetected({
+        folderPath: folder.uri.fsPath,
+        rslintConfigPaths: rslintConfigFiles.map((uri) => uri.fsPath),
+        rstackConfigPaths: rstackConfigFiles.map((uri) => uri.fsPath),
+      }),
       configFiles: rslintConfigFiles,
       rstackConfigFiles,
     },

@@ -3,10 +3,16 @@ import type {
   DetectionSnapshot,
   StackContext,
   StackController,
+  StackDetection,
   StackState,
 } from '../../types';
 import { Logger } from './logger';
 import { Rslint, type RslintFolderConfigPaths } from './Rslint';
+import {
+  decideLintConfigMode,
+  lintConfigModeSignature,
+  RstackBridgeGateError,
+} from './rstackBridge';
 import { WorkspaceDocumentRouter } from './WorkspaceDocumentRouter';
 import {
   WorkspaceRslintCoordinator,
@@ -37,6 +43,15 @@ const STATE_RANK: Readonly<Record<StackState['kind'], number>> = {
 interface FolderStatus {
   readonly name: string;
   readonly state: StackState;
+  /**
+   * The config mode the folder's runtime was started in
+   * (`stacks/lint/rstackBridge.ts`). A language server's explicit-config choice
+   * is fixed for its process lifetime, so a folder whose Ownership flipped —
+   * an `rslint.config.*` appearing in or vanishing from a bridged folder, a
+   * root `rstack.config.*` being renamed — needs a *restart*, which a plain
+   * reconcile deliberately never does (it leaves live runtimes alone).
+   */
+  readonly configMode: string;
 }
 
 const detailOf = (state: StackState): string | undefined => {
@@ -61,7 +76,9 @@ const detailOf = (state: StackState): string | undefined => {
  * is not actionable.
  */
 export const aggregateFolderStates = (
-  statuses: readonly FolderStatus[],
+  // Only the two fields it actually folds: the mode signature riding along on
+  // `FolderStatus` is restart bookkeeping and no input to the status bar.
+  statuses: readonly Pick<FolderStatus, 'name' | 'state'>[],
 ): StackState => {
   if (statuses.length === 0) {
     return { kind: 'starting' };
@@ -106,6 +123,33 @@ export const aggregateFolderStates = (
       return { kind: 'not-detected' };
   }
 };
+
+const configPathsOf = (
+  detection: StackDetection | undefined,
+): RslintFolderConfigPaths => ({
+  rslintConfigPaths: (detection?.configFiles ?? []).map((uri) => uri.fsPath),
+  rstackConfigPaths: (detection?.rstackConfigFiles ?? []).map(
+    (uri) => uri.fsPath,
+  ),
+});
+
+const configModeSignatureOf = (
+  folder: vscode.WorkspaceFolder,
+  paths: RslintFolderConfigPaths,
+): string =>
+  lintConfigModeSignature(
+    decideLintConfigMode({
+      folderPath: folder.uri.fsPath,
+      rslintConfigPaths: paths.rslintConfigPaths,
+      rstackConfigPaths: paths.rstackConfigPaths,
+    }),
+  );
+
+interface DetectedLintFolder {
+  readonly folder: vscode.WorkspaceFolder;
+  /** `lintConfigModeSignature` of the mode this folder starts in. */
+  readonly configMode: string;
+}
 
 class RslintController implements StackController {
   readonly id = 'rslint' as const;
@@ -166,22 +210,28 @@ class RslintController implements StackController {
     };
   }
 
-  /** The workspace folders detection lit up for Rslint. */
-  private detectedFolders(): vscode.WorkspaceFolder[] {
-    return (this.#snapshot?.foldersFor('rslint') ?? []).map(
-      (entry) => entry.folder,
-    );
+  /**
+   * The workspace folders detection lit up for Rslint, each with the config
+   * mode it would start in.
+   *
+   * Both come out of the same detection entry in one pass: the entry already
+   * carries the folder *and* its config file lists, so the mode signature costs
+   * nothing beyond the decision itself.
+   */
+  private detectedFolders(): DetectedLintFolder[] {
+    return (this.#snapshot?.foldersFor('rslint') ?? []).map((entry) => ({
+      folder: entry.folder,
+      configMode: configModeSignatureOf(
+        entry.folder,
+        configPathsOf(entry.stacks.rslint),
+      ),
+    }));
   }
 
   private configPathsFor(
     folder: vscode.WorkspaceFolder,
   ): RslintFolderConfigPaths {
-    const detection = this.#snapshot?.forFolder(folder)?.stacks.rslint;
-    return {
-      rslintConfigPaths: (detection?.configFiles ?? []).map(
-        (uri) => uri.fsPath,
-      ),
-    };
+    return configPathsOf(this.#snapshot?.forFolder(folder)?.stacks.rslint);
   }
 
   private startCoordinator(): void {
@@ -209,19 +259,28 @@ class RslintController implements StackController {
           getConfigPaths: () => this.configPathsFor(workspaceFolder),
         }),
       logger,
+      // A bridge-eligible folder whose `@rslint/core` is missing or too old to
+      // be pinned to a config deliberately does not start; the user sees the
+      // reason as a `version mismatch` status, so logging it as a failure would
+      // only add noise.
+      (error) => error instanceof RstackBridgeGateError,
     );
     this.#coordinator = coordinator;
 
-    const folders = this.detectedFolders();
-    for (const folder of folders) {
-      this.setFolderState(workspaceRootKey(folder), folder.name, {
-        kind: 'starting',
-      });
+    const detected = this.detectedFolders();
+    for (const { folder, configMode } of detected) {
+      this.setFolderState(
+        workspaceRootKey(folder),
+        folder.name,
+        { kind: 'starting' },
+        configMode,
+      );
     }
 
     // Adaptation #1: activation must not wait for a language server. Upstream
     // awaits this promise (and rejects activation when every root fails); here
     // failures are reported per folder through the status reporter.
+    const folders = detected.map((entry) => entry.folder);
     void coordinator.initialize(folders).catch((error: unknown) => {
       if (coordinator !== this.#coordinator) {
         return;
@@ -230,37 +289,82 @@ class RslintController implements StackController {
     });
   }
 
+  /**
+   * Brings the tracked folders back in line with detection — and carries the
+   * config-mode flip with it.
+   *
+   * The flip is not a second pass: this one already walks every detected folder
+   * with its mode signature in hand, prunes the folders that vanished, and ends
+   * in exactly one `handleWorkspaceFoldersChanged`. A flipped folder therefore
+   * just joins that event as both removed and added, which is the coordinator's
+   * existing URI-preserving replacement path — the one path that bumps a root's
+   * generation, closes the live runtime and starts a fresh one, which is
+   * exactly what an immutable explicit-config choice needs.
+   */
   private reconcileFolders(event: vscode.WorkspaceFoldersChangeEvent): void {
     const coordinator = this.#coordinator;
     if (!coordinator || this.#disposed) {
       return;
     }
-    const folders = this.detectedFolders();
-    const keys = new Set(folders.map(workspaceRootKey));
+    const detected = this.detectedFolders();
+    const keys = new Set<string>();
+    const flipped: vscode.WorkspaceFolder[] = [];
+    for (const { folder, configMode } of detected) {
+      const key = workspaceRootKey(folder);
+      keys.add(key);
+      const previous = this.#folderStates.get(key);
+      if (previous === undefined) {
+        // A root with no runtime yet cannot have flipped: record the mode it
+        // is about to start in, so only later changes count as a flip.
+        this.setFolderState(key, folder.name, { kind: 'starting' }, configMode);
+        continue;
+      }
+      if (previous.configMode === configMode) {
+        continue;
+      }
+      this.#logger?.info(
+        `Lint config mode changed for ${folder.name} (${previous.configMode} -> ${configMode}); restarting its language server`,
+      );
+      this.#folderStates.set(key, { ...previous, configMode });
+      flipped.push(folder);
+    }
     for (const key of [...this.#folderStates.keys()]) {
       if (!keys.has(key)) {
         this.#folderStates.delete(key);
       }
     }
-    for (const folder of folders) {
-      const key = workspaceRootKey(folder);
-      if (!this.#folderStates.has(key)) {
-        this.setFolderState(key, folder.name, { kind: 'starting' });
-      }
-    }
     this.publishStatus();
-    coordinator.handleWorkspaceFoldersChanged(event, folders);
+    const folders = detected.map((entry) => entry.folder);
+    coordinator.handleWorkspaceFoldersChanged(
+      flipped.length === 0
+        ? event
+        : {
+            added: [...event.added, ...flipped],
+            removed: [...event.removed, ...flipped],
+          },
+      folders,
+    );
   }
 
   private setFolderState(
     rootKey: string,
     name: string,
     state: StackState,
+    // Passed only where the mode is decided (a folder being recorded for the
+    // first time). A status update from a live runtime preserves it: the
+    // reconcile that recorded the folder owns the value, and it always ran
+    // before any runtime for that folder existed.
+    configMode?: string,
   ): void {
     if (this.#disposed) {
       return;
     }
-    this.#folderStates.set(rootKey, { name, state });
+    this.#folderStates.set(rootKey, {
+      name,
+      state,
+      configMode:
+        configMode ?? this.#folderStates.get(rootKey)?.configMode ?? '',
+    });
     this.publishStatus();
   }
 

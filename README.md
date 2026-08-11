@@ -22,7 +22,7 @@ The extension takes its configuration from five sources. The tool-native configs
 | `rstest.config.*` | **Supported.** Test discovery, run and debug, watch mode, coverage and snapshot updates in the Test Explorer. |
 | `define.test()` in `rstack.config.*` | **Supported.** Tests run through the same config shim `rs test` uses, so the editor and the CLI resolve the config identically. |
 | `define.fmt()` in `rstack.config.*` | **Supported.** Document formatting through the project-local `rs fmt` language server (`rs fmt --lsp`), one per workspace folder, loading the config from the folder root — the same config `rs fmt` run there would use. Needs `rstack` 0.5.2 or newer. |
-| `define.lint()` in `rstack.config.*` | **Planned.** Linting a project configured only through `rstack.config.*` needs upstream changes in Rslint and rstack-cli before the editor can evaluate it correctly. `rs lint` on the command line is unaffected. |
+| `define.lint()` in `rstack.config.*` | **Supported, with requirements.** A workspace folder with no `rslint.config.*` anywhere and an `rstack.config.*` at its root is linted from `define.lint()`, evaluated through rstack's own config loader so the editor and `rs lint` see the same config. It needs `@rslint/core` installed in the project — `rstack` depends on it, but pnpm does not expose transitive dependencies, so add it to your `devDependencies` — and new enough to let the editor pin the language server to a config; until both hold, the status bar says which one is missing. A TypeScript `rstack.config.ts` additionally needs a VS Code build whose Node can strip types, since rstack's config loader has no fallback. A folder that does have an `rslint.config.*` keeps using it, unchanged. |
 
 ## License
 

@@ -58,6 +58,11 @@ describe('node runtime range', () => {
 describe('config discovery protocol', () => {
   it('supports exactly the protocol versions the copied client speaks', () => {
     expect(isSupportedConfigDiscoveryProtocolVersion(1)).toBe(true);
-    expect(isSupportedConfigDiscoveryProtocolVersion(2)).toBe(false);
+    // 2 adds one optional request field (`configPath`, the lint × Rstack
+    // config bridge) and changes nothing the reverse-request handlers touch,
+    // so the copied client speaks it as well.
+    expect(isSupportedConfigDiscoveryProtocolVersion(2)).toBe(true);
+    expect(isSupportedConfigDiscoveryProtocolVersion(3)).toBe(false);
+    expect(isSupportedConfigDiscoveryProtocolVersion(0)).toBe(false);
   });
 });

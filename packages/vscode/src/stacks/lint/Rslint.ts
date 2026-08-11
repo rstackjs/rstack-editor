@@ -14,20 +14,22 @@
 //    and `ConfigModuleHost` are injected from the project-resolved module.
 // 4. the status-aggregation adaptation — `reportStatus` instead of an own
 //    status bar.
-// 5. watch glob — `CONFIG_REFRESH_WATCH_GLOB` kept verbatim.
+// 5. watch glob — `CONFIG_REFRESH_WATCH_GLOB` kept verbatim; bridged folders
+//    install `BRIDGED_CONFIG_REFRESH_WATCH_GLOB` instead.
+// 6. the Rstack config bridge — everything between a
+//    `--- rstack config bridge ---` marker pair. A *bridged folder* (no native
+//    `rslint.config.*` anywhere, an `rstack.config.*` at the folder root) gets
+//    a *generated shim* written into the project, and the language server is
+//    pinned to it through the optional `configPath` field of
+//    `rslint/configRefresh` (config-discovery protocol >= 2, rslint PR #1630).
+//    The choice is fixed for the server process lifetime: the same value on
+//    every refresh, and a mode flip is a restart, not a message. Native mode is
+//    byte-identical to upstream — the `configPath` key is absent entirely, so
+//    the server keeps doing automatic discovery. The rule, the shim and the
+//    capability gate live in `rstackBridge.ts`; this file only wires them.
 //
-// Plus the two compatibility diagnostics: the config-discovery protocol
-// handshake and the jiti preflight.
-//
-// TODO(rstack-bridge): Rslint deliberately does NOT consume `rstack.config.*`
-// (`define.lint()`) for now. The earlier bridge was removed because it had no
-// complete final data path — the LSP has no explicit-config channel, the shim
-// resolves its config from a meaningless extension-host cwd, and plugin
-// workers would re-import the wrong source shape. Rebuilding it needs upstream
-// work: rstack publishing an explicit-path config loader plus adapter exports,
-// rslint accepting per-root fallback config candidates on
-// `rslint/configRefresh`, and a generic evaluator-module seam shared by the
-// config host and plugin workers.
+// Plus the three compatibility diagnostics: the config-discovery protocol
+// handshake, the jiti preflight, and the rstack-loader preflight.
 
 import {
   workspace,
@@ -98,6 +100,23 @@ import {
   isJitiMissingError,
   JITI_INSTALL_HINT,
 } from './jitiPreflight';
+// --- rstack config bridge ---
+import { nativeTypeStrippingAvailable } from '../../shared/vendored/loadRstackConfig';
+import {
+  decideLintConfigMode,
+  describeRstackConfigLoaderPreflight,
+  formatBridgeProtocolGate,
+  formatBridgeToolchainGap,
+  removeGeneratedShim,
+  resolveRstackConfigLoader,
+  RSTACK_CONFIG_PROBE_ORDER,
+  RstackBridgeGateError,
+  supportsExplicitConfigPath,
+  writeGeneratedShim,
+  type GeneratedShim,
+  type LintConfigMode,
+} from './rstackBridge';
+// --- end rstack config bridge ---
 /**
  * Workspace-relative lockfiles whose individual metadata feeds the
  * plugin-host fingerprint. A dependency install can swap a plugin's
@@ -123,12 +142,31 @@ const RSLINT_CONFIG_WATCH_NAMES = [
   'rslint.jsonc',
 ] as const;
 
-// Upstream's glob kept verbatim. `rstack.config.*` is
-// deliberately absent: see the TODO(rstack-bridge) note in the file header.
+// Upstream's glob, kept verbatim: this is what a native-mode folder watches.
 export const CONFIG_REFRESH_WATCH_GLOB = `**/{${[
   ...RSLINT_CONFIG_WATCH_NAMES,
   ...LOCKFILE_NAMES,
 ].join(',')}}`;
+
+// --- rstack config bridge ---
+/**
+ * The bridged-folder glob: upstream's names plus `rstack.config.*`, whose
+ * edits are the config source of a bridged folder and must produce the same
+ * debounced `config-change` refresh. Installed *only* in bridged mode, so a
+ * native folder's watcher stays exactly upstream's.
+ *
+ * One brace group, no nesting — VS Code's glob parser silently fails on nested
+ * groups. The only list here that is not local is `RSTACK_CONFIG_PROBE_ORDER`,
+ * whose entries are asserted to be plain file names in
+ * `tests/stacks/lint/rstackBridge.test.ts`, so appending to it cannot nest a
+ * group in this glob.
+ */
+export const BRIDGED_CONFIG_REFRESH_WATCH_GLOB = `**/{${[
+  ...RSLINT_CONFIG_WATCH_NAMES,
+  ...RSTACK_CONFIG_PROBE_ORDER,
+  ...LOCKFILE_NAMES,
+].join(',')}}`;
+// --- end rstack config bridge ---
 
 /**
  * The project's `@rslint/core` is outside the support matrix.
@@ -154,6 +192,16 @@ interface ConfigRefreshRequest {
    */
   protocolVersion: number;
   reason: ConfigRefreshReason;
+  // --- rstack config bridge ---
+  /**
+   * Absolute native path (not a `file:` URI) of the generated shim in bridged
+   * mode. Sent on the *first* refresh (reason `initial`) and identically on
+   * every later one — the server rejects a changed or newly appearing value
+   * with `InvalidParams`. Absent in native mode, which is what selects the
+   * server's automatic discovery.
+   */
+  configPath?: string;
+  // --- end rstack config bridge ---
 }
 
 export type ConfigRefreshRequester = (
@@ -399,6 +447,14 @@ function observeClientStopped(
 export interface RslintFolderConfigPaths {
   /** Native `rslint.config.{js,mjs,ts,mts}` files. */
   readonly rslintConfigPaths: readonly string[];
+  // --- rstack config bridge ---
+  /**
+   * Every `rstack.config.*` in the folder — the whole list, not just the root
+   * one: "a native config anywhere wins" and "the Rstack config must be at the
+   * root" are one decision, taken in `decideLintConfigMode`.
+   */
+  readonly rstackConfigPaths: readonly string[];
+  // --- end rstack config bridge ---
 }
 
 /**
@@ -438,6 +494,28 @@ export class Rslint implements Disposable {
   /** Set by `startImpl` before anything can use a project-resolved module. */
   private resolution: RslintResolution | undefined;
   private configLoader: ConfigLoaderModule | undefined;
+  // --- rstack config bridge ---
+  /**
+   * This lifecycle's bridged state, or `undefined` in native mode. Set once, as
+   * a whole, before the client starts: the pin must be identical on every
+   * `rslint/configRefresh` of that server, and the two halves are never
+   * individually meaningful — a folder is either pinned to a shim generated
+   * from a known Rstack config, or it is in native mode.
+   */
+  private bridge:
+    | {
+        /** The generated shim the server is pinned to. */
+        readonly configPath: string;
+        /**
+         * The Rstack config the shim was generated from, kept for the *only*
+         * thing that may rewrite the shim after the start: a dependency change,
+         * which can delete it (it lives under `node_modules`) or dangle the
+         * store path baked into it.
+         */
+        readonly rstackConfigPath: string;
+      }
+    | undefined;
+  // --- end rstack config bridge ---
   /** Non-fatal notes appended to the folder's status detail. */
   private statusNotes: string[] = [];
   private readonly lspOutputChannel: OutputChannel | undefined;
@@ -558,7 +636,12 @@ export class Rslint implements Disposable {
     }
     if (
       error instanceof RslintVersionMismatchError ||
-      error instanceof ConfigDiscoveryProtocolMismatchError
+      error instanceof ConfigDiscoveryProtocolMismatchError ||
+      // --- rstack config bridge ---
+      // A refused bridged folder is a package problem with a written-out fix,
+      // never a crash.
+      error instanceof RstackBridgeGateError
+      // --- end rstack config bridge ---
     ) {
       this.report({ kind: 'version-mismatch', detail: error.message });
       return;
@@ -579,10 +662,31 @@ export class Rslint implements Disposable {
     this.statusNotes = [];
     this.report({ kind: 'starting' });
 
+    // --- rstack config bridge ---
+    // Ownership is decided before anything else, because it changes what a
+    // resolution failure *means*: a bridged folder was lit by an
+    // `rstack.config.*` alone, where `@rslint/core` is only rstack's transitive
+    // dependency and an isolated `node_modules` layout legitimately hides it.
+    // The decision itself is taken once per lifecycle and never revisited — the
+    // server's explicit-config choice is immutable, so a folder that flips
+    // Ownership is restarted by the controller instead of re-signalled here.
+    const bridgeConfigPaths = this.getConfigPaths();
+    const mode = decideLintConfigMode({
+      folderPath: this.workspaceFolder.uri.fsPath,
+      rslintConfigPaths: bridgeConfigPaths.rslintConfigPaths,
+      rstackConfigPaths: bridgeConfigPaths.rstackConfigPaths,
+    });
+    // --- end rstack config bridge ---
+
     // One resolution root for the binary, the config-loader and
     // the ESLint-plugin host — asserted inside `resolveRslint`. A failure here
     // is terminal and user-visible; there is no built-in binary to fall back to.
-    const resolution = await resolveRslint(this.workspaceFolder, this.logger);
+    // --- rstack config bridge ---
+    // Upstream calls `resolveRslint(this.workspaceFolder, this.logger)` here;
+    // the wrapper adds nothing but the reclassification of a bridged folder's
+    // failure.
+    const resolution = await this.resolveToolchain(mode);
+    // --- end rstack config bridge ---
     this.assertStartCurrent(epoch, signal);
     this.resolution = resolution;
     this.logger.info(
@@ -626,6 +730,31 @@ export class Rslint implements Disposable {
       this.logger.warn(jitiNote);
       this.statusNotes.push(jitiNote);
     }
+
+    // --- rstack config bridge ---
+    if (mode.kind === 'bridged') {
+      // Published as one value only once the gate let the folder through, so a
+      // refused folder holds no half-state.
+      this.bridge = {
+        configPath: this.prepareBridgedFolder(
+          mode,
+          configLoader,
+          resolution.coreVersion,
+        ),
+        rstackConfigPath: mode.rstackConfigPath,
+      };
+    } else {
+      this.bridge = undefined;
+      // A folder that flipped back to native mode keeps no artifact of the mode
+      // it left: the shim is a file named `rslint.config.mjs` naming a config
+      // that no longer governs anything.
+      if (removeGeneratedShim(this.workspaceFolder.uri.fsPath)) {
+        this.logger.info(
+          'Removed the generated Rslint config shim left by an earlier bridged start',
+        );
+      }
+    }
+    // --- end rstack config bridge ---
 
     const binPath = resolution.binPath;
     this.logger.info('Rslint binary path:', binPath);
@@ -859,6 +988,131 @@ export class Rslint implements Disposable {
     }
   }
 
+  // --- rstack config bridge ---
+  /**
+   * Upstream's project resolution, plus one reclassification: in a bridged
+   * folder a missing `@rslint/core` is not a crash.
+   *
+   * Nothing in such a folder asked for Rslint by name — detection lit the stack
+   * off an `rstack.config.*`, and `@rslint/core` reaches the project only as
+   * rstack's transitive dependency, which an isolated `node_modules` layout
+   * (pnpm) does not expose. Reporting that as `crashed` would put the loudest
+   * state in the status bar for a project that is not broken, mask every other
+   * folder's real state, and never reach the gate message that explains the
+   * fix. Native mode's failure path is untouched.
+   */
+  private async resolveToolchain(
+    mode: LintConfigMode,
+  ): Promise<RslintResolution> {
+    try {
+      return await resolveRslint(this.workspaceFolder, this.logger);
+    } catch (error) {
+      if (mode.kind === 'bridged' && error instanceof RslintResolutionError) {
+        throw new RstackBridgeGateError(
+          formatBridgeToolchainGap(mode.rstackConfigPath, error.message),
+          { cause: error },
+        );
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Writes the generated shim from the project's *current* `rstack/config`
+   * resolution.
+   *
+   * The loader is re-resolved on every call by design: its path is realpath'd
+   * into a version-pinned store, and both callers are moments where an install
+   * may just have moved it.
+   */
+  private materializeShim(rstackConfigPath: string): GeneratedShim {
+    const folderPath = this.workspaceFolder.uri.fsPath;
+    return writeGeneratedShim({
+      folderPath,
+      configLoaderPath: resolveRstackConfigLoader(folderPath),
+      rstackConfigPath,
+    });
+  }
+
+  /**
+   * Re-materializes the generated shim under its existing path.
+   *
+   * Called on a dependency change and nowhere else. A reinstall can delete the
+   * shim outright (it lives under `node_modules`) or leave the loader path
+   * baked into it dangling, since that path is realpath'd into a
+   * version-pinned store — and the `configPath` the server was pinned to is
+   * immutable for its process lifetime, so the file has to come back at the
+   * same path rather than the pin moving to a new one.
+   */
+  private refreshGeneratedShim(): void {
+    const bridge = this.bridge;
+    if (!bridge) {
+      return;
+    }
+    try {
+      const shim = this.materializeShim(bridge.rstackConfigPath);
+      if (shim.written) {
+        this.logger.info(
+          `Re-materialized the generated Rslint config shim after a dependency change: ${shim.path}`,
+        );
+      }
+    } catch (error) {
+      // The pin cannot move, so this is as far as recovery goes: say what
+      // happened and what clears it.
+      this.logger.error(
+        'Failed to re-materialize the generated Rslint config shim',
+        error,
+      );
+      this.addStatusNote(
+        'the generated Rslint config shim could not be rewritten after a dependency change; run Rstack: Restart Rslint',
+      );
+    }
+  }
+
+  /**
+   * Prepares a bridged folder and returns the `configPath` its server is
+   * pinned to.
+   *
+   * Order matters. The capability gate runs *first*: without protocol >= 2
+   * there is no channel to pin anything to, so writing a shim would leave a
+   * file behind for a mode that cannot start. The failure is a
+   * `version mismatch` status, not a crash — the fix is a package upgrade.
+   */
+  private prepareBridgedFolder(
+    mode: Extract<LintConfigMode, { kind: 'bridged' }>,
+    configLoader: ConfigLoaderModule,
+    coreVersion: string | undefined,
+  ): string {
+    const protocolVersion = configLoader.CONFIG_DISCOVERY_PROTOCOL_VERSION;
+    if (!supportsExplicitConfigPath(protocolVersion)) {
+      throw new RstackBridgeGateError(
+        formatBridgeProtocolGate(protocolVersion, coreVersion),
+      );
+    }
+    const shim = this.materializeShim(mode.rstackConfigPath);
+    this.logger.info(
+      `${shim.written ? 'Wrote' : 'Reused'} the generated Rslint config shim for ${mode.rstackConfigPath}: ${shim.path}`,
+    );
+
+    // Compatibility seam (4): the rstack-loader preflight. rstack's loader
+    // hardcodes native type stripping with no jiti fallback, so a TypeScript
+    // Rstack config can be unloadable on this host even though the CLI loads
+    // it fine.
+    const loaderNote = describeRstackConfigLoaderPreflight({
+      rstackConfigPath: mode.rstackConfigPath,
+      nativeTypeStripping: nativeTypeStrippingAvailable(),
+    });
+    if (loaderNote) {
+      this.logger.warn(loaderNote);
+      this.statusNotes.push(loaderNote);
+    }
+    this.statusNotes.push(
+      `linting from ${path.basename(mode.rstackConfigPath)}`,
+    );
+    return shim.path;
+  }
+  // --- end rstack config bridge ---
+
   /**
    * Surfaces the two failure classes that must stay actionable
    * instead of generic: a config-discovery protocol disagreement and the
@@ -904,7 +1158,16 @@ export class Rslint implements Disposable {
       // Go owns the config-scoped .gitignore watcher and refresh transaction.
       // Keeping it out of this direct watcher prevents one mutation from
       // starting both a didChangeWatchedFiles and a configRefresh transaction.
-      new RelativePattern(this.workspaceFolder, CONFIG_REFRESH_WATCH_GLOB),
+      new RelativePattern(
+        this.workspaceFolder,
+        // --- rstack config bridge ---
+        // A bridged folder also watches its config source; native mode keeps
+        // upstream's glob exactly.
+        this.bridge === undefined
+          ? CONFIG_REFRESH_WATCH_GLOB
+          : BRIDGED_CONFIG_REFRESH_WATCH_GLOB,
+        // --- end rstack config bridge ---
+      ),
     );
     const refreshConfig = (uri: Uri) => {
       const reason = configRefreshReasonForPath(uri.fsPath);
@@ -954,9 +1217,26 @@ export class Rslint implements Disposable {
       ) {
         return;
       }
+      // --- rstack config bridge ---
+      // The one thing that can invalidate a bridged folder's pin without
+      // changing it: a reinstall under the shim, whose file the server is about
+      // to be told to reload.
+      if (reason === 'dependency-change') {
+        this.refreshGeneratedShim();
+      }
+      // --- end rstack config bridge ---
       const request: ConfigRefreshRequest = {
         protocolVersion: configLoader.CONFIG_DISCOVERY_PROTOCOL_VERSION,
         reason,
+        // --- rstack config bridge ---
+        // Spread, not `configPath: this.bridge?.configPath`: an explicit
+        // `undefined` still serializes as a present key on some transports,
+        // and "present" is what selects explicit mode. In native mode the
+        // request must stay byte-identical to upstream's.
+        ...(this.bridge === undefined
+          ? {}
+          : { configPath: this.bridge.configPath }),
+        // --- end rstack config bridge ---
       };
       await client.sendRequest('rslint/configRefresh', request);
     });
@@ -1054,6 +1334,11 @@ export class Rslint implements Disposable {
     this.serverRestartWatcher = undefined;
     disposeSafely(this.configWatcher);
     this.configWatcher = undefined;
+    // --- rstack config bridge ---
+    // The pin belongs to the server process that is going away; the next start
+    // decides again from scratch.
+    this.bridge = undefined;
+    // --- end rstack config bridge ---
     disposeSafely(this.configTransactionAdapter);
     this.configTransactionAdapter = undefined;
     for (const handler of this.requestHandlers.splice(0)) {

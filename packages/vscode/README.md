@@ -22,7 +22,7 @@ The extension activates on startup, then decides **per workspace folder** which 
 
 | Tool | Started when the folder contains |
 | --- | --- |
-| Rslint | `rslint.config.{js,mjs,ts,mts}` |
+| Rslint | `rslint.config.{js,mjs,ts,mts}`, or an `rstack.config.*` at the folder root when the folder has no `rslint.config.*` at all |
 | Rstest | `rstest.config.{mjs,ts,js,cjs,mts,cts}` (configurable) or `rstack.config.*` |
 | rstack-cli | `rstack.config.*` or `node_modules/.bin/rs` |
 
@@ -41,6 +41,15 @@ The project-resolved packages are checked against a support matrix at runtime; a
 | `rstack`       | `>=0.5.2` |
 
 `rstack` 0.5.2 is the first release with `rs fmt --lsp`, the language server the formatter is a client of; on older releases the formatter reports `version mismatch` instead of formatting.
+
+Linting a folder from `define.lint()` in `rstack.config.*` asks more:
+
+- `rstack` must publish its config loader (`>=0.4.0`).
+- `@rslint/core` must be **installed in the project**. `rstack` depends on it, but package managers with an isolated `node_modules` layout (pnpm by default) do not expose transitive dependencies, so add `@rslint/core` to your `devDependencies`.
+- `@rslint/core` must be new enough for the editor to pin the language server to a config. That is not a version number the extension can name yet — no released `@rslint/core` has it.
+- A TypeScript `rstack.config.ts` must be loadable by the VS Code extension host's Node: rstack's config loader relies on native type stripping and has no fallback, so on an older VS Code build use `rstack.config.mjs` (or `.js`).
+
+Until all of them hold, such a folder shows `version mismatch` with a message naming the missing piece instead of linting; adding an `rslint.config.*` is the way out today. Folders with an `rslint.config.*` are unaffected.
 
 ## Auto-fix on save (Rslint)
 

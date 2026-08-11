@@ -150,9 +150,16 @@ export const reportVersionCheck = (
  * the package version, so `semver.satisfies` is necessary but
  * not sufficient: the client additionally validates the `protocolVersion`
  * carried by `rslint/configRefresh`.
+ *
+ * Version 2 adds one optional field (`configPath`) to that request and changes
+ * nothing else, so a v2 loader is served correctly by the same reverse-request
+ * handlers as a v1 one — omitting the field reproduces v1 behaviour exactly.
+ * It is listed here because it is the version the lint × Rstack config bridge
+ * needs (`stacks/lint/rstackBridge.ts`); refusing it would break native mode on
+ * the very releases that make the bridge possible.
  */
 export const SUPPORTED_CONFIG_DISCOVERY_PROTOCOL_VERSIONS: ReadonlySet<number> =
-  new Set([1]);
+  new Set([1, 2]);
 
 export const isSupportedConfigDiscoveryProtocolVersion = (
   version: number,

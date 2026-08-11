@@ -14,14 +14,15 @@ import { eventually } from './helpers';
  * | ------- | --------------------- | ------ | ------ | --- |
  * | rslint  | `rslint.config.mjs`   | yes    | no     | no  |
  * | rstest  | `rstest.config.ts`    | no     | yes    | no  |
- * | rstack  | `rstack.config.ts`    | no     | yes    | yes |
+ * | rstack  | `rstack.config.ts`    | yes    | yes    | yes |
  *
- * The rstack row is the interesting one: a single `rstack.config.*` lights
- * Rstest and rs fmt even though no tool-native config exists (Rslint is
- * deliberately NOT lit — TODO(rstack-bridge), the earlier lint bridge was
- * removed pending upstream support), and `rs fmt`
- * is additionally confirmed by the bin probe (`rstack`'s two bins are `rs` and
- * `rstack`).
+ * The rstack row is the interesting one: a single `rstack.config.*` lights all
+ * three stacks even though no tool-native config exists. Rslint is lit because
+ * the folder is a *bridged folder* — the Rstack config sits at the folder root
+ * and no `rslint.config.*` exists anywhere (whether the language server then
+ * actually starts is a capability question, asserted in the lint slice's
+ * `suite-rstack-bridge`). `rs fmt` is additionally confirmed by the bin probe
+ * (`rstack`'s two bins are `rs` and `rstack`).
  *
  * This runs the extension's own `detectFolder` inside the extension host,
  * against the real fixture workspaces, through the real `workspace.findFiles`
@@ -49,7 +50,7 @@ const EXPECTED: Readonly<Record<string, Expectation>> = {
     rstackConfigFiles: [],
   },
   rstack: {
-    detected: { rslint: false, rstest: true, fmt: true },
+    detected: { rslint: true, rstest: true, fmt: true },
     configFiles: { rslint: [], rstest: [], fmt: [] },
     rstackConfigFiles: ['rstack.config.ts'],
     fmtBin: 'rs',
