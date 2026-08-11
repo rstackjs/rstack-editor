@@ -22,6 +22,8 @@ export const FIXTURES_DIR = path.join(here, 'fixtures');
  * `lint` entry is the shared install root serving every ported Rslint suite
  * workspace (`e2e/lint/fixtures/*` — the workspaces themselves have no
  * package.json; @rslint/core resolves via Node's walk-up from one install).
+ * A fixture that a test-worker-spawning slice opens as a workspace folder
+ * carries a `.nvmrc` pin — rationale in the `e2e/rstest/runTest.ts` header.
  */
 export const FIXTURES = {
   rslint: path.join(FIXTURES_DIR, 'rslint'),
@@ -53,8 +55,9 @@ const install = (name) => {
       // the moment a patch release lands.
       '--no-frozen-lockfile',
       '--prefer-offline',
-      // Changing a fixture's `.npmrc` makes pnpm want to purge `node_modules`,
-      // which it refuses to do without a TTY. The directory is disposable.
+      // Changing a fixture's install config (its hoist patterns, say) makes
+      // pnpm want to purge `node_modules`, which it refuses to do without a
+      // TTY. The directory is disposable.
       '--config.confirmModulesPurge=false',
       // Fixtures deliberately install pinned published versions of the Rstack
       // toolchain, which are often hours old — disable pnpm's
@@ -68,6 +71,20 @@ const install = (name) => {
       // published packages exactly like a user project would, so run their
       // build scripts as-is.
       '--config.dangerouslyAllowAllBuilds=true',
+      // `@rslint/core` / `@rstest/core` may reach a fixture only as transitive
+      // dependencies of `rstack` (the rstack fixture depends on `rstack`
+      // alone), yet the extension resolves them with a node_modules walk-up
+      // from the project dir — which pnpm's isolated store defeats: the
+      // walk-up would climb out of the fixture and silently find THIS REPO's
+      // dev copies instead of the published ones. Public-hoisting the two
+      // reproduces the npm/Yarn layout the extension is designed against, and
+      // is inert for fixtures that already depend on them directly. It must
+      // be a CLI flag: pnpm 11 no longer reads `public-hoist-pattern` from a
+      // fixture-local `.npmrc` (verified — it lands as an empty
+      // `publicHoistPattern` in `.modules.yaml`), and `--ignore-workspace`
+      // also ignores a local pnpm-workspace.yaml.
+      '--config.publicHoistPattern=@rslint/core',
+      '--config.publicHoistPattern=@rstest/core',
     ],
     {
       cwd,

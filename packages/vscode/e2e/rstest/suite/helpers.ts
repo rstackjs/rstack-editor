@@ -145,3 +145,56 @@ export function toLabelTree(
   nodes.sort((a, b) => (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
   return nodes;
 }
+
+/**
+ * A collecting `vscode.TestRun` double for suites that only need "the run
+ * ended — what passed, what failed, what was printed". Repo-local, not
+ * ported: `progress.test.ts` keeps its own hand-rolled copy because it
+ * resets the captures per `createMockRun` call and counts invocations,
+ * which this deliberately does not do.
+ */
+export function createCollectingMockRun() {
+  const deferred = Promise.withResolvers<null>();
+  let output = '';
+  const failedMessages: vscode.TestMessage[] = [];
+  const passedItems: vscode.TestItem[] = [];
+  const skippedItems: vscode.TestItem[] = [];
+
+  const createMockRun = (): vscode.TestRun => ({
+    isPersisted: true,
+    name: '',
+    token: new vscode.CancellationTokenSource().token,
+    onDidDispose: new vscode.EventEmitter<void>().event,
+    addCoverage: () => {},
+    appendOutput: (message) => {
+      output += message;
+    },
+    end: () => {
+      deferred.resolve(null);
+    },
+    enqueued: () => {},
+    errored: () => {},
+    failed: (_test, message = []) => {
+      failedMessages.push(...(message as vscode.TestMessage[]));
+    },
+    passed: (test) => {
+      passedItems.push(test);
+    },
+    skipped: (test) => {
+      skippedItems.push(test);
+    },
+    started: () => {},
+  });
+
+  return {
+    createMockRun,
+    /** Resolves when the run calls `end()`. */
+    ended: deferred.promise,
+    get output() {
+      return output;
+    },
+    failedMessages,
+    passedItems,
+    skippedItems,
+  };
+}

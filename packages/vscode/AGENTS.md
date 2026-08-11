@@ -43,4 +43,4 @@ One extension replacing the standalone `rstack.rslint` and `rstack.rstest` exten
 
 - E2E suites ported from upstream keep upstream's assertion semantics; every intentional deviation is documented in a comment in the test itself. A failing ported test is a regression, not a test to adjust.
 - E2E fixtures install published npm packages (not workspace links): the extension must work against what users actually install. Fixture `node_modules` are disposable and never committed.
-- Prefer running the E2E slice that covers the change (`test:e2e:*` scripts; `RSTACK_LINT_E2E_SUITES=<name,...>` filters lint suites) over the full chain.
+- Prefer running the E2E slice that covers the change over the full chain: `pnpm test:e2e <slice ...>` (or the `test:e2e:<slice>` aliases). Slices are declared in the `SLICES` table in `e2e/run.mjs` (name, fixtures, entry) — the package.json scripts are thin forwards and carry no slice knowledge. `RSTACK_LINT_E2E_SUITES=<name,...>` filters lint suites.
