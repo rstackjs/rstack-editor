@@ -56,15 +56,18 @@ const packageRoot = path.resolve(
 /**
  * @param {string} command
  * @param {string[]} args
+ * @param {{shell?: boolean}} [opts]
  */
-const run = (command, args) => {
+const run = (command, args, opts = {}) => {
   const result = spawnSync(command, args, {
     cwd: packageRoot,
     stdio: 'inherit',
     env: process.env,
-    // On Windows, pnpm is a .cmd shim, and Node refuses to spawn batch files
-    // without a shell (CVE-2024-27980 hardening) — EINVAL otherwise.
-    shell: process.platform === 'win32',
+    // With `shell: true` Node concatenates command and args UNESCAPED, so a
+    // path containing spaces (the checkout, `process.execPath`) would fall
+    // apart into several arguments — callers opt in only where the command
+    // cannot spawn without a shell and every argument is a fixed safe token.
+    shell: opts.shell ?? false,
   });
   if (result.error) {
     throw result.error;
@@ -88,7 +91,12 @@ const selected =
 
 if (selected.some((slice) => slice.compile)) {
   console.log('[e2e] compiling slices (tsc -p tsconfig.e2e.json)');
-  run('pnpm', ['exec', 'tsc', '-p', 'tsconfig.e2e.json']);
+  // On Windows, pnpm is a .cmd shim, and Node refuses to spawn batch files
+  // without a shell (CVE-2024-27980 hardening) — EINVAL otherwise. The shell
+  // stays confined to this spawn: its arguments are fixed safe tokens.
+  run('pnpm', ['exec', 'tsc', '-p', 'tsconfig.e2e.json'], {
+    shell: process.platform === 'win32',
+  });
 }
 
 run(process.execPath, [
