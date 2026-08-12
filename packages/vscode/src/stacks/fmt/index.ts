@@ -1,27 +1,39 @@
 import path from 'node:path';
 import vscode from 'vscode';
+import {
+  CloseAction,
+  ErrorAction,
+  LanguageClient,
+  State,
+  type ErrorHandler,
+  type LanguageClientOptions,
+  type ServerOptions,
+} from 'vscode-languageclient/node';
 import { RSTACK_CONFIG_GLOB } from '../../detection';
+import { getConfiguredNodeExecutable } from '../../shared/nodeExecutableSetting';
+import {
+  configuredNodeBelowFloor,
+  NODE_EXECUTABLE_SETTING,
+  NodePreflightError,
+  resolveUserNodeOnce,
+} from '../../shared/nodeResolution';
 import {
   findPackageJsonUncached,
   readPackageJson,
 } from '../../shared/packageResolve';
-import {
-  checkPackageVersion,
-  reportVersionCheck,
-} from '../../shared/versionCheck';
+import { reportVersionCheck } from '../../shared/versionCheck';
 import type {
   DetectionSnapshot,
   StackContext,
   StackController,
 } from '../../types';
-import {
-  isRsFmtLaunchError,
-  minimalEdit,
-  pickConfigDir,
-  runRsFmt,
-  stderrTail,
-} from './run';
-import { FmtStandby, type StandbyKey } from './standby';
+// `LanguageServerProcessOwner` lives under `stacks/lint` because that is where
+// it was first needed, but nothing in it is lint-specific: it owns the native
+// children of one language client, including the ones vscode-languageclient's
+// automatic restart creates. Importing it is not a refactor across the stacks —
+// no lint behaviour is shared, and the file has no lint imports.
+import { LanguageServerProcessOwner } from '../lint/LanguageServerProcessOwner';
+import { pickBinEntry } from './binEntry';
 
 // prettier 3.9.6 getSupportInfo() vscodeLanguageIds snapshot (rs fmt's pinned
 // prettier). Revisit when the pinned prettier changes.
@@ -52,244 +64,524 @@ const LANGUAGE_IDS = [
   'yaml',
 ] as const;
 
-const SELECTOR: vscode.DocumentSelector = LANGUAGE_IDS.map((language) => ({
-  language,
-  scheme: 'file',
-}));
+/**
+ * The document selector of one folder's server: the 24 languages `rs fmt` can
+ * parse, each confined to that folder. The per-folder pattern is what keeps two
+ * servers in a multi-root window from both claiming a document — the same rule
+ * (and the same `RelativePattern`) the lint stack applies in
+ * `createWorkspaceDocumentSelector`.
+ */
+const createFolderDocumentSelector = (
+  folder: vscode.WorkspaceFolder,
+): vscode.DocumentFilter[] => {
+  const pattern = new vscode.RelativePattern(folder, '**/*');
+  return LANGUAGE_IDS.map((language) => ({
+    scheme: 'file',
+    language,
+    pattern,
+  }));
+};
 
 /**
- * How long the active editor must hold still before it gets a standby. Arming
- * spawns a process, so scrolling through a dozen tabs must not spawn a dozen
- * children; the first arm at registration and the re-arm right after a consume
- * skip the wait because both target an editor that is already settled.
+ * How long a folder's config events settle before its server restarts. The
+ * same window detection uses to coalesce a redetect burst.
  */
-const ARM_DEBOUNCE_MS = 2_000;
+const CONFIG_RESTART_DEBOUNCE_MS = 300;
 
-/** Everything a format request needs once the folder has been resolved. */
-interface FmtTarget {
-  readonly cwd: string;
-  readonly rsBinJs: string;
+/** True when `filePath` is inside `dir` (or is `dir` itself). */
+const contains = (dir: string, filePath: string): boolean => {
+  const relative = path.relative(path.resolve(dir), path.resolve(filePath));
+  return (
+    relative === '' ||
+    (relative !== '..' &&
+      !relative.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relative))
+  );
+};
+
+/**
+ * A folder runtime's state, as the E2E exports report it.
+ *
+ * `disabled`, `version-mismatch` and `crashed` mirror the status the runtime
+ * pushed to the shell when it stopped short; `stopped` is a runtime that was
+ * never started or was shut down deliberately.
+ */
+type FmtRuntimeState =
+  | 'stopped'
+  | 'starting'
+  | 'running'
+  | 'disabled'
+  | 'version-mismatch'
+  | 'crashed';
+
+/**
+ * vscode-languageclient calls `stop()` without observing its promise when an
+ * initialize request fails, and its base `stop` rejects for non-Running states.
+ * The process owner handles those states, so only that inactive case is
+ * normalized. (The lint stack carries the same class as `ManagedLanguageClient`;
+ * it is restated here rather than imported so the two stacks share no runtime.)
+ */
+class FmtLanguageClient extends LanguageClient {
+  public override async stop(timeout?: number): Promise<void> {
+    const stateBeforeStop = this.state;
+    try {
+      await super.stop(timeout);
+    } catch (error) {
+      if (stateBeforeStop === State.Running) {
+        throw error;
+      }
+    }
+  }
 }
 
-const standbyKey = (uri: vscode.Uri, target: FmtTarget): StandbyKey => ({
-  cwd: target.cwd,
-  filePath: uri.fsPath,
-  rsBinJs: target.rsBinJs,
-});
-
 /**
- * Resolution outcome, kept free of side effects so the arming path (which must
- * stay silent) and the format path (which reports and logs) can share it.
- */
-type FmtResolution =
-  | { readonly kind: 'ok'; readonly target: FmtTarget }
-  | { readonly kind: 'no-folder' }
-  | { readonly kind: 'undetected'; readonly folder: vscode.WorkspaceFolder }
-  | {
-      readonly kind: 'missing-package';
-      readonly folder: vscode.WorkspaceFolder;
-      readonly cwd: string;
-    }
-  | { readonly kind: 'version-mismatch'; readonly version: string | undefined };
-
-/**
- * Formatter backed by the project-resolved rstack CLI. The process cwd selects
- * the nearest governing rstack config because `rs fmt` intentionally performs
- * cwd-only config resolution.
+ * One `rs fmt --lsp` language server, spawned with cwd = the workspace folder
+ * root and told that folder is its workspace.
  *
- * A request is served either by consuming the standby (hot) or by spawning a
- * process for it (cold); the two paths differ only in where the process came
- * from.
+ * The folder root — not the deepest directory holding an `rstack.config.*` — is
+ * the anchor because `rs fmt` loads exactly one config, from its cwd, with no
+ * upward walk and no merging. Anchoring deeper made the editor format a file
+ * differently from `rs fmt` run at the repo root, which is where the config the
+ * project actually documents lives. The server caches that config for its
+ * process lifetime, so a config edit is a restart of this runtime, never a
+ * message to a live server.
+ */
+class FmtFolderRuntime {
+  #state: FmtRuntimeState = 'stopped';
+  #owner: LanguageServerProcessOwner | undefined;
+  #client: LanguageClient | undefined;
+  #defaultErrorHandler: ErrorHandler | undefined;
+  #stateWatcher: vscode.Disposable | undefined;
+  #closing = false;
+  #disposed = false;
+  /**
+   * Every lifecycle transition of one folder runs here, so a config event
+   * arriving mid-start cannot interleave a second start with the first.
+   */
+  #queue: Promise<void> = Promise.resolve();
+
+  constructor(
+    private readonly folder: vscode.WorkspaceFolder,
+    private readonly context: StackContext,
+    /** Called after a successful start so the shell's status says `running`. */
+    private readonly onRunning: () => void,
+  ) {}
+
+  get state(): FmtRuntimeState {
+    return this.#state;
+  }
+
+  get folderPath(): string {
+    return this.folder.uri.fsPath;
+  }
+
+  start(): Promise<void> {
+    return this.enqueue(async () => {
+      if (this.#disposed) {
+        return;
+      }
+      await this.startImpl();
+    });
+  }
+
+  /** A config change invalidates the server's cached config; only a new process clears it. */
+  restart(reason: string): Promise<void> {
+    return this.enqueue(async () => {
+      if (this.#disposed) {
+        return;
+      }
+      this.context.output.info(
+        `Restarting the rs fmt server for ${this.folder.name}: ${reason}`,
+      );
+      await this.stopImpl();
+      if (this.#disposed) {
+        return;
+      }
+      await this.startImpl();
+    });
+  }
+
+  stop(): Promise<void> {
+    this.#disposed = true;
+    return this.enqueue(async () => {
+      await this.stopImpl();
+    });
+  }
+
+  private enqueue(operation: () => Promise<void>): Promise<void> {
+    const next = this.#queue.then(operation, operation);
+    this.#queue = next.catch((error: unknown) => {
+      this.context.output.error(
+        `rs fmt lifecycle step failed in ${this.folder.name}`,
+        error,
+      );
+    });
+    return this.#queue;
+  }
+
+  /**
+   * Package resolution, version check, Node selection and client start, in that
+   * order. Every failure short of a genuine launch failure is a status: the
+   * stack owns no UI chrome, and a project without `rstack` installed is not a
+   * crash.
+   */
+  private async startImpl(): Promise<void> {
+    const context = this.context;
+    const folderRoot = this.folder.uri.fsPath;
+    this.#closing = false;
+    this.#state = 'starting';
+
+    const pkgJsonPath = findPackageJsonUncached('rstack', folderRoot);
+    if (!pkgJsonPath) {
+      const reason = `rstack is not installed in ${this.folder.name} (node_modules missing)`;
+      this.#state = 'disabled';
+      context.status.report({ kind: 'disabled', reason });
+      context.output.warn(`${reason}; searched from ${folderRoot}`);
+      return;
+    }
+
+    // One read for the version and the bin entry; `readPackageJson` re-reads
+    // from disk by design, so a reinstall is picked up on the next start.
+    const pkg = readPackageJson(pkgJsonPath);
+    const version = typeof pkg?.version === 'string' ? pkg.version : undefined;
+    if (!reportVersionCheck(context.status, 'rstack', version)) {
+      this.#state = 'version-mismatch';
+      return;
+    }
+    const rsBinJs = path.resolve(
+      path.dirname(pkgJsonPath),
+      pickBinEntry(pkg?.bin),
+    );
+
+    const nodeExecutable = await this.resolveNodeExecutable();
+    if (nodeExecutable === undefined || this.#disposed) {
+      return;
+    }
+
+    const owner = new LanguageServerProcessOwner(
+      nodeExecutable,
+      [rsBinJs, 'fmt', '--lsp'],
+      folderRoot,
+    );
+    this.#owner = owner;
+    const serverOptions: ServerOptions = async () => owner.start();
+    const client = new FmtLanguageClient(
+      'rstack-fmt',
+      `rs fmt Language Server (${this.folder.name})`,
+      serverOptions,
+      this.createClientOptions(),
+    );
+    // Created once per client, not per callback: the default handler carries
+    // the restart budget (N crashes in K minutes), and it can only be created
+    // from the client the options were built for.
+    this.#defaultErrorHandler = client.createDefaultErrorHandler();
+    this.#client = client;
+    this.#stateWatcher = client.onDidChangeState((event) => {
+      if (this.#closing || this.#disposed || client !== this.#client) {
+        return;
+      }
+      if (event.newState === State.Stopped) {
+        // Whether a restart follows is the error handler's and the process
+        // owner's call; either way this folder is currently not formatting.
+        this.#state = 'crashed';
+        context.status.crashed('the rs fmt language server stopped');
+      } else if (event.newState === State.Running) {
+        // The one writer for `running`. It fires on the first start
+        // (synchronously, before `client.start()` resolves) and again when
+        // vscode-languageclient's error handler restarts a crashed server —
+        // the way back out of `crashed`, the same transition the lint stack's
+        // state watcher makes.
+        this.#state = 'running';
+        this.onRunning();
+      }
+    });
+
+    context.output.debug(
+      `Starting rs fmt --lsp in ${folderRoot}: ${nodeExecutable} ${rsBinJs}`,
+    );
+    try {
+      // The client registers the formatting provider from the server's
+      // `documentFormattingProvider` capability — the stack registers none of
+      // its own. The state watcher above is what records the successful start:
+      // the client reaches `State.Running` before this await resolves.
+      await client.start();
+    } catch (error) {
+      // Teardown first: `stopImpl` ends in `#state = 'stopped'`, so the
+      // `crashed` verdict has to be written after it, not raced against it.
+      await this.stopImpl();
+      this.#state = 'crashed';
+      context.status.crashed(
+        `the rs fmt language server for ${this.folder.name} failed to start: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      context.output.error('Failed to start the rs fmt language server', error);
+      return;
+    }
+    context.output.info(`rs fmt language server started for ${folderRoot}`);
+  }
+
+  /**
+   * The User Node runtime this folder's server runs on, or `undefined` when no
+   * candidate cleared the floor (already reported as `version mismatch`).
+   *
+   * The server loads the project's `rstack.config.*` through
+   * `@rstackjs/load-config` with `loader: 'native'`, which is the exact path the
+   * uniform floor exists for — so fmt takes the same runtime decision as the
+   * rstest worker, out of the same shared module.
+   */
+  private async resolveNodeExecutable(): Promise<string | undefined> {
+    const context = this.context;
+    const configured = getConfiguredNodeExecutable(this.folder);
+    if (configured !== undefined) {
+      // An explicit pin is always honoured — it is the escape hatch — but it is
+      // still probed, advisory-only, off the start path.
+      void configuredNodeBelowFloor(configured).then((message) => {
+        if (message !== undefined && !this.#disposed) {
+          context.status.versionMismatch(message);
+        }
+      });
+      return configured;
+    }
+    try {
+      const resolution = await resolveUserNodeOnce({
+        shell: vscode.env.shell || undefined,
+        cwd: this.folderPath,
+        notify: (message) => {
+          context.output.info(message);
+        },
+      });
+      return resolution.executable;
+    } catch (error) {
+      if (error instanceof NodePreflightError) {
+        this.#state = 'version-mismatch';
+        context.status.versionMismatch(
+          error.messageWith('rs fmt will not format'),
+        );
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * The error handler delegates through `#defaultErrorHandler` because the
+   * default handler can only be created from the client that will use it,
+   * which does not exist yet when the options are built.
+   */
+  private createClientOptions(): LanguageClientOptions {
+    const documentSelector = createFolderDocumentSelector(this.folder);
+    const errorHandler: ErrorHandler = {
+      error: async (error, message, count) =>
+        Promise.resolve(
+          this.#defaultErrorHandler?.error(error, message, count) ?? {
+            action: ErrorAction.Shutdown,
+          },
+        ),
+      closed: async () => {
+        if (this.#closing || this.#disposed) {
+          return { action: CloseAction.DoNotRestart, handled: true };
+        }
+        return Promise.resolve(
+          this.#defaultErrorHandler?.closed() ?? {
+            action: CloseAction.DoNotRestart,
+          },
+        );
+      },
+    };
+    return {
+      workspaceFolder: this.folder,
+      // languageclient v9 types this client-only selector as the LSP shape,
+      // whose pattern is string-only. Its converter forwards the pattern to
+      // VS Code's DocumentFilter, which supports RelativePattern and preserves
+      // an unambiguous workspace base even when the path contains glob syntax.
+      documentSelector:
+        // rslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+        documentSelector as unknown as LanguageClientOptions['documentSelector'],
+      outputChannel: this.context.output,
+      errorHandler,
+    };
+  }
+
+  private async stopImpl(): Promise<void> {
+    const client = this.#client;
+    const owner = this.#owner;
+    this.#client = undefined;
+    this.#owner = undefined;
+    this.#closing = true;
+    this.#stateWatcher?.dispose();
+    this.#stateWatcher = undefined;
+    // Block vscode-languageclient's automatic restart callback before the
+    // graceful shutdown begins; the owner force-terminates whatever survives.
+    owner?.beginClose();
+    if (client) {
+      try {
+        await client.dispose();
+      } catch (error) {
+        this.context.output.debug(
+          `Disposing the rs fmt language client for ${this.folder.name} failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+    try {
+      await owner?.close();
+    } catch (error) {
+      this.context.output.error(
+        `Failed to stop the rs fmt language server for ${this.folder.name}`,
+        error,
+      );
+    }
+    this.#state = 'stopped';
+  }
+}
+
+/**
+ * The fmt stack: one `rs fmt --lsp` language server per detected workspace
+ * folder, each rooted at its folder.
+ *
+ * The controller owns no formatting provider of its own — every server declares
+ * `documentFormattingProvider`, and its client registers the provider for that
+ * folder's documents. What the controller owns is the folder set: detection
+ * decides which folders have a server, and an `rstack.config.*` event restarts
+ * the one whose folder holds the file.
  */
 class FmtController implements StackController {
   readonly id = 'fmt' as const;
+  /**
+   * The Node runtime is chosen once per server start, so a changed pin can only
+   * reach a live server through a rebuild of this controller.
+   */
+  readonly restartOnSettings = [NODE_EXECUTABLE_SETTING];
 
   #context: StackContext | undefined;
+  /** The newest detection result, which `running` reports the reason from. */
   #snapshot: DetectionSnapshot | undefined;
+  readonly #runtimes = new Map<string, FmtFolderRuntime>();
+  /** Per-folder config-event debounce (see `register`'s `onConfigEvent`). */
+  readonly #restartTimers = new Map<string, NodeJS.Timeout>();
   readonly #subscriptions: vscode.Disposable[] = [];
-  // One-shot log lines, keyed by `<topic>:<path>`. Cleared when detection
-  // changes so a fixed setup gets a fresh explanation.
-  readonly #loggedOnce = new Set<string>();
-  readonly #abortController = new AbortController();
   #disposed = false;
-  #standby: FmtStandby | undefined;
-  #armTimer: NodeJS.Timeout | undefined;
-  /** E2E-only: how the most recent format request was served. */
-  #lastServe: 'hot' | 'cold' | undefined;
 
-  async register(context: StackContext): Promise<Record<string, unknown>> {
+  register(context: StackContext): Promise<Record<string, unknown>> {
     this.#context = context;
     this.#snapshot = context.detection;
-    this.#standby = new FmtStandby({
-      log: (message) => context.output.debug(message),
-    });
-    const provider: vscode.DocumentFormattingEditProvider = {
-      provideDocumentFormattingEdits: (document, _options, token) =>
-        this.provideDocumentFormattingEdits(document, token),
-    };
-    // `rs fmt` loads the project config while it drains stdin, so a parked
-    // process already carries the old config and every config event has to
-    // invalidate it. Detection cannot stand in for this watcher: its signature
-    // records only which config files exist, so it misses a content edit, and
-    // it misses the delete/create pair an atomic save produces for one
-    // unchanged path just the same.
+    // Detection cannot stand in for this watcher: its signature records only
+    // which config files exist, so it misses a content edit, and it misses the
+    // delete/create pair an atomic save produces for one unchanged path.
     const configWatcher =
       vscode.workspace.createFileSystemWatcher(RSTACK_CONFIG_GLOB);
-    const onConfigEvent = (uri: vscode.Uri): void =>
-      this.invalidateStandby(`${uri.fsPath} changed`);
+    const onConfigEvent = (uri: vscode.Uri): void => {
+      const folder = vscode.workspace.getWorkspaceFolder(uri);
+      // Only the folder root's config can be the one the server read — it
+      // loads exactly one config, from its cwd, with no upward walk — so an
+      // `rstack.config.*` event deeper in the tree must not cost a restart.
+      if (!folder || path.dirname(uri.fsPath) !== folder.uri.fsPath) {
+        return;
+      }
+      const folderPath = folder.uri.fsPath;
+      if (!this.#runtimes.has(folderPath)) {
+        return;
+      }
+      // An atomic save arrives as a delete/create pair and an editor can save
+      // in bursts; a short debounce folds them into one restart (same window
+      // as detection's redetect debounce).
+      clearTimeout(this.#restartTimers.get(folderPath));
+      this.#restartTimers.set(
+        folderPath,
+        setTimeout(() => {
+          this.#restartTimers.delete(folderPath);
+          void this.#runtimes.get(folderPath)?.restart(`${uri.fsPath} changed`);
+        }, CONFIG_RESTART_DEBOUNCE_MS),
+      );
+    };
     this.#subscriptions.push(
       context.onDidChangeDetection((snapshot) => {
         this.#snapshot = snapshot;
-        this.#loggedOnce.clear();
-        // The cwd, the resolved bin and the config set can all have moved.
-        this.invalidateStandby('detection changed');
-        // The reconcile leaves a still-detected controller alone, so the
-        // running reason must follow the new snapshot here rather than wait
-        // for the next successful format.
-        this.reportRunning(context, snapshot);
+        this.reconcile();
+        // The shell's reconcile leaves a still-detected controller alone, so
+        // the running reason must follow the new snapshot here.
+        this.reportRunning();
       }),
-      vscode.languages.registerDocumentFormattingEditProvider(
-        SELECTOR,
-        provider,
-      ),
       configWatcher,
       configWatcher.onDidCreate(onConfigEvent),
       configWatcher.onDidChange(onConfigEvent),
       configWatcher.onDidDelete(onConfigEvent),
-      vscode.window.onDidChangeActiveTextEditor(() => this.scheduleArm()),
     );
-    this.reportRunning(context, context.detection);
-    // The editor the user is already looking at needs no settling wait, but
-    // arming spawns a process and `register()` must return fast.
-    this.scheduleArm(0);
-    return {
+    this.reportRunning();
+    // Starting a server spawns a process; `register()` must return fast, so the
+    // folder set is reconciled without awaiting any start.
+    this.reconcile();
+    return Promise.resolve({
       languages: LANGUAGE_IDS,
-      provider,
-      armedFilePath: (): string | undefined => this.#standby?.armedFilePath,
-      lastServe: (): 'hot' | 'cold' | undefined => this.#lastServe,
-    };
-  }
-
-  /** Kills the standby, then re-arms the active editor through the debounce. */
-  private invalidateStandby(reason: string): void {
-    this.#standby?.kill(reason);
-    this.scheduleArm();
-  }
-
-  private scheduleArm(delayMs = ARM_DEBOUNCE_MS): void {
-    clearTimeout(this.#armTimer);
-    this.#armTimer = setTimeout(() => {
-      this.#armTimer = undefined;
-      this.armActiveEditor();
-    }, delayMs);
+      /**
+       * E2E only: whether a *running* server covers this path — the folder's
+       * server has started and the path lies inside that folder. It answers by
+       * folder, not by language: what it exists to distinguish is a folder with
+       * a live server from one without.
+       */
+      formats: (fsPath: string): boolean =>
+        [...this.#runtimes.values()].some(
+          (runtime) =>
+            runtime.state === 'running' && contains(runtime.folderPath, fsPath),
+        ),
+      /** E2E only: every folder runtime's lifecycle state, keyed by folder path. */
+      folderStates: (): Record<string, string> =>
+        Object.fromEntries(
+          [...this.#runtimes].map(([folderPath, runtime]) => [
+            folderPath,
+            runtime.state,
+          ]),
+        ),
+    });
   }
 
   /**
-   * Arms a standby for whatever the active editor is *now* — the invariant is
-   * "the standby tracks the active editor", so the editor is never captured
-   * when the arm was scheduled.
-   *
-   * Nothing formattable being active leaves the standby alone, whether the
-   * active editor holds no text document at all (a settings tab, an image
-   * preview) or holds one this stack does not format. Neither is worth a kill:
-   * an idle standby expires on its own, and both are a keystroke away
-   * from the file that owns it. A formattable document that cannot be armed is
-   * the other case — the editor really did move on, so the standby goes too.
+   * Brings the folder set in line with detection: a newly detected folder gets
+   * a server, an undetected one loses it, and a folder that is in both sets is
+   * left alone — restarting a healthy server on an unrelated folder's detection
+   * change would drop its cached config for nothing.
    */
-  private armActiveEditor(): void {
+  private reconcile(): void {
     const context = this.#context;
-    const standby = this.#standby;
-    if (!context || !standby) {
-      return;
-    }
-    const document = vscode.window.activeTextEditor?.document;
-    // The provider's own selector is the eligibility rule, so the two cannot
-    // drift apart.
-    if (!document || vscode.languages.match(SELECTOR, document) === 0) {
-      return;
-    }
-    // Every invalidation kills the standby before asking for a re-arm, so an
-    // armed standby on this file is still valid — and resolving is synchronous
-    // filesystem work that runs on the UI thread.
-    if (standby.armedFilePath === document.uri.fsPath) {
-      return;
-    }
-    const resolution = this.resolve(document.uri);
-    if (resolution.kind !== 'ok') {
-      // Arming is silent: an unresolvable editor only means the next format
-      // there is cold, which is exactly what happened before the standby.
-      context.output.debug(
-        `Standby not armed for ${document.uri.fsPath}: ${resolution.kind}`,
-      );
-      // The editor still moved to another file, so the previous file's standby
-      // no longer tracks it. `arm` would have killed it; there is nothing to
-      // arm here, so this path has to.
-      standby.kill('the active editor moved to a file that cannot be armed');
-      return;
-    }
-    standby.arm(standbyKey(document.uri, resolution.target));
-  }
-
-  /**
-   * Where a document's `rs fmt` would run. Pure: it reports no status and logs
-   * nothing, because the arming path must not move the status bar.
-   */
-  private resolve(uri: vscode.Uri): FmtResolution {
     const snapshot = this.#snapshot;
-    const folder = vscode.workspace.getWorkspaceFolder(uri);
-    if (!snapshot || !folder) {
-      return { kind: 'no-folder' };
+    if (!context || !snapshot || this.#disposed) {
+      return;
     }
-    const fmtDetection = snapshot.forFolder(folder)?.stacks.fmt;
-    if (!fmtDetection?.detected) {
-      return { kind: 'undetected', folder };
-    }
-
-    const cwd = pickConfigDir(
-      uri.fsPath,
-      fmtDetection.rstackConfigFiles.map((configUri) => configUri.fsPath),
-      folder.uri.fsPath,
+    const detected = new Map(
+      snapshot
+        .foldersFor('fmt')
+        .map((entry) => [entry.folder.uri.fsPath, entry.folder] as const),
     );
-    const pkgJsonPath = findPackageJsonUncached('rstack', cwd);
-    if (!pkgJsonPath) {
-      return { kind: 'missing-package', folder, cwd };
-    }
-
-    // One read for both the version and the bin entry: `resolve` now runs on
-    // the arming path too, and `readPackageJson` re-reads from disk by design.
-    const pkg = readPackageJson(pkgJsonPath);
-    const version = typeof pkg?.version === 'string' ? pkg.version : undefined;
-    if (checkPackageVersion('rstack', version).kind === 'mismatch') {
-      // Reporting stays with the caller: the arming path must not move the
-      // status bar, and the format path goes through `reportVersionCheck` so
-      // the shared contract has one implementation.
-      return { kind: 'version-mismatch', version };
-    }
-
-    const bin = pkg?.bin;
-    let binEntry = 'bin/rs.js';
-    if (typeof bin === 'string') {
-      binEntry = bin;
-    } else if (bin && typeof bin === 'object') {
-      const rs = (bin as Record<string, unknown>).rs;
-      if (typeof rs === 'string') {
-        binEntry = rs;
+    for (const [folderPath, runtime] of [...this.#runtimes]) {
+      if (!detected.has(folderPath)) {
+        this.#runtimes.delete(folderPath);
+        void runtime.stop();
       }
     }
-    return {
-      kind: 'ok',
-      target: {
-        cwd,
-        rsBinJs: path.resolve(path.dirname(pkgJsonPath), binEntry),
-      },
-    };
+    for (const [folderPath, folder] of detected) {
+      if (this.#runtimes.has(folderPath)) {
+        continue;
+      }
+      // The callback re-reads `#snapshot`, so a server that finishes starting
+      // after a detection change reports from the freshest snapshot — and the
+      // closure captures nothing beyond `this`.
+      const runtime = new FmtFolderRuntime(folder, context, () =>
+        this.reportRunning(),
+      );
+      this.#runtimes.set(folderPath, runtime);
+      void runtime.start();
+    }
   }
 
   /** `running` always carries the reason the stack is on: where it was detected. */
-  private reportRunning(
-    context: StackContext,
-    snapshot: DetectionSnapshot,
-  ): void {
+  private reportRunning(): void {
+    const context = this.#context;
+    const snapshot = this.#snapshot;
+    if (!context || !snapshot || this.#disposed) {
+      return;
+    }
     const names = snapshot.foldersFor('fmt').map((entry) => entry.folder.name);
     if (names.length === 0) {
       // Nothing detected means the shell is about to retire this controller;
@@ -303,183 +595,26 @@ class FmtController implements StackController {
     );
   }
 
-  private async provideDocumentFormattingEdits(
-    document: vscode.TextDocument,
-    token: vscode.CancellationToken,
-  ): Promise<vscode.TextEdit[]> {
-    const context = this.#context;
-    const snapshot = this.#snapshot;
-    if (
-      this.#disposed ||
-      !context ||
-      !snapshot ||
-      document.uri.scheme !== 'file'
-    ) {
-      return [];
-    }
-
-    const resolution = this.resolve(document.uri);
-    if (resolution.kind === 'no-folder') {
-      return [];
-    }
-    if (resolution.kind === 'undetected') {
-      // The formatter is offered per language, so a request can land in a
-      // folder without an rstack setup. That is routine, not a fault — one
-      // info line per folder says why nothing happened.
-      const folder = resolution.folder;
-      if (!this.#loggedOnce.has(`undetected:${folder.uri.toString()}`)) {
-        this.#loggedOnce.add(`undetected:${folder.uri.toString()}`);
-        context.output.info(
-          `A format request in ${folder.name} was skipped: fmt is not detected there (no rstack.config.* and no rstack CLI at the folder root)`,
-        );
-      }
-      return [];
-    }
-
-    // Per-request logging follows prettier-vscode's shape (same in-host,
-    // work-per-request architecture): a fixed entry and outcome line at info,
-    // resolution detail at debug — the channel is a LogOutputChannel, so the
-    // user raises the level from its context menu when needed.
-    const startedAt = Date.now();
-    context.output.info(`Formatting ${document.uri.fsPath}`);
-    if (resolution.kind === 'missing-package') {
-      const reason = `rstack is not installed in ${resolution.folder.name} (node_modules missing)`;
-      context.status.report({ kind: 'disabled', reason });
-      if (!this.#loggedOnce.has(`missing:${resolution.cwd}`)) {
-        this.#loggedOnce.add(`missing:${resolution.cwd}`);
-        context.output.warn(`${reason}; searched from ${resolution.cwd}`);
-      }
-      return [];
-    }
-    if (resolution.kind === 'version-mismatch') {
-      reportVersionCheck(context.status, 'rstack', resolution.version);
-      return [];
-    }
-
-    const { cwd, rsBinJs } = resolution.target;
-    context.output.debug(`cwd: ${cwd}; bin: ${rsBinJs}`);
-
-    const text = document.getText();
-    const version = document.version;
-    const requestController = new AbortController();
-    const abortRequest = (): void => requestController.abort();
-    const cancellation = token.onCancellationRequested(abortRequest);
-    this.#abortController.signal.addEventListener('abort', abortRequest, {
-      once: true,
-    });
-    if (token.isCancellationRequested || this.#abortController.signal.aborted) {
-      requestController.abort();
-    }
-
-    const key = standbyKey(document.uri, resolution.target);
-    // An already-cancelled request must not burn the standby.
-    const hot = requestController.signal.aborted
-      ? undefined
-      : this.#standby?.consume(key, {
-          text,
-          signal: requestController.signal,
-        });
-    const serve = hot ? 'hot' : 'cold';
-    this.#lastServe = serve;
-
-    let result;
-    try {
-      result = await (hot ??
-        runRsFmt({
-          text,
-          filePath: document.uri.fsPath,
-          cwd,
-          rsBinJs,
-          signal: requestController.signal,
-        }));
-    } finally {
-      cancellation.dispose();
-      this.#abortController.signal.removeEventListener('abort', abortRequest);
-      // A standby serves exactly one request, and a real format request is
-      // itself proof the active file is worth one — re-arm after cold serves
-      // too, so an expired or crashed standby comes back on the next use
-      // instead of leaving the file cold until the editor changes. Scheduled
-      // rather than immediate: spawning here would delay the edits the caller
-      // is waiting for.
-      this.scheduleArm(0);
-    }
-
-    if (
-      token.isCancellationRequested ||
-      document.version !== version ||
-      this.#disposed
-    ) {
-      context.output.debug(
-        `Formatting result for ${document.uri.fsPath} discarded (document changed or request cancelled)`,
-      );
-      return [];
-    }
-
-    const elapsed = Date.now() - startedAt;
-    if (result.kind === 'ok' || result.kind === 'skipped') {
-      // Same tailing as the error path: a chatty warning stream must not land
-      // in the log unbounded.
-      const stderr = stderrTail(result.stderr);
-      if (stderr !== '') {
-        context.output.debug(`rs fmt stderr: ${stderr}`);
-      }
-    }
-    switch (result.kind) {
-      case 'ok': {
-        // The freshest snapshot, not the request's capture: detection may
-        // have changed while the format was in flight.
-        this.reportRunning(context, this.#snapshot ?? snapshot);
-        const edit = minimalEdit(text, result.formatted);
-        // The hot/cold marker is the only way to tell from a log whether the
-        // measured time included a process start-up.
-        context.output.info(
-          `Formatting completed in ${elapsed}ms (${serve}${
-            edit ? '' : ', already formatted'
-          })`,
-        );
-        if (!edit) {
-          return [];
-        }
-        return [
-          vscode.TextEdit.replace(
-            new vscode.Range(
-              document.positionAt(edit.start),
-              document.positionAt(edit.end),
-            ),
-            edit.newText,
-          ),
-        ];
-      }
-      case 'skipped':
-        context.output.info(
-          `Skipped ${document.uri.fsPath}: rs fmt returned no output (the file is ignored or has no parser)`,
-        );
-        return [];
-      case 'cancelled':
-        context.output.debug(`Formatting cancelled for ${document.uri.fsPath}`);
-        return [];
-      case 'error':
-        context.output.error(`rs fmt failed in ${cwd}: ${result.message}`);
-        if (isRsFmtLaunchError(result)) {
-          context.status.crashed(result.message);
-        }
-        return [];
-    }
-  }
-
-  dispose(): void {
+  /**
+   * Covers `rstack.fmt.restart` (the shell rebuilds the controller), a folder
+   * losing detection and a workspace losing its trust: none of them may leave a
+   * server process behind, so the teardown is awaited.
+   */
+  async dispose(): Promise<void> {
     this.#disposed = true;
-    this.#abortController.abort();
-    // Covers `rstack.fmt.restart` (the shell rebuilds the controller) and a
-    // workspace losing its trust: neither may leave a process behind.
-    clearTimeout(this.#armTimer);
-    this.#armTimer = undefined;
-    this.#standby?.dispose();
-    this.#standby = undefined;
+    for (const timer of this.#restartTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.#restartTimers.clear();
     for (const subscription of this.#subscriptions.splice(0)) {
       subscription.dispose();
     }
-    this.#loggedOnce.clear();
+    const runtimes = [...this.#runtimes.values()];
+    this.#runtimes.clear();
+    await Promise.allSettled(runtimes.map(async (runtime) => runtime.stop()));
+    // The User Node preflight memo is deliberately not reset here: it is
+    // host-scoped state shared with the rstest stack, and the shell's restart
+    // pass owns the reset (see `runRestart`).
     this.#context = undefined;
     this.#snapshot = undefined;
   }

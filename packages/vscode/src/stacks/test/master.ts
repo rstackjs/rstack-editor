@@ -12,6 +12,10 @@ import {
   readPackageVersion,
   reportVersionCheck,
 } from '../../shared/versionCheck';
+import {
+  expandWorkspaceFolder,
+  getConfiguredNodeExecutable,
+} from '../../shared/nodeExecutableSetting';
 import { CONFIG_SECTION, getConfigValue } from './config';
 import {
   formatConfiguredCoreNotFoundMessage,
@@ -25,9 +29,9 @@ import { nodeRequire } from './nodeRequire';
 import {
   configuredNodeBelowFloor,
   NodePreflightError,
-  type ResolveWorkerNodeOptions,
-  resolveWorkerNodeOnce,
-} from './nodeResolution';
+  type ResolveUserNodeOptions,
+  resolveUserNodeOnce,
+} from '../../shared/nodeResolution';
 import type { Project } from './project';
 import { NODE_RUNTIME_STATUS_SOURCE, status } from './status';
 import { runInTerminal as sendToTerminal, shellQuote } from './terminal';
@@ -48,7 +52,7 @@ export const runningWorkers = new Set<BirpcReturn<Worker, TestRunReporter>>();
  */
 export const workerNodeOptions = (
   cwd: string | undefined,
-): ResolveWorkerNodeOptions => ({
+): ResolveUserNodeOptions => ({
   shell: vscode.env.shell || undefined,
   cwd,
   notify: (message) => logger.info(message),
@@ -74,11 +78,9 @@ export const workerNodeOptions = (
 export const warmWorkerNodePreflight = (
   folders: readonly vscode.WorkspaceFolder[],
 ): void => {
-  const target = folders.find(
-    (folder) => !getConfigValue('nodeExecutable', folder),
-  );
+  const target = folders.find((folder) => !getConfiguredNodeExecutable(folder));
   if (target !== undefined) {
-    void resolveWorkerNodeOnce(workerNodeOptions(target.uri.fsPath)).catch(
+    void resolveUserNodeOnce(workerNodeOptions(target.uri.fsPath)).catch(
       () => {},
     );
   }
@@ -145,7 +147,7 @@ export class RstestApi {
   }
 
   private expandWorkspaceFolder(value: string): string {
-    return value.replaceAll('${workspaceFolder}', this.workspace.uri.fsPath);
+    return expandWorkspaceFolder(value, this.workspace);
   }
 
   // Regex source that selects a single reported case by its name path. Shared by
@@ -158,27 +160,22 @@ export class RstestApi {
     return `^${regexpEscape(testCaseNamePath.join(' '))}${isSuite ? ' ' : '$'}`;
   }
 
-  // The node executable + exec args honoring the `nodeExecutable` /
-  // `nodeExecArgs` settings (`${workspaceFolder}` expanded). Used verbatim by
-  // the terminal CLI, which deliberately skips the worker preflight below: the
-  // command runs inside the user's own shell, which is the very thing the
-  // preflight exists to emulate. `configured` reports whether the executable is
-  // the user's explicit choice or the bare `node` default, so the preflight
-  // does not have to read the setting a second time.
+  // The node executable + exec args honoring the shared `rstack.nodeExecutable`
+  // and the stack's `nodeExecArgs` settings (`${workspaceFolder}` expanded).
+  // Used verbatim by the terminal CLI, which deliberately skips the worker
+  // preflight below: the command runs inside the user's own shell, which is the
+  // very thing the preflight exists to emulate. `configured` reports whether
+  // the executable is the user's explicit choice or the bare `node` default, so
+  // the preflight does not have to read the setting a second time.
   private resolveNodeCommand(): {
     nodeExecutable: string;
     nodeExecArgs: string[];
     configured: boolean;
   } {
-    const configuredExecutable = getConfigValue(
-      'nodeExecutable',
-      this.workspace,
-    );
+    const configuredExecutable = getConfiguredNodeExecutable(this.workspace);
     return {
-      nodeExecutable: configuredExecutable
-        ? this.expandWorkspaceFolder(configuredExecutable)
-        : 'node',
-      configured: Boolean(configuredExecutable),
+      nodeExecutable: configuredExecutable ?? 'node',
+      configured: configuredExecutable !== undefined,
       nodeExecArgs: getConfigValue('nodeExecArgs', this.workspace).map((arg) =>
         this.expandWorkspaceFolder(arg),
       ),
@@ -213,14 +210,14 @@ export class RstestApi {
   /**
    * The node command for worker spawns — the node-preflight adaptation. Why the
    * PATH `node` cannot be trusted, and why the floor is uniform rather than
-   * per-project, lives in `nodeResolution.ts`.
+   * per-project, lives in `shared/nodeResolution.ts`.
    *
    * An explicitly configured `nodeExecutable` is honoured but probed all the
    * same — the whys, and the by-path memo that keeps this every-spawn call at
    * a lookup, live on `configuredNodeBelowFloor`.
    *
-   * `vscode.env.shell` is read here so `nodeResolution.ts` needs no VS Code
-   * import.
+   * `vscode.env.shell` is read here so `shared/nodeResolution.ts` needs no VS
+   * Code import.
    */
   private async resolveWorkerNodeCommand(): Promise<{
     nodeExecutable: string;
@@ -240,15 +237,16 @@ export class RstestApi {
       return { nodeExecutable, nodeExecArgs };
     }
     try {
-      const resolution = await resolveWorkerNodeOnce(
-        workerNodeOptions(this.cwd),
-      );
+      const resolution = await resolveUserNodeOnce(workerNodeOptions(this.cwd));
       return { nodeExecutable: resolution.executable, nodeExecArgs };
     } catch (error) {
       if (error instanceof NodePreflightError) {
         // The status-aggregation adaptation: no usable runtime anywhere is the
         // same "fix your toolchain" state as an unsupported package version.
-        this.reportNodeRuntimeIssue(error.message, NODE_RUNTIME_STATUS_SOURCE);
+        this.reportNodeRuntimeIssue(
+          error.messageWith('tests will not run'),
+          NODE_RUNTIME_STATUS_SOURCE,
+        );
       }
       throw error;
     }

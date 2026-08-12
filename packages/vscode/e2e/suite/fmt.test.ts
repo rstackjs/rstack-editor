@@ -4,23 +4,15 @@ import type { RstackExtensionExports } from '../../src/types';
 import { eventually } from './helpers';
 
 const EXTENSION_ID = 'rstack.rstack';
-let provider: vscode.DocumentFormattingEditProvider;
-let armedFilePath: () => string | undefined;
-let lastServe: () => 'hot' | 'cold' | undefined;
-
 /**
- * Shows a document and waits for it to own the standby. Showing it is what arms
- * one — the invariant is that the standby tracks the active editor — but arming
- * is debounced and an earlier test may have left a standby on another file, so
- * the wait polls until the armed file is this one.
+ * The fmt stack's E2E-only exports. They describe the folder set, not a
+ * provider: the formatting provider is registered by vscode-languageclient from
+ * each server's `documentFormattingProvider` capability, so the only thing the
+ * stack itself can be asked about is which folders have a live server.
  */
-const armStandbyFor = async (uri: vscode.Uri): Promise<vscode.TextEditor> => {
-  const editor = await vscode.window.showTextDocument(uri);
-  await eventually(() => {
-    assert.equal(armedFilePath(), uri.fsPath);
-  }, `the standby to be armed for ${uri.fsPath}`);
-  return editor;
-};
+let languages: readonly string[];
+let formats: (fsPath: string) => boolean;
+let folderStates: () => Record<string, string>;
 
 const folderNamed = (name: string): vscode.WorkspaceFolder => {
   const folder = (vscode.workspace.workspaceFolders ?? []).find(
@@ -30,6 +22,18 @@ const folderNamed = (name: string): vscode.WorkspaceFolder => {
   return folder;
 };
 
+const fixtureFile = (folder: string, ...segments: string[]): vscode.Uri =>
+  vscode.Uri.joinPath(folderNamed(folder).uri, ...segments);
+
+/** Waits until the rstack fixture's `rs fmt` server covers the given file. */
+const waitForCoverage = (uri: vscode.Uri): Promise<void> =>
+  eventually(() => {
+    assert.ok(
+      formats(uri.fsPath),
+      `${uri.fsPath} is not covered by a running rs fmt server`,
+    );
+  }, 'the rstack folder to have a running rs fmt server');
+
 suite('fmt', () => {
   suiteSetup(async () => {
     const extension =
@@ -37,23 +41,37 @@ suite('fmt', () => {
     assert.ok(extension, `${EXTENSION_ID} is not installed in the test host`);
     const api = await extension.activate();
     const exports = await api.whenStackActive('fmt');
-    assert.ok(exports.provider, 'the fmt stack did not export its provider');
-    provider = exports.provider as vscode.DocumentFormattingEditProvider;
     assert.ok(
-      typeof exports.armedFilePath === 'function',
-      'the fmt stack did not export its standby hook',
+      Array.isArray(exports.languages),
+      'the fmt stack did not export its language list',
     );
-    armedFilePath = exports.armedFilePath as () => string | undefined;
-    lastServe = exports.lastServe as () => 'hot' | 'cold' | undefined;
+    languages = exports.languages as readonly string[];
+    assert.ok(
+      typeof exports.formats === 'function',
+      'the fmt stack did not export its coverage hook',
+    );
+    formats = exports.formats as (fsPath: string) => boolean;
+    assert.ok(
+      typeof exports.folderStates === 'function',
+      'the fmt stack did not export its folder-state hook',
+    );
+    folderStates = exports.folderStates as () => Record<string, string>;
   });
 
   test('formats through the provider without touching the workspace', async () => {
-    const uri = vscode.Uri.joinPath(
-      folderNamed('rstack').uri,
-      'src',
-      'needs-format.ts',
-    );
-    const { document, edits } = await eventually(async () => {
+    const uri = fixtureFile('rstack', 'src', 'needs-format.ts');
+    // Deviation from the pre-LSP suite, in two parts. The stack no longer
+    // registers a provider at activation: one appears only once the folder's
+    // `rs fmt --lsp` server has started and its client has registered the
+    // server's `documentFormattingProvider` capability. Until then VS Code's
+    // built-in TypeScript formatter is the only candidate, and it answers
+    // *successfully* — with single-quoted, non-Prettier text. So waiting for
+    // "some edits" is not enough (that is what the built-in returns): the
+    // suite waits for the folder's server first, and the retry loop asserts
+    // the formatted text, not merely a non-empty edit list.
+    await waitForCoverage(uri);
+
+    const document = await eventually(async () => {
       const document = await vscode.workspace.openTextDocument(uri);
       const edits = await vscode.commands.executeCommand<vscode.TextEdit[]>(
         'vscode.executeFormatDocumentProvider',
@@ -61,97 +79,69 @@ suite('fmt', () => {
         { tabSize: 2, insertSpaces: true },
       );
       assert.ok(edits && edits.length > 0, 'the formatter returned no edits');
-      return { document, edits };
-    }, 'the rs fmt provider to return an edit');
 
-    const text = document.getText();
-    let applied = text;
-    // The command post-processes our single minimal edit through VS Code's
-    // `computeMoreMinimalEdits`, so apply its result from the end backwards.
-    for (const edit of [...edits].sort(
-      (left, right) =>
-        document.offsetAt(right.range.start) -
-        document.offsetAt(left.range.start),
-    )) {
-      const start = document.offsetAt(edit.range.start);
-      const end = document.offsetAt(edit.range.end);
-      applied = applied.slice(0, start) + edit.newText + applied.slice(end);
-    }
-    // The quote normalization is Prettier-specific, so VS Code's built-in
-    // TypeScript formatter cannot mask a failed Rstack provider via fallback.
-    assert.equal(applied, 'const answer = { value: "42" };\n');
+      let applied = document.getText();
+      // The command post-processes our single minimal edit through VS Code's
+      // `computeMoreMinimalEdits`, so apply its result from the end backwards.
+      for (const edit of [...edits].sort(
+        (left, right) =>
+          document.offsetAt(right.range.start) -
+          document.offsetAt(left.range.start),
+      )) {
+        const start = document.offsetAt(edit.range.start);
+        const end = document.offsetAt(edit.range.end);
+        applied = applied.slice(0, start) + edit.newText + applied.slice(end);
+      }
+      // The quote normalization is Prettier-specific, so VS Code's built-in
+      // TypeScript formatter cannot mask a failed Rstack provider via fallback.
+      assert.equal(applied, 'const answer = { value: "42" };\n');
+      return document;
+    }, 'the rs fmt language server to return a Prettier-formatted edit');
+
+    // The server formats the buffer it was sent and returns edits; nothing on
+    // disk may move, which is what "without touching the workspace" means.
+    assert.equal(
+      (await vscode.workspace.fs.readFile(uri)).toString(),
+      "const   answer={value:'42'};\n",
+    );
+    // The document is only ever opened, never edited by the format request.
+    assert.equal(document.isDirty, false);
   });
 
-  test('formats from the standby armed for the active editor', async () => {
-    const uri = vscode.Uri.joinPath(
-      folderNamed('rstack').uri,
-      'src',
-      'needs-format.ts',
-    );
-    const editor = await armStandbyFor(uri);
+  test('covers only the folders where fmt is detected', async () => {
+    // Replaces the pre-LSP "returns no edits for a folder where fmt is not
+    // detected": there is no stack-owned provider left to call with a
+    // foreign document. The equivalent question — is this path covered by a
+    // running `rs fmt` server — is now the `formats` export, and it answers
+    // per folder because a server's reach is its workspace folder.
+    await waitForCoverage(fixtureFile('rstack', 'src', 'needs-format.ts'));
 
-    const edits = await vscode.commands.executeCommand<vscode.TextEdit[]>(
-      'vscode.executeFormatDocumentProvider',
-      uri,
-      { tabSize: 2, insertSpaces: true },
-    );
-    assert.ok(edits && edits.length > 0, 'the formatter returned no edits');
-
-    const text = editor.document.getText();
-    let applied = text;
-    // The command post-processes our single minimal edit through VS Code's
-    // `computeMoreMinimalEdits`, so apply its result from the end backwards.
-    for (const edit of [...edits].sort(
-      (left, right) =>
-        editor.document.offsetAt(right.range.start) -
-        editor.document.offsetAt(left.range.start),
-    )) {
-      const start = editor.document.offsetAt(edit.range.start);
-      const end = editor.document.offsetAt(edit.range.end);
-      applied = applied.slice(0, start) + edit.newText + applied.slice(end);
-    }
-    assert.equal(applied, 'const answer = { value: "42" };\n');
-    // The cold path produces the same text, so only this proves the request
-    // actually consumed the standby.
-    assert.equal(lastServe(), 'hot');
+    // TypeScript, and one of the languages the stack claims, but fmt is not
+    // detected for the rslint fixture — no server covers it.
+    const uncovered = fixtureFile('rslint', 'src', 'index.ts');
+    assert.ok(languages.includes('typescript'));
+    assert.equal(formats(uncovered.fsPath), false);
   });
 
-  test('clears the standby when the active editor cannot be armed', async () => {
-    await armStandbyFor(
-      vscode.Uri.joinPath(folderNamed('rstack').uri, 'src', 'needs-format.ts'),
-    );
-
-    // TypeScript, so the provider matches it, but fmt is not detected for this
-    // folder — nothing can be armed, and the previous file's standby must not
-    // outlive the editor that owned it.
-    const unarmable = vscode.Uri.joinPath(
-      folderNamed('rslint').uri,
-      'src',
-      'index.ts',
-    );
-    await vscode.window.showTextDocument(unarmable);
+  test('runs one server for the detected folder and none for the others', async () => {
     await eventually(() => {
-      assert.equal(armedFilePath(), undefined);
-    }, 'the standby to be cleared');
-  });
-
-  test('returns no edits for a folder where fmt is not detected', async () => {
-    const uri = vscode.Uri.joinPath(
-      folderNamed('rslint').uri,
-      'src',
-      'index.ts',
-    );
-    const document = await vscode.workspace.openTextDocument(uri);
-    const cancellation = new vscode.CancellationTokenSource();
-    try {
-      const edits = await provider.provideDocumentFormattingEdits(
-        document,
-        { tabSize: 2, insertSpaces: true },
-        cancellation.token,
+      assert.equal(
+        folderStates()[folderNamed('rstack').uri.fsPath],
+        'running',
+        `folder states: ${JSON.stringify(folderStates())}`,
       );
-      assert.ok(!edits || edits.length === 0);
-    } finally {
-      cancellation.dispose();
+    }, 'the rstack folder runtime to report running');
+
+    const states = folderStates();
+    // A runtime exists only for a folder detection lit, so the two fixtures
+    // without an Rstack config must not appear at all — a stopped or crashed
+    // entry for them would mean a server was spawned where none belongs.
+    for (const name of ['rslint', 'rstest']) {
+      assert.equal(
+        folderNamed(name).uri.fsPath in states,
+        false,
+        `${name} has an rs fmt runtime: ${JSON.stringify(states)}`,
+      );
     }
   });
 });

@@ -2,6 +2,7 @@ import vscode from 'vscode';
 import { Channels } from './channels';
 import { DetectionService } from './detection';
 import { maybePromptForMigration, runSettingsMigration } from './migration';
+import { resetUserNodeCaches } from './shared/nodeResolution';
 import { StatusBar } from './statusBar';
 import {
   type DetectionSnapshot,
@@ -89,16 +90,35 @@ class ExtensionShell {
         // nothing to rebuild, and one already being retired is gone from the
         // map, which is what keeps a change landing mid-rebuild from queuing a
         // second one.
+        // One save can move a setting shared by several stacks (the runtime
+        // pin), so the moved stacks are collected and restarted as one pass —
+        // one detection sweep, one retire/reconcile wave — instead of one full
+        // restart each.
+        const moved: StackId[] = [];
+        const reasons: string[] = [];
         for (const [stack, controller] of this.#controllers) {
           if (gated.has(stack)) {
             continue;
           }
-          const moved = controller.restartOnSettings?.find((setting) =>
-            event.affectsConfiguration(`rstack.${stack}.${setting}`),
+          // Entries are relative to the stack's namespace unless they name a
+          // fully qualified `rstack.*` key — the form shared settings use.
+          const settingKey = (setting: string): string =>
+            setting.startsWith('rstack.')
+              ? setting
+              : `rstack.${stack}.${setting}`;
+          const setting = controller.restartOnSettings?.find((candidate) =>
+            event.affectsConfiguration(settingKey(candidate)),
           );
-          if (moved) {
-            void this.restart(stack, `rstack.${stack}.${moved} changed`);
+          if (setting) {
+            moved.push(stack);
+            const key = settingKey(setting);
+            if (!reasons.includes(key)) {
+              reasons.push(key);
+            }
           }
+        }
+        if (moved.length > 0) {
+          void this.restart(moved, `${reasons.join(', ')} changed`);
         }
       }),
       // Restricted Mode shows the status bar only; trust unlocks the stacks
@@ -238,16 +258,26 @@ class ExtensionShell {
    * `reason` is for the callers that are not a user picking the command —
    * `restartOnSettings` passes what moved.
    */
-  restart(stack?: StackId, reason?: string): Promise<void> {
-    return this.enqueue(() => this.runRestart(stack, reason));
+  restart(
+    stacks?: StackId | readonly StackId[],
+    reason?: string,
+  ): Promise<void> {
+    return this.enqueue(() => this.runRestart(stacks, reason));
   }
 
-  private async runRestart(only?: StackId, reason?: string): Promise<void> {
+  private async runRestart(
+    only?: StackId | readonly StackId[],
+    reason?: string,
+  ): Promise<void> {
     if (this.#disposed) {
       return;
     }
-    const stacks = only ? [only] : STACK_IDS;
-    const what = only ? STACK_LABELS[only] : 'Rstack';
+    const stacks =
+      only === undefined ? STACK_IDS : typeof only === 'string' ? [only] : only;
+    const what =
+      stacks.length === STACK_IDS.length
+        ? 'Rstack'
+        : stacks.map((stack) => STACK_LABELS[stack]).join(', ');
     this.#channels.shell.info(
       `Restarting ${what}${reason ? ` (${reason})` : ''}`,
     );
@@ -259,6 +289,14 @@ class ExtensionShell {
     if (this.#disposed) {
       return;
     }
+    // Restart exists to clear stale resolution, and the User Node preflight
+    // memo is host-scoped state shared by every stack — so the shell clears it
+    // once per pass, after the retire wave and before anything re-registers.
+    // Owned here rather than in the stacks' `dispose()`: a stack-owned reset
+    // fires on every teardown (deactivate, detection loss) and clears the
+    // resolution a live sibling stack is relying on, twice per shared-setting
+    // change.
+    resetUserNodeCaches();
     try {
       // A plain pass: `refresh` updates the snapshot whether or not the
       // signature moved, and the reconcile below rebuilds every stack from it.

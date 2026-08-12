@@ -8,7 +8,7 @@ import { RstestDiagnostics } from './diagnostics';
 import { TestErrorStore, testMessageText } from './errorStore';
 import { logger } from './logger';
 import { runningWorkers, warmWorkerNodePreflight } from './master';
-import { resetWorkerNodeCaches } from './nodeResolution';
+import { NODE_EXECUTABLE_SETTING } from '../../shared/nodeResolution';
 import { Project, WorkspaceManager } from './project';
 import { status } from './status';
 import { disposeTerminal } from './terminal';
@@ -507,14 +507,14 @@ class Rstest implements vscode.Disposable {
 class RstestController implements StackController {
   readonly id = 'rstest' as const;
   // The worker runtime is resolved once per registration and the memo in
-  // `nodeResolution.ts` caches the *rejection* as well as the success, so
-  // without a rebuild a user who reads the "no usable Node" status and then
-  // sets `nodeExecutable` gets no reaction at all — and one who removes it
-  // again keeps a populated tree whose every run now fails. Only the setting
+  // `shared/nodeResolution.ts` caches the *rejection* as well as the success,
+  // so without a rebuild a user who reads the "no usable Node" status and then
+  // sets `rstack.nodeExecutable` gets no reaction at all — and one who removes
+  // it again keeps a populated tree whose every run now fails. Only the setting
   // qualifies: installing a newer Node on the machine is not observable by the
   // extension and stays a manual restart, the deliberate half of the deal (see
   // `docs/adr/0001-node-runtime-selection.md`).
-  readonly restartOnSettings = ['nodeExecutable'];
+  readonly restartOnSettings = [NODE_EXECUTABLE_SETTING];
 
   #rstest: Rstest | undefined;
 
@@ -549,11 +549,12 @@ class RstestController implements StackController {
   dispose(): void {
     this.#rstest?.dispose();
     this.#rstest = undefined;
-    // The third module singleton with this exact lifetime, alongside the two
-    // binds above: a re-registered stack re-probes, which is what makes the
-    // restart command pick up a toolchain change — and what
-    // `restartOnSettings` relies on, rather than resetting the memo itself.
-    resetWorkerNodeCaches();
+    // The User Node preflight memo is deliberately NOT reset here: it is
+    // host-scoped state shared with the fmt stack, and a stack-scoped dispose
+    // (deactivate, detection loss) clearing it would force a live sibling to
+    // re-probe for nothing. The shell's restart pass owns the reset — which is
+    // what makes the restart command and `restartOnSettings` pick up a
+    // toolchain change.
     status.unbind();
     logger.unbind();
   }

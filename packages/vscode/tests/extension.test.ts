@@ -338,6 +338,27 @@ describe('restart-triggering settings', () => {
     expect(stacksOf('register')).toEqual(['rslint']);
   });
 
+  it('treats a declared rstack.* name as fully qualified, shared across stacks', async () => {
+    // The shared runtime pin (`rstack.nodeExecutable`) lives outside any stack
+    // namespace, so its declaration must not be re-prefixed into
+    // `rstack.<stack>.rstack.nodeExecutable` — and one change event rebuilds
+    // every stack that declared it.
+    await deactivate();
+    harness.reset();
+    harness.detected = new Set(['rslint', 'rstest', 'fmt']);
+    harness.restartOnSettings = new Map([
+      ['rstest', ['rstack.nodeExecutable']],
+      ['fmt', ['rstack.nodeExecutable']],
+    ]);
+    await activate(context);
+    harness.events.length = 0;
+
+    changeSetting('rstack.nodeExecutable');
+    await settle();
+    expect(stacksOf('dispose').sort()).toEqual(['fmt', 'rstest']);
+    expect(stacksOf('register').sort()).toEqual(['fmt', 'rstest']);
+  });
+
   it('ignores a setting no stack declared', async () => {
     changeSetting('rstack.rstest.nodeExecArgs');
     await settle();

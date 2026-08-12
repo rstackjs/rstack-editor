@@ -13,7 +13,7 @@ The extension ships no tool binaries: `@rslint/core`, `@rstest/core` and `rstack
 
 - **Linting (Rslint)** — diagnostics, quick fixes and auto-fix on save via Rslint's language server.
 - **Testing (Rstest)** — a Test Explorer tree built from your test files: run or debug individual tests, suites or files; the tree stays in sync as files change; failed tests show up as editor diagnostics.
-- **rstack-cli** — document formatting through the project-local `rs fmt` CLI.
+- **rstack-cli** — document formatting through the project-local `rs fmt` language server, one per workspace folder.
 - **One status bar item** — a single `Rstack` entry shows which tools are active in the current workspace and why.
 
 ## Detection
@@ -38,7 +38,9 @@ The project-resolved packages are checked against a support matrix at runtime; a
 | -------------- | --------- |
 | `@rslint/core` | `>=0.7.2` |
 | `@rstest/core` | `>=0.6.0` |
-| `rstack`       | `>=0.3.5` |
+| `rstack`       | `>=0.5.2` |
+
+`rstack` 0.5.2 is the first release with `rs fmt --lsp`, the language server the formatter is a client of; on older releases the formatter reports `version mismatch` instead of formatting.
 
 ## Auto-fix on save (Rslint)
 
@@ -75,6 +77,7 @@ All settings live under the unified `rstack.*` namespace. There are no `rslint.*
 | Setting | Default | Description |
 | --- | --- | --- |
 | `rstack.enable` | `true` | Master switch for the whole extension. |
+| `rstack.nodeExecutable` | — | Node binary used for the processes that load your project: the test worker and the `rs fmt` language server. Empty means the extension picks one (`PATH` first, then the `node` your interactive shell resolves). |
 | `rstack.rslint.enable` | `true` | Enable/disable the Rslint integration. |
 | `rstack.rslint.binPath` | `local` | `local` (project `node_modules`, incl. Yarn PnP) or `custom`. |
 | `rstack.rslint.customBinPath` | — | Binary path used when `binPath` is `custom`. |
@@ -84,7 +87,6 @@ All settings live under the unified `rstack.*` namespace. There are no `rslint.*
 | `rstack.rstest.testCaseCollectMethod` | `ast` | `ast` (fast) or `runtime` (supports dynamic test generation). |
 | `rstack.rstest.applyDiagnostic` | `true` | Show diagnostics in the editor and Problems panel for failures. |
 | `rstack.rstest.rstestPackagePath` | — | Explicit `@rstest/core` `package.json`, last-resort override. |
-| `rstack.rstest.nodeExecutable` | — | Node binary used for the test worker. |
 | `rstack.rstest.nodeExecArgs` | `[]` | Extra Node args for the test worker. |
 | `rstack.rstest.nodeEnv` | `null` | Extra env for the test worker. |
 | `rstack.rstest.debugNodeEnv` | `null` | Extra env when debugging tests. |
@@ -97,6 +99,8 @@ All settings live under the unified `rstack.*` namespace. There are no `rslint.*
 | `rstack.fmt.enable` | `true` | Enable/disable the formatter integration. |
 
 To use `rs fmt` as the formatter for supported documents, opt in through your VS Code settings: `"editor.defaultFormatter": "rstack.rstack"`. The extension never changes `editor.defaultFormatter` itself.
+
+Formatting runs one `rs fmt` language server per workspace folder, which loads `define.fmt()` from the `rstack.config.*` at the **folder root** — the same config `rs fmt` in a terminal there would use, so a config in a subdirectory is not picked up (open that subdirectory as its own workspace folder if it needs different settings). Editing the config restarts the server for you. Your editor's own formatting options (tab size, spaces) are not consulted: the project config decides, exactly as on the command line.
 
 ## Migrating from the standalone extensions
 
