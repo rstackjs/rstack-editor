@@ -3,7 +3,7 @@
   "displayName": "Rstack",
   "version": "0.1.0",
   "private": true,
-  "description": "Editor support for the Rstack toolchain: Rslint, Rstest and rs fmt",
+  "description": "All Rstack tool integrations for VS Code.",
   "categories": [
     "Linters",
     "Testing",
@@ -16,6 +16,9 @@
     "rsfmt",
     "typescript"
   ],
+  "bugs": {
+    "url": "https://github.com/rstackjs/rstack-editor/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/rstackjs/rstack-editor.git"
