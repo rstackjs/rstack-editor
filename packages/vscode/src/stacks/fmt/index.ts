@@ -37,6 +37,11 @@ import type {
 // no lint behaviour is shared, and the file has no lint imports.
 import { LanguageServerProcessOwner } from '../lint/LanguageServerProcessOwner';
 import { pickBinEntry } from './binEntry';
+import {
+  foldFolderStatus,
+  type FmtFolderStatus,
+  type FmtRuntimeState,
+} from './status';
 
 // prettier 3.9.6 getSupportInfo() vscodeLanguageIds snapshot (rs fmt's pinned
 // prettier). Revisit when the pinned prettier changes.
@@ -103,21 +108,6 @@ const contains = (dir: string, filePath: string): boolean => {
 };
 
 /**
- * A folder runtime's state, as the E2E exports report it.
- *
- * `disabled`, `version-mismatch` and `crashed` mirror the status the runtime
- * pushed to the shell when it stopped short; `stopped` is a runtime that was
- * never started or was shut down deliberately.
- */
-type FmtRuntimeState =
-  | 'stopped'
-  | 'starting'
-  | 'running'
-  | 'disabled'
-  | 'version-mismatch'
-  | 'crashed';
-
-/**
  * vscode-languageclient calls `stop()` without observing its promise when an
  * initialize request fails, and its base `stop` rejects for non-Running states.
  * The process owner handles those states, so only that inactive case is
@@ -151,13 +141,9 @@ class FmtLanguageClient extends LanguageClient {
  */
 class FmtFolderRuntime {
   #state: FmtRuntimeState = 'stopped';
-  /** The user-facing sentence behind a `disabled`/`version-mismatch`/`crashed` state. */
+  /** See {@link FmtFolderStatus.detail} — folder-agnostic, the fold prefixes. */
   #detail = '';
-  /**
-   * A non-gating warning while the runtime keeps running — today only the
-   * configured-pin-below-floor verdict. Separate from `#detail` because it
-   * coexists with `running`.
-   */
+  /** See {@link FmtFolderStatus.advisory}. */
   #advisory: string | undefined;
   #owner: LanguageServerProcessOwner | undefined;
   #client: LanguageClient | undefined;
@@ -175,24 +161,25 @@ class FmtFolderRuntime {
     private readonly folder: vscode.WorkspaceFolder,
     private readonly context: StackContext,
     /**
-     * Called on every state or advisory change. The runtime never reports to
-     * the shell itself: in a multi-root window one folder's `running` would
-     * overwrite a sibling folder's failure, so the controller aggregates all
-     * folder states into the stack's one status report.
+     * Called on every {@link folderStatus} change. The runtime never reports
+     * to the shell itself — the controller folds all folder statuses into the
+     * stack's one report (`foldFolderStatus`).
      */
-    private readonly onDidChangeState: () => void,
+    private readonly onDidChangeStatus: () => void,
   ) {}
 
   get state(): FmtRuntimeState {
     return this.#state;
   }
 
-  get statusDetail(): string {
-    return this.#detail;
-  }
-
-  get advisory(): string | undefined {
-    return this.#advisory;
+  /** This folder's contribution to the stack status (see `status.ts`). */
+  get folderStatus(): FmtFolderStatus {
+    return {
+      name: this.folder.name,
+      state: this.#state,
+      detail: this.#detail,
+      advisory: this.#advisory,
+    };
   }
 
   get folderPath(): string {
@@ -202,7 +189,12 @@ class FmtFolderRuntime {
   private setState(state: FmtRuntimeState, detail = ''): void {
     this.#state = state;
     this.#detail = detail;
-    this.onDidChangeState();
+    this.onDidChangeStatus();
+  }
+
+  private setAdvisory(message: string): void {
+    this.#advisory = message;
+    this.onDidChangeStatus();
   }
 
   start(): Promise<void> {
@@ -263,9 +255,13 @@ class FmtFolderRuntime {
 
     const pkgJsonPath = findPackageJsonUncached('rstack', folderRoot);
     if (!pkgJsonPath) {
-      const reason = `rstack is not installed in ${this.folder.name} (node_modules missing)`;
-      this.setState('disabled', reason);
-      context.output.warn(`${reason}; searched from ${folderRoot}`);
+      this.setState(
+        'disabled',
+        'rstack is not installed (node_modules missing)',
+      );
+      context.output.warn(
+        `rstack is not installed in ${this.folder.name} (node_modules missing); searched from ${folderRoot}`,
+      );
       return;
     }
 
@@ -277,7 +273,7 @@ class FmtFolderRuntime {
     if (versionCheck.kind === 'mismatch') {
       this.setState(
         'version-mismatch',
-        `${formatVersionMismatch('rstack', versionCheck)} (resolved in ${this.folder.name})`,
+        formatVersionMismatch('rstack', versionCheck),
       );
       return;
     }
@@ -316,10 +312,7 @@ class FmtFolderRuntime {
       if (event.newState === State.Stopped) {
         // Whether a restart follows is the error handler's and the process
         // owner's call; either way this folder is currently not formatting.
-        this.setState(
-          'crashed',
-          `the rs fmt language server for ${this.folder.name} stopped`,
-        );
+        this.setState('crashed', 'the rs fmt language server stopped');
       } else if (event.newState === State.Running) {
         // The one writer for `running`. It fires on the first start
         // (synchronously, before `client.start()` resolves) and again when
@@ -345,7 +338,7 @@ class FmtFolderRuntime {
       await this.stopImpl();
       this.setState(
         'crashed',
-        `the rs fmt language server for ${this.folder.name} failed to start: ${
+        `the rs fmt language server failed to start: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
@@ -372,8 +365,7 @@ class FmtFolderRuntime {
       // still probed, advisory-only, off the start path.
       void configuredNodeBelowFloor(configured).then((message) => {
         if (message !== undefined && !this.#disposed) {
-          this.#advisory = message;
-          this.onDidChangeState();
+          this.setAdvisory(message);
         }
       });
       return configured;
@@ -615,11 +607,9 @@ class FmtController implements StackController {
 
   /**
    * The one writer to the shell's status: the whole folder set folded into a
-   * single report, most severe folder first. Folding is what keeps a healthy
-   * sibling from overwriting another folder's failure — with per-runtime
-   * reporting the displayed state was whichever folder spoke last.
-   *
-   * `running` always carries the reason the stack is on: where it was detected.
+   * single report (`foldFolderStatus` — severity, multi-root prefixes and the
+   * healthy-sibling-never-masks-a-failure invariant all live there, where they
+   * are unit-testable).
    */
   private reportStatus(): void {
     const context = this.#context;
@@ -627,48 +617,19 @@ class FmtController implements StackController {
     if (!context || !snapshot || this.#disposed) {
       return;
     }
-    const runtimes = [...this.#runtimes.values()];
-    const firstIn = (state: FmtRuntimeState): FmtFolderRuntime | undefined =>
-      runtimes.find((runtime) => runtime.state === state);
-
-    const crashed = firstIn('crashed');
-    if (crashed) {
-      context.status.crashed(crashed.statusDetail);
-      return;
-    }
-    const mismatch = firstIn('version-mismatch');
-    if (mismatch) {
-      context.status.versionMismatch(mismatch.statusDetail);
-      return;
-    }
-    const disabled = firstIn('disabled');
-    if (disabled) {
-      context.status.report({
-        kind: 'disabled',
-        reason: disabled.statusDetail,
-      });
-      return;
-    }
-    // Below the failures because it is not one: the pinned Node is below the
-    // floor but the server runs with it anyway (same verdict, same rank as the
-    // test stack's configured-pin advisory).
-    const advisory = runtimes
-      .map((runtime) => runtime.advisory)
-      .find((message) => message !== undefined);
-    if (advisory !== undefined) {
-      context.status.versionMismatch(advisory);
-      return;
-    }
     const names = snapshot.foldersFor('fmt').map((entry) => entry.folder.name);
     if (names.length === 0) {
       // Nothing detected means the shell is about to retire this controller;
-      // its gate state, not `running`, is the truthful report.
+      // its gate state, not a fold over runtimes, is the truthful report.
       return;
     }
-    context.status.running(
-      names.length <= 3
-        ? `detected in ${names.join(', ')}`
-        : `detected in ${names.length} folders`,
+    context.status.report(
+      foldFolderStatus(
+        [...this.#runtimes.values()].map((runtime) => runtime.folderStatus),
+        names.length <= 3
+          ? `detected in ${names.join(', ')}`
+          : `detected in ${names.length} folders`,
+      ),
     );
   }
 
