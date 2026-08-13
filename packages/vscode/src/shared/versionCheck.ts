@@ -15,6 +15,14 @@ import { readPackageJson } from './packageResolve';
  *   the fmt stack is a client of. There is no stdin fallback for older
  *   releases: the editor would then format through a different code path than
  *   the one it is tested against, so the floor is a version gate instead.
+ *   The floor is **uniform across consumers by decision**: the Rstest bridge
+ *   checks the same entry, so a project on rstack 0.3.5–0.5.1 reports
+ *   `version mismatch` for tests too, even though only fmt strictly needs
+ *   0.5.2. One matrix entry means "which rstack does the extension support?"
+ *   has one answer; per-stack rstack floors were considered and rejected —
+ *   they make the answer depend on which status the user happens to look at,
+ *   for the price of keeping tests alive on releases the toolchain has moved
+ *   past. The status message names the required version either way.
  */
 export const SUPPORT_MATRIX = {
   '@rslint/core': '>=0.7.2',
