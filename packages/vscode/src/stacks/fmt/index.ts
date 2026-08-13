@@ -151,6 +151,8 @@ class FmtFolderRuntime {
   #stateWatcher: vscode.Disposable | undefined;
   #closing = false;
   #disposed = false;
+  /** True only across `startImpl`'s `client.start()` await — the window `interruptInFlightStart` exists for. */
+  #startInFlight = false;
   /**
    * Every lifecycle transition of one folder runs here, so a config event
    * arriving mid-start cannot interleave a second start with the first.
@@ -197,8 +199,16 @@ class FmtFolderRuntime {
     this.onDidChangeStatus();
   }
 
-  start(): Promise<void> {
+  /**
+   * `waitFor` is the previous runtime's retirement (see the controller's
+   * `#retiring`): awaited *inside* the queue, so a config-event `restart()`
+   * arriving during the wait lines up behind it instead of spawning early.
+   */
+  start(waitFor?: Promise<void>): Promise<void> {
     return this.enqueue(async () => {
+      if (waitFor) {
+        await waitFor;
+      }
       if (this.#disposed) {
         return;
       }
@@ -208,6 +218,7 @@ class FmtFolderRuntime {
 
   /** A config change invalidates the server's cached config; only a new process clears it. */
   restart(reason: string): Promise<void> {
+    this.interruptInFlightStart();
     return this.enqueue(async () => {
       if (this.#disposed) {
         return;
@@ -225,8 +236,36 @@ class FmtFolderRuntime {
 
   stop(): Promise<void> {
     this.#disposed = true;
+    this.interruptInFlightStart();
     return this.enqueue(async () => {
       await this.stopImpl();
+    });
+  }
+
+  /**
+   * `startImpl` holds the queue while awaiting `client.start()`, and a server
+   * that spawned but never answers the LSP `initialize` request would hold it
+   * forever — the queued stop or restart behind it could then never reach the
+   * process teardown. Closing the owner outside the queue kills the child,
+   * which fails the pending initialize and lets the queue drain into whatever
+   * was queued.
+   *
+   * A genuine no-op outside that window (`#startInFlight` is true only across
+   * the `client.start()` await), so an ordinary restart or stop of a healthy
+   * server keeps its graceful LSP shutdown instead of a kill. Clearing the
+   * flag is also what tells `startImpl`'s catch that the failure was
+   * manufactured. (The pre-owner phase — package resolution, Node preflight —
+   * is not interruptible, but its probes are themselves timeout-bounded.)
+   */
+  private interruptInFlightStart(): void {
+    const owner = this.#owner;
+    if (!owner || !this.#startInFlight) {
+      return;
+    }
+    this.#startInFlight = false;
+    this.#closing = true;
+    void owner.close().catch(() => {
+      // `stopImpl` reports close failures; this early kick only unblocks.
     });
   }
 
@@ -331,11 +370,22 @@ class FmtFolderRuntime {
       // `documentFormattingProvider` capability — the stack registers none of
       // its own. The state watcher above is what records the successful start:
       // the client reaches `State.Running` before this await resolves.
+      this.#startInFlight = true;
       await client.start();
+      this.#startInFlight = false;
     } catch (error) {
+      // A cleared flag means the failure was manufactured by
+      // `interruptInFlightStart` — a stop or restart arrived mid-initialize —
+      // and the teardown below ends in the truthful state, so no `crashed`
+      // verdict and no error log for it.
+      const interrupted = !this.#startInFlight;
+      this.#startInFlight = false;
       // Teardown first: `stopImpl` ends in the `stopped` state, so the
       // `crashed` verdict has to be written after it, not raced against it.
       await this.stopImpl();
+      if (interrupted || this.#disposed) {
+        return;
+      }
       this.setState(
         'crashed',
         `the rs fmt language server failed to start: ${
@@ -489,6 +539,11 @@ class FmtController implements StackController {
   /** The newest detection result, which `running` reports the reason from. */
   #snapshot: DetectionSnapshot | undefined;
   readonly #runtimes = new Map<string, FmtFolderRuntime>();
+  /**
+   * Folders whose previous runtime is still shutting down (see `reconcile`);
+   * a replacement runtime waits for this promise before spawning its server.
+   */
+  readonly #retiring = new Map<string, Promise<void>>();
   /** Per-folder config-event debounce (see `register`'s `onConfigEvent`). */
   readonly #restartTimers = new Map<string, NodeJS.Timeout>();
   readonly #subscriptions: vscode.Disposable[] = [];
@@ -587,7 +642,20 @@ class FmtController implements StackController {
     for (const [folderPath, runtime] of [...this.#runtimes]) {
       if (!detected.has(folderPath)) {
         this.#runtimes.delete(folderPath);
-        void runtime.stop();
+        // Reserve the folder until the asynchronous stop settles: a folder
+        // that loses and regains detection across two passes must not get a
+        // second server while the retiring one still owns its process (and
+        // its formatting provider). The stop is bounded: a hung initialize is
+        // interrupted, the pre-owner probes carry their own timeouts, and the
+        // owner escalates SIGTERM to SIGKILL. The delete is identity-guarded
+        // so an earlier retirement settling late cannot drop a successor's
+        // reservation.
+        const retirement = runtime.stop().finally(() => {
+          if (this.#retiring.get(folderPath) === retirement) {
+            this.#retiring.delete(folderPath);
+          }
+        });
+        this.#retiring.set(folderPath, retirement);
       }
     }
     for (const [folderPath, folder] of detected) {
@@ -601,7 +669,7 @@ class FmtController implements StackController {
         this.reportStatus(),
       );
       this.#runtimes.set(folderPath, runtime);
-      void runtime.start();
+      void runtime.start(this.#retiring.get(folderPath));
     }
   }
 
@@ -649,7 +717,12 @@ class FmtController implements StackController {
     }
     const runtimes = [...this.#runtimes.values()];
     this.#runtimes.clear();
-    await Promise.allSettled(runtimes.map(async (runtime) => runtime.stop()));
+    await Promise.allSettled([
+      ...runtimes.map(async (runtime) => runtime.stop()),
+      // Runtimes already retiring out of `reconcile` are stopping too — the
+      // no-orphan guarantee covers them as much as the live set.
+      ...this.#retiring.values(),
+    ]);
     // The User Node preflight memo is deliberately not reset here: it is
     // host-scoped state shared with the rstest stack, and the shell's restart
     // pass owns the reset (see `runRestart`).
