@@ -56,6 +56,8 @@ const harness = rs.hoisted(() => {
     contextKeys: new Map<string, boolean>(),
     /** What each stack's controller declares as restart-triggering settings. */
     restartOnSettings: new Map<string, readonly string[]>(),
+    /** How often `runRestart` reset the host-scoped User Node memo. */
+    nodeResets: 0,
     /** Every configuration listener the shell installed. */
     configListeners: [] as ((event: {
       affectsConfiguration(section: string): boolean;
@@ -240,6 +242,12 @@ rs.mock('../src/stacks/fmt', () => ({
 rs.mock('../src/migration', () => ({
   maybePromptForMigration: async () => undefined,
   runSettingsMigration: async () => undefined,
+}));
+// The real reset is inert in tests; the harness counts the calls.
+rs.mock('../src/shared/nodeResolution', () => ({
+  resetUserNodeCaches: () => {
+    harness.nodeResets += 1;
+  },
 }));
 
 import { activate, deactivate } from '../src/extension';
@@ -445,6 +453,32 @@ describe('the shell restart command', () => {
     // stale resolution gets redone — so it re-runs even for a single stack.
     expect(harness.refreshes).toBe(1);
     expect(harness.contextKeys.get('rstack.rstest.active')).toBe(true);
+  });
+
+  it('resets the shared Node memo only when no consumer stack survives the pass', async () => {
+    // A single-stack fmt restart leaves the live Rstest controller standing
+    // on the memoized runtime decision — the pass must not clear it under
+    // the workers that already took it.
+    await run('rstack.fmt.restart');
+    expect(harness.nodeResets).toBe(0);
+
+    // The full restart is the "like a window reload" gesture: every consumer
+    // is rebuilt, so the memo goes with them.
+    await restart();
+    expect(harness.nodeResets).toBe(1);
+  });
+
+  it('resets the memo on a single-stack restart once it is the only consumer', async () => {
+    harness.detected.delete('rstest');
+    // Rstest retires through the gate; fmt is still live, so no reset yet.
+    await run('rstack.rstest.restart');
+    expect(harness.nodeResets).toBe(0);
+
+    // fmt is now the only User-Node consumer and it is in the pass. The
+    // surviving lint controller does not hold the memo alive: it runs on the
+    // VS Code Node runtime and never reads it.
+    await run('rstack.fmt.restart');
+    expect(harness.nodeResets).toBe(1);
   });
 
   it('leaves a single-stack restart to the gate, same as a full one', async () => {

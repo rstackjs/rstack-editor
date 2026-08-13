@@ -25,6 +25,14 @@ const STACK_FACTORIES: Readonly<Record<StackId, StackControllerFactory>> = {
   fmt: createFmtController,
 };
 
+/**
+ * The stacks that run project code on a User Node runtime and therefore read
+ * the host-scoped preflight memo (`shared/nodeResolution.ts`) — the set
+ * `runRestart` checks before resetting it. Lint is deliberately absent: it
+ * still runs on the VS Code Node runtime (ADR 0001's recorded debt).
+ */
+const USER_NODE_STACKS: readonly StackId[] = ['rstest', 'fmt'];
+
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? (error.stack ?? error.message) : String(error);
 
@@ -290,13 +298,28 @@ class ExtensionShell {
       return;
     }
     // Restart exists to clear stale resolution, and the User Node preflight
-    // memo is host-scoped state shared by every stack — so the shell clears it
-    // once per pass, after the retire wave and before anything re-registers.
-    // Owned here rather than in the stacks' `dispose()`: a stack-owned reset
-    // fires on every teardown (deactivate, detection loss) and clears the
-    // resolution a live sibling stack is relying on, twice per shared-setting
-    // change.
-    resetUserNodeCaches();
+    // memo is host-scoped state shared by every stack that runs project code
+    // on a User Node runtime — so the shell clears it once per pass, after the
+    // retire wave and before anything re-registers. Owned here rather than in
+    // the stacks' `dispose()`: a stack-owned reset fires on every teardown
+    // (deactivate, detection loss) and clears the resolution a live sibling
+    // stack is relying on, twice per shared-setting change.
+    //
+    // Cleared only when no consumer of the memo survives the retire wave: a
+    // single-stack `rstack.fmt.restart` must not yank the decision a live
+    // Rstest controller's next worker spawn would silently re-take — its
+    // controller was never rebuilt, so it could end up on a different runtime
+    // than the workers it already has. The full `rstack.restart` (the "like a
+    // window reload" gesture) always qualifies, as does the batched restart a
+    // `rstack.nodeExecutable` change triggers, since every declaring stack is
+    // in that batch. `#controllers` holds only the survivors at this point —
+    // `retireAll` above removed everything being restarted.
+    const memoConsumerSurvives = USER_NODE_STACKS.some((stack) =>
+      this.#controllers.has(stack),
+    );
+    if (!memoConsumerSurvives) {
+      resetUserNodeCaches();
+    }
     try {
       // A plain pass: `refresh` updates the snapshot whether or not the
       // signature moved, and the reconcile below rebuilds every stack from it.

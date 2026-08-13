@@ -33,12 +33,25 @@ export function run(): Promise<void> {
 
   return new Promise((resolve, reject) => {
     try {
-      mocha.run((failures) => {
+      const runner = mocha.run((failures) => {
         if (failures > 0) {
           reject(new Error(`${failures} Rstest E2E test(s) failed.`));
         } else {
           resolve();
         }
+      });
+      // Mocha's reporter writes to the extension host's stdout, which the CI
+      // test runner does not forward — a failing run's log shows only the
+      // final count. `console.error` does reach it, so name each failure
+      // there; without this, a CI-only failure cannot even be identified.
+      runner.on('fail', (test, error: unknown) => {
+        console.error(
+          `[e2e-fail] ${test.fullTitle()}: ${
+            error instanceof Error
+              ? (error.stack ?? error.message)
+              : String(error)
+          }`,
+        );
       });
     } catch (error) {
       reject(error instanceof Error ? error : new Error(String(error)));
