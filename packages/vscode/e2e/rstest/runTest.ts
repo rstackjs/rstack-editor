@@ -91,6 +91,12 @@ async function main() {
     vscodeExecutablePath: process.env.VSCODE_TEST_EXECUTABLE || undefined,
     extensionDevelopmentPath,
     extensionTestsPath,
+    // In CI the rstest output channel is unreadable, so the extension mirrors
+    // it to the console (see `src/stacks/test/logger.ts`) — the only way to
+    // see why a worker failed on a platform we cannot reproduce locally.
+    extensionTestsEnv: process.env.CI
+      ? { RSTACK_E2E_MIRROR_LOGS: '1' }
+      : undefined,
     launchArgs: [
       workspaceFile,
       // Keep VS Code's CI-only extension inventory and AgentHost info logs out
