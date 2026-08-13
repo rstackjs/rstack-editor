@@ -21,7 +21,10 @@ import {
   findPackageJsonUncached,
   readPackageJson,
 } from '../../shared/packageResolve';
-import { reportVersionCheck } from '../../shared/versionCheck';
+import {
+  checkPackageVersion,
+  formatVersionMismatch,
+} from '../../shared/versionCheck';
 import type {
   DetectionSnapshot,
   StackContext,
@@ -148,6 +151,14 @@ class FmtLanguageClient extends LanguageClient {
  */
 class FmtFolderRuntime {
   #state: FmtRuntimeState = 'stopped';
+  /** The user-facing sentence behind a `disabled`/`version-mismatch`/`crashed` state. */
+  #detail = '';
+  /**
+   * A non-gating warning while the runtime keeps running — today only the
+   * configured-pin-below-floor verdict. Separate from `#detail` because it
+   * coexists with `running`.
+   */
+  #advisory: string | undefined;
   #owner: LanguageServerProcessOwner | undefined;
   #client: LanguageClient | undefined;
   #defaultErrorHandler: ErrorHandler | undefined;
@@ -163,16 +174,35 @@ class FmtFolderRuntime {
   constructor(
     private readonly folder: vscode.WorkspaceFolder,
     private readonly context: StackContext,
-    /** Called after a successful start so the shell's status says `running`. */
-    private readonly onRunning: () => void,
+    /**
+     * Called on every state or advisory change. The runtime never reports to
+     * the shell itself: in a multi-root window one folder's `running` would
+     * overwrite a sibling folder's failure, so the controller aggregates all
+     * folder states into the stack's one status report.
+     */
+    private readonly onDidChangeState: () => void,
   ) {}
 
   get state(): FmtRuntimeState {
     return this.#state;
   }
 
+  get statusDetail(): string {
+    return this.#detail;
+  }
+
+  get advisory(): string | undefined {
+    return this.#advisory;
+  }
+
   get folderPath(): string {
     return this.folder.uri.fsPath;
+  }
+
+  private setState(state: FmtRuntimeState, detail = ''): void {
+    this.#state = state;
+    this.#detail = detail;
+    this.onDidChangeState();
   }
 
   start(): Promise<void> {
@@ -221,21 +251,20 @@ class FmtFolderRuntime {
 
   /**
    * Package resolution, version check, Node selection and client start, in that
-   * order. Every failure short of a genuine launch failure is a status: the
-   * stack owns no UI chrome, and a project without `rstack` installed is not a
-   * crash.
+   * order. Every failure short of a genuine launch failure is a state the
+   * controller reports: the stack owns no UI chrome, and a project without
+   * `rstack` installed is not a crash.
    */
   private async startImpl(): Promise<void> {
     const context = this.context;
     const folderRoot = this.folder.uri.fsPath;
     this.#closing = false;
-    this.#state = 'starting';
+    this.setState('starting');
 
     const pkgJsonPath = findPackageJsonUncached('rstack', folderRoot);
     if (!pkgJsonPath) {
       const reason = `rstack is not installed in ${this.folder.name} (node_modules missing)`;
-      this.#state = 'disabled';
-      context.status.report({ kind: 'disabled', reason });
+      this.setState('disabled', reason);
       context.output.warn(`${reason}; searched from ${folderRoot}`);
       return;
     }
@@ -244,8 +273,12 @@ class FmtFolderRuntime {
     // from disk by design, so a reinstall is picked up on the next start.
     const pkg = readPackageJson(pkgJsonPath);
     const version = typeof pkg?.version === 'string' ? pkg.version : undefined;
-    if (!reportVersionCheck(context.status, 'rstack', version)) {
-      this.#state = 'version-mismatch';
+    const versionCheck = checkPackageVersion('rstack', version);
+    if (versionCheck.kind === 'mismatch') {
+      this.setState(
+        'version-mismatch',
+        `${formatVersionMismatch('rstack', versionCheck)} (resolved in ${this.folder.name})`,
+      );
       return;
     }
     const rsBinJs = path.resolve(
@@ -283,16 +316,17 @@ class FmtFolderRuntime {
       if (event.newState === State.Stopped) {
         // Whether a restart follows is the error handler's and the process
         // owner's call; either way this folder is currently not formatting.
-        this.#state = 'crashed';
-        context.status.crashed('the rs fmt language server stopped');
+        this.setState(
+          'crashed',
+          `the rs fmt language server for ${this.folder.name} stopped`,
+        );
       } else if (event.newState === State.Running) {
         // The one writer for `running`. It fires on the first start
         // (synchronously, before `client.start()` resolves) and again when
         // vscode-languageclient's error handler restarts a crashed server —
         // the way back out of `crashed`, the same transition the lint stack's
         // state watcher makes.
-        this.#state = 'running';
-        this.onRunning();
+        this.setState('running');
       }
     });
 
@@ -306,11 +340,11 @@ class FmtFolderRuntime {
       // the client reaches `State.Running` before this await resolves.
       await client.start();
     } catch (error) {
-      // Teardown first: `stopImpl` ends in `#state = 'stopped'`, so the
+      // Teardown first: `stopImpl` ends in the `stopped` state, so the
       // `crashed` verdict has to be written after it, not raced against it.
       await this.stopImpl();
-      this.#state = 'crashed';
-      context.status.crashed(
+      this.setState(
+        'crashed',
         `the rs fmt language server for ${this.folder.name} failed to start: ${
           error instanceof Error ? error.message : String(error)
         }`,
@@ -338,7 +372,8 @@ class FmtFolderRuntime {
       // still probed, advisory-only, off the start path.
       void configuredNodeBelowFloor(configured).then((message) => {
         if (message !== undefined && !this.#disposed) {
-          context.status.versionMismatch(message);
+          this.#advisory = message;
+          this.onDidChangeState();
         }
       });
       return configured;
@@ -354,8 +389,8 @@ class FmtFolderRuntime {
       return resolution.executable;
     } catch (error) {
       if (error instanceof NodePreflightError) {
-        this.#state = 'version-mismatch';
-        context.status.versionMismatch(
+        this.setState(
+          'version-mismatch',
           error.messageWith('rs fmt will not format'),
         );
         return undefined;
@@ -433,7 +468,10 @@ class FmtFolderRuntime {
         error,
       );
     }
-    this.#state = 'stopped';
+    // A stop retires this start's advisory with it: a restart re-probes the
+    // (memoized) pin verdict, and a changed pin rebuilds the controller anyway.
+    this.#advisory = undefined;
+    this.setState('stopped');
   }
 }
 
@@ -502,14 +540,14 @@ class FmtController implements StackController {
         this.reconcile();
         // The shell's reconcile leaves a still-detected controller alone, so
         // the running reason must follow the new snapshot here.
-        this.reportRunning();
+        this.reportStatus();
       }),
       configWatcher,
       configWatcher.onDidCreate(onConfigEvent),
       configWatcher.onDidChange(onConfigEvent),
       configWatcher.onDidDelete(onConfigEvent),
     );
-    this.reportRunning();
+    this.reportStatus();
     // Starting a server spawns a process; `register()` must return fast, so the
     // folder set is reconciled without awaiting any start.
     this.reconcile();
@@ -568,18 +606,57 @@ class FmtController implements StackController {
       // after a detection change reports from the freshest snapshot — and the
       // closure captures nothing beyond `this`.
       const runtime = new FmtFolderRuntime(folder, context, () =>
-        this.reportRunning(),
+        this.reportStatus(),
       );
       this.#runtimes.set(folderPath, runtime);
       void runtime.start();
     }
   }
 
-  /** `running` always carries the reason the stack is on: where it was detected. */
-  private reportRunning(): void {
+  /**
+   * The one writer to the shell's status: the whole folder set folded into a
+   * single report, most severe folder first. Folding is what keeps a healthy
+   * sibling from overwriting another folder's failure — with per-runtime
+   * reporting the displayed state was whichever folder spoke last.
+   *
+   * `running` always carries the reason the stack is on: where it was detected.
+   */
+  private reportStatus(): void {
     const context = this.#context;
     const snapshot = this.#snapshot;
     if (!context || !snapshot || this.#disposed) {
+      return;
+    }
+    const runtimes = [...this.#runtimes.values()];
+    const firstIn = (state: FmtRuntimeState): FmtFolderRuntime | undefined =>
+      runtimes.find((runtime) => runtime.state === state);
+
+    const crashed = firstIn('crashed');
+    if (crashed) {
+      context.status.crashed(crashed.statusDetail);
+      return;
+    }
+    const mismatch = firstIn('version-mismatch');
+    if (mismatch) {
+      context.status.versionMismatch(mismatch.statusDetail);
+      return;
+    }
+    const disabled = firstIn('disabled');
+    if (disabled) {
+      context.status.report({
+        kind: 'disabled',
+        reason: disabled.statusDetail,
+      });
+      return;
+    }
+    // Below the failures because it is not one: the pinned Node is below the
+    // floor but the server runs with it anyway (same verdict, same rank as the
+    // test stack's configured-pin advisory).
+    const advisory = runtimes
+      .map((runtime) => runtime.advisory)
+      .find((message) => message !== undefined);
+    if (advisory !== undefined) {
+      context.status.versionMismatch(advisory);
       return;
     }
     const names = snapshot.foldersFor('fmt').map((entry) => entry.folder.name);
