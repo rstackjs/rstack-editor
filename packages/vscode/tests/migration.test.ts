@@ -44,15 +44,13 @@ const folderReading = (
 describe('LEGACY_MAPPINGS', () => {
   it('covers the full legacy inventory of both retired extensions', () => {
     // 4 settings from rslint/packages/vscode-extension + 14 from
-    // rstest/packages/vscode, verified against their manifests, plus the
-    // runtime pin this extension itself renamed to `rstack.nodeExecutable`.
+    // rstest/packages/vscode, verified against their manifests.
     expect(LEGACY_MAPPINGS.map((mapping) => mapping.from)).toEqual([
       'rslint.enable',
       'rslint.binPath',
       'rslint.customBinPath',
       'rslint.trace.server',
       'rstest.nodeExecutable',
-      'rstack.rstest.nodeExecutable',
       'rstest.rstestPackagePath',
       'rstest.nodeExecArgs',
       'rstest.nodeEnv',
@@ -79,26 +77,15 @@ describe('LEGACY_MAPPINGS', () => {
     }
   });
 
-  it('has no duplicate source keys, and shares a target only for the runtime pin', () => {
+  it('has no duplicate source keys and no shared targets', () => {
+    // One source per target: the planner writes each target at most once per
+    // layer, so no mapping order can silently decide which value survives.
     expect(new Set(LEGACY_MAPPINGS.map((m) => m.from)).size).toBe(
       LEGACY_MAPPINGS.length,
     );
-    // Both retired pins converge on `rstack.nodeExecutable`; every other
-    // target is unique. When both sources are set in one layer, the mapping
-    // order decides: the later mapping — this extension's own retired key, the
-    // one more recently in effect — wins, and the earlier one is planned as a
-    // 'superseded' skip.
-    const shared = LEGACY_MAPPINGS.filter(
-      (m) => m.to === 'rstack.nodeExecutable',
+    expect(new Set(LEGACY_MAPPINGS.map((m) => m.to)).size).toBe(
+      LEGACY_MAPPINGS.length,
     );
-    expect(shared.map((m) => m.from)).toEqual([
-      'rstest.nodeExecutable',
-      'rstack.rstest.nodeExecutable',
-    ]);
-    const rest = LEGACY_MAPPINGS.filter(
-      (m) => m.to !== 'rstack.nodeExecutable',
-    );
-    expect(new Set(rest.map((m) => m.to)).size).toBe(rest.length);
   });
 
   it('marks the window-scoped settings as such', () => {
@@ -326,25 +313,6 @@ describe('planMigration — conflicts', () => {
       from: 'rslint.binPath',
       to: 'rstack.rslint.binPath',
       reason: 'target-already-set',
-    });
-  });
-
-  it('plans one write and a superseded skip when both retired pins are set in one layer', () => {
-    const plan = planMigration([
-      reading({ key: 'rstest.nodeExecutable', value: '/old/node' }),
-      reading({ key: 'rstack.rstest.nodeExecutable', value: '/new/node' }),
-    ]);
-    expect(plan.writeCount).toBe(1);
-    expect(plan.scopes[0]?.writes[0]).toMatchObject({
-      from: 'rstack.rstest.nodeExecutable',
-      to: 'rstack.nodeExecutable',
-      value: '/new/node',
-    });
-    expect(plan.skips[0]).toMatchObject({
-      from: 'rstest.nodeExecutable',
-      to: 'rstack.nodeExecutable',
-      value: '/old/node',
-      reason: 'superseded',
     });
   });
 

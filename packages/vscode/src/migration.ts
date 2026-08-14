@@ -3,8 +3,7 @@ import vscode from 'vscode';
 /**
  * Settings migration from retired names into current ones: the two standalone
  * extensions (`rstack.rslint` and `rstack.rstest`) into the unified `rstack.*`
- * namespace, plus keys this extension itself has since renamed
- * (`rstack.rstest.nodeExecutable` -> `rstack.nodeExecutable`).
+ * namespace.
  *
  * Shape of the feature:
  *
@@ -46,13 +45,7 @@ export type SkipReason =
   /** The new key already has an explicit value in the same layer. */
   | 'target-already-set'
   /** A folder-layer value for a window-scoped target setting. */
-  | 'not-folder-scoped'
-  /**
-   * A later legacy key in the same layer maps to the same target (the two
-   * retired runtime pins both map to `rstack.nodeExecutable`); the later one —
-   * the key more recently in effect — carries the value.
-   */
-  | 'superseded';
+  | 'not-folder-scoped';
 
 type ValueMapping =
   | { readonly kind: 'value'; readonly value: unknown }
@@ -122,9 +115,8 @@ const RSTEST_KEYS: readonly (readonly [string, 'resource' | 'window'])[] = [
 ];
 
 /**
- * The complete legacy inventory: 4 Rslint keys + 14 Rstest keys + 1 key from
- * this extension's own earlier releases. Kept in one table so the preview, the
- * writer and the tests cannot disagree.
+ * The complete legacy inventory: 4 Rslint keys + 14 Rstest keys. Kept in one
+ * table so the preview, the writer and the tests cannot disagree.
  */
 export const LEGACY_MAPPINGS: readonly LegacyMapping[] = [
   {
@@ -156,13 +148,6 @@ export const LEGACY_MAPPINGS: readonly LegacyMapping[] = [
     // the test worker on the User Node runtime, so the standalone extension's
     // key maps to `rstack.nodeExecutable`, not to a `rstack.rstest.*` one.
     from: 'rstest.nodeExecutable',
-    to: 'rstack.nodeExecutable',
-    targetScope: 'resource',
-  },
-  {
-    // Same target, different source: earlier releases of *this* extension
-    // shipped the pin as `rstack.rstest.nodeExecutable`.
-    from: 'rstack.rstest.nodeExecutable',
     to: 'rstack.nodeExecutable',
     targetScope: 'resource',
   },
@@ -336,25 +321,6 @@ export const planMigration = (
     }
 
     const writes = scopeFor(reading);
-    // Two legacy keys can map to one target (the retired runtime pins). Where
-    // both are set in one layer, the later mapping wins — and the earlier one
-    // is surfaced as a skip, so the preview never shows two writes both
-    // claiming the same key with no hint which value survives.
-    const claimed = writes.findIndex((write) => write.to === mapping.to);
-    if (claimed !== -1) {
-      const [previous] = writes.splice(claimed, 1);
-      if (previous) {
-        skips.push({
-          scopeId: previous.scopeId,
-          layer: previous.layer,
-          folderLabel: previous.folderLabel,
-          from: previous.from,
-          to: previous.to,
-          value: previous.fromValue,
-          reason: 'superseded',
-        });
-      }
-    }
     writes.push({
       scopeId: reading.scopeId,
       layer: reading.layer,
@@ -402,8 +368,6 @@ const SKIP_EXPLANATIONS: Readonly<
   'target-already-set': (skip) => `${skip.to} is already set here`,
   'not-folder-scoped': (skip) =>
     `${skip.to} is a window-scoped setting and cannot be set per folder`,
-  superseded: (skip) =>
-    `another legacy key here also maps to ${skip.to} and carries the newer value`,
 };
 
 /**
@@ -690,7 +654,7 @@ export const maybePromptForMigration = async (
   const migrate = 'Migrate…';
   const dismiss = "Don't ask again";
   const choice = await vscode.window.showInformationMessage(
-    'Rstack found settings under legacy names (from the standalone Rslint/Rstest extensions, or an earlier Rstack release). Migrate them to their current names?',
+    'Rstack found settings under legacy names (from the standalone Rslint/Rstest extensions). Migrate them to their current names?',
     migrate,
     'Not now',
     dismiss,
