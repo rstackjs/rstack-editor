@@ -260,22 +260,24 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 
 /**
- * The export conditions an ESM `import` of the generated shim matches, most
- * specific first. `require` is deliberately absent: the shim is `.mjs` and
- * imports the target by `file:` URL, so taking a `require` branch would pin it
- * to a CommonJS build the moment `rstack` splits the entry.
+ * The conditions Node itself enables for an ESM `import` in the extension
+ * host: `node` and `import`, with `default` matching always. `require` is
+ * deliberately absent: the shim is `.mjs` and imports the target by `file:`
+ * URL, so a `require` branch would pin it to a CommonJS build the moment
+ * `rstack` splits the entry. So are bundler-only conditions like `module`,
+ * which Node never enables.
  */
-const IMPORT_EXPORT_CONDITIONS = [
-  'import',
-  'node',
-  'module',
-  'default',
-] as const;
+const NODE_IMPORT_CONDITIONS = new Set(['node', 'import', 'default']);
 
 /**
  * The target an ESM importer would take out of one `exports` entry: a string
- * is the target, an object is a condition map (recursed into, conditions in
- * the order above), an array is a fallback list (first entry that yields one).
+ * is the target, an object is a condition map, an array is a fallback list
+ * (first entry that yields one).
+ *
+ * A condition map is walked in *declaration order*, taking the first enabled
+ * key — Node's semantics, not a fixed preference list. `{ default: A,
+ * import: B }` resolves to A, and the shim must agree with the `import` the
+ * server will actually execute (empirically verified against Node).
  *
  * Not `createRequire(...).resolve('rstack/config')`: Node's require-resolution
  * matches the `require` conditions, while the generated shim is ESM.
@@ -290,8 +292,9 @@ const pickImportTarget = (entry: unknown): string | undefined => {
     return undefined;
   }
   if (!isRecord(entry)) return undefined;
-  for (const condition of IMPORT_EXPORT_CONDITIONS) {
-    const target = pickImportTarget(entry[condition]);
+  for (const [condition, value] of Object.entries(entry)) {
+    if (!NODE_IMPORT_CONDITIONS.has(condition)) continue;
+    const target = pickImportTarget(value);
     if (target !== undefined) return target;
   }
   return undefined;

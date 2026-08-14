@@ -34,7 +34,7 @@ The gates refusing a bridged folder are raised as one `RstackBridgeGateError` di
 
 ## Consequences
 
-- A `.ts` Rstack config lints in the editor only when the VS Code Node runtime strips types natively — `@rslint/core`'s jiti fallback covers the entry config file it loads, not the imports that file makes, and the generated shim's import of the config goes through rstack's loader. The preflight (`describeRstackConfigLoaderPreflight`) turns that into a diagnostic, never a behaviour change; VS Code's release cadence owns the condition.
+- A `.ts` Rstack config lints in the editor only when the VS Code Node runtime strips types natively — `@rslint/core`'s jiti fallback covers the entry config file it loads, not the imports that file makes, and the generated shim's import of the config goes through rstack's loader. The preflight (`describeRstackConfigLoaderPreflight`) turns that into a diagnostic, never a behaviour change; VS Code's release cadence owns the condition. A config that then fails to load is not a package prerequisite, so it keeps its ordinary classification — a crash, not a `version mismatch`.
 - pnpm users must add `@rslint/core` to `devDependencies` for bridged linting; the README states it and the toolchain gate's status repeats it.
 - The generated shim is a build artifact the extension owes hygiene for: never committed, deleted on a native flip and when the folder leaves detection, and `writeGeneratedShim`'s no-churn rule keeps the config watcher from seeing phantom edits.
 - The mode choice is immutable per server process, so anything that changes it — a native config appearing, the root Rstack config vanishing — restarts that folder's server; there is no message path to a live one.

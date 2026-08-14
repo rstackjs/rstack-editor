@@ -47,9 +47,10 @@ Linting a folder from `define.lint()` in `rstack.config.*` asks more:
 - `rstack` must publish its config loader (`>=0.4.0`).
 - `@rslint/core` must be **installed in the project**. `rstack` depends on it, but package managers with an isolated `node_modules` layout (pnpm by default) do not expose transitive dependencies, so add `@rslint/core` to your `devDependencies`.
 - `@rslint/core` must be new enough to speak config-discovery protocol 2, which is what lets the editor pin the language server to a config — in practice `>= 0.8.0`, the first release that does. The extension probes the protocol, not the version number.
-- A TypeScript `rstack.config.ts` must be loadable by the VS Code extension host's Node: rstack's config loader relies on native type stripping and has no fallback, so on an older VS Code build use `rstack.config.mjs` (or `.js`).
 
 Until all of them hold, such a folder shows `version mismatch` with a message naming the missing piece instead of linting; adding an `rslint.config.*` is the way out today. Folders with an `rslint.config.*` are unaffected.
+
+One more condition belongs to the editor, not to a package: a TypeScript `rstack.config.ts` must be loadable by the VS Code extension host's Node — rstack's config loader relies on native type stripping and has no fallback. On an affected build the extension warns in the status detail, and a config that then fails to load reports as a crash rather than a `version mismatch`. Use `rstack.config.mjs` (or `.js`) there.
 
 ## Auto-fix on save (Rslint)
 

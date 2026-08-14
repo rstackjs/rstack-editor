@@ -361,9 +361,9 @@ describe('resolving the project rstack config loader', () => {
   });
 
   it('takes the ESM branch of a split entry, never the CommonJS default', () => {
-    // The shim is `.mjs` and imports the target by `file:` URL, so `import`
-    // beats `default` — a fixed preference list ending in `default` would grab
-    // the CommonJS build the moment `rstack` splits the entry.
+    // The shim is `.mjs` and imports the target by `file:` URL, so the
+    // `require` branch must never win; `import` beats `default` here because
+    // it is declared first, exactly as Node would resolve it.
     const root = makeProject({
       name: 'rstack',
       exports: {
@@ -435,6 +435,50 @@ describe('resolving the project rstack config loader', () => {
       /no target an ESM import can take/,
     );
     expect(() => resolveRstackConfigLoader(root)).not.toThrow(/0\.4\.0/);
+  });
+
+  it('walks a condition map in declaration order, as Node does', () => {
+    // Node takes the first *enabled* key in declaration order, so a `default`
+    // declared before `import` wins even though an import build exists — a
+    // fixed preference list would disagree with the `import` the server
+    // actually executes.
+    const root = makeProject({
+      name: 'rstack',
+      exports: {
+        './config': {
+          default: './dist/configExports.cjs',
+          import: './dist/configExports.js',
+        },
+      },
+    });
+    fs.writeFileSync(
+      path.join(root, 'node_modules/rstack/dist/configExports.cjs'),
+      'module.exports = {};',
+    );
+    expect(resolveRstackConfigLoader(root)).toBe(
+      fs.realpathSync(
+        path.join(root, 'node_modules/rstack/dist/configExports.cjs'),
+      ),
+    );
+  });
+
+  it('skips conditions Node never enables, like the bundler-only module', () => {
+    // `module` is a bundler condition; Node resolving the shim's `import`
+    // skips it even when declared first.
+    const root = makeProject({
+      name: 'rstack',
+      exports: {
+        './config': {
+          module: './dist/configExports.module.js',
+          default: './dist/configExports.js',
+        },
+      },
+    });
+    expect(resolveRstackConfigLoader(root)).toBe(
+      fs.realpathSync(
+        path.join(root, 'node_modules/rstack/dist/configExports.js'),
+      ),
+    );
   });
 
   it('reports an unreadable manifest as a broken install, not a gate', () => {
