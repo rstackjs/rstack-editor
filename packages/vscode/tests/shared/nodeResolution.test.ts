@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from '@rstest/core';
-import { NODE_RUNTIME_LABEL } from '../../../src/shared/versionCheck';
+import { NODE_RUNTIME_LABEL } from '../../src/shared/versionCheck';
 import {
   configuredNodeBelowFloor,
   END_TOKEN,
@@ -10,12 +10,12 @@ import {
   NodePreflightError,
   probeNodeVersion,
   probeShellNodePath,
-  type ResolveWorkerNodeOptions,
-  resetWorkerNodeCaches,
-  resolveWorkerNode,
-  resolveWorkerNodeOnce,
+  type ResolveUserNodeOptions,
+  resetUserNodeCaches,
+  resolveUserNode,
+  resolveUserNodeOnce,
   START_TOKEN,
-} from '../../../src/stacks/test/nodeResolution';
+} from '../../src/shared/nodeResolution';
 
 // Every case injects both probes: the point is the decision table, not the
 // spawning, which the two real-process describes at the bottom cover.
@@ -38,18 +38,18 @@ const base = { shell: '/bin/zsh' } as const;
 
 /** Asserts the call rejects, and hands back the error already narrowed. */
 const preflightError = (
-  options: ResolveWorkerNodeOptions,
+  options: ResolveUserNodeOptions,
 ): Promise<NodePreflightError> =>
-  resolveWorkerNode(options).then(
+  resolveUserNode(options).then(
     () => {
       throw new Error('expected a NodePreflightError');
     },
     (error: unknown) => error as NodePreflightError,
   );
 
-describe('resolveWorkerNode', () => {
+describe('resolveUserNode', () => {
   it('uses the PATH node when it satisfies the floor', async () => {
-    const resolution = await resolveWorkerNode({
+    const resolution = await resolveUserNode({
       ...base,
       probe: versionsOf({ node: ok('22.18.0') }),
       probeShellPath: never,
@@ -67,7 +67,7 @@ describe('resolveWorkerNode', () => {
     // here are an ordered list, so a soft pass would let a suspect PATH node
     // beat a healthy one from the user's shell. A package check has no next
     // candidate to fall through to.
-    const resolution = await resolveWorkerNode({
+    const resolution = await resolveUserNode({
       ...base,
       probe: versionsOf({
         node: { kind: 'ok' },
@@ -90,7 +90,7 @@ describe('resolveWorkerNode', () => {
   it('accepts a prerelease of a satisfying version', async () => {
     // The shared `checkVersion` passes `includePrerelease: true`; this pins
     // that the node floor now follows the same rule as every package floor.
-    const resolution = await resolveWorkerNode({
+    const resolution = await resolveUserNode({
       ...base,
       probe: versionsOf({ node: ok('24.0.0-nightly20260101') }),
       probeShellPath: never,
@@ -99,7 +99,7 @@ describe('resolveWorkerNode', () => {
   });
 
   it('falls back to the shell node when the PATH node is too old', async () => {
-    const resolution = await resolveWorkerNode({
+    const resolution = await resolveUserNode({
       ...base,
       probe: versionsOf({
         node: ok('20.19.4'),
@@ -117,7 +117,7 @@ describe('resolveWorkerNode', () => {
   it('falls through a pre-23.6 Node 23, which does not strip types', async () => {
     // 23.0–23.5 sit above 22.18.0 yet predate default type stripping — the
     // hole `NODE_RUNTIME_RANGE`'s disjunction encodes.
-    const resolution = await resolveWorkerNode({
+    const resolution = await resolveUserNode({
       ...base,
       probe: versionsOf({
         node: ok('23.5.0'),
@@ -129,7 +129,7 @@ describe('resolveWorkerNode', () => {
   });
 
   it('falls back to the shell node when no PATH node runs at all', async () => {
-    const resolution = await resolveWorkerNode({
+    const resolution = await resolveUserNode({
       ...base,
       probe: versionsOf({ '/versions/24/bin/node': ok('24.0.0') }),
       probeShellPath: shellFinds('/versions/24/bin/node'),
@@ -141,7 +141,7 @@ describe('resolveWorkerNode', () => {
     // VS Code resolves the shell env while extensions are already activating,
     // so an installed node can be absent for the first moments of a session.
     let calls = 0;
-    const resolution = await resolveWorkerNode({
+    const resolution = await resolveUserNode({
       ...base,
       probe: (executable) => {
         if (executable !== 'node')
@@ -237,19 +237,34 @@ describe('NodePreflightError', () => {
     expect(message).toContain(NODE_RUNTIME_LABEL);
     expect(message).toContain('PATH: 20.19.4');
     expect(message).toContain('interactive shell: 22.14.0');
-    expect(message).toContain('rstack.rstest.nodeExecutable');
+    expect(message).toContain('rstack.nodeExecutable');
   });
 
-  it('states the consequence, which is what a below-floor setting does not', () => {
+  it('carries no consequence of its own — each reporting site appends one', () => {
     // Both failures reach the user through the same `version-mismatch` status,
-    // so the consequence clause is the only thing distinguishing "nothing will
-    // run" from "we are running with it anyway".
+    // and the consequence clause is the only thing distinguishing "nothing
+    // will run" from "we are running with it anyway". The preflight serves
+    // stacks with different consequences ("tests will not run" vs "rs fmt will
+    // not format") and is memoized host-wide, so the message must stay neutral
+    // and composable: no trailing period, consequence appended by the caller.
     const { message } = new NodePreflightError({
       path: '20.19.4',
       shell: undefined,
       shellSkipped: false,
     });
-    expect(message).toContain('tests will not run');
+    expect(message).not.toContain('will not run');
+    expect(message.endsWith('to one')).toBe(true);
+  });
+
+  it('joins a caller consequence through messageWith', () => {
+    const error = new NodePreflightError({
+      path: '20.19.4',
+      shell: undefined,
+      shellSkipped: false,
+    });
+    expect(error.messageWith('tests will not run')).toBe(
+      `${error.message}; until then tests will not run.`,
+    );
   });
 
   it('does not invent versions for candidates that found nothing', () => {
@@ -275,9 +290,9 @@ describe('NodePreflightError', () => {
   });
 });
 
-describe('resolveWorkerNodeOnce', () => {
+describe('resolveUserNodeOnce', () => {
   afterEach(() => {
-    resetWorkerNodeCaches();
+    resetUserNodeCaches();
   });
 
   const options = {
@@ -287,12 +302,12 @@ describe('resolveWorkerNodeOnce', () => {
   };
 
   it('probes once for the whole extension host and re-probes after a reset', async () => {
-    const first = await resolveWorkerNodeOnce(options);
-    const second = await resolveWorkerNodeOnce(options);
+    const first = await resolveUserNodeOnce(options);
+    const second = await resolveUserNodeOnce(options);
     expect(second).toBe(first);
 
-    resetWorkerNodeCaches();
-    const third = await resolveWorkerNodeOnce(options);
+    resetUserNodeCaches();
+    const third = await resolveUserNodeOnce(options);
     expect(third).not.toBe(first);
   });
 
@@ -306,8 +321,8 @@ describe('resolveWorkerNodeOnce', () => {
       },
       probeShellPath: shellFinds(undefined),
     };
-    await resolveWorkerNodeOnce(failing).catch(() => {});
-    await resolveWorkerNodeOnce(failing).catch(() => {});
+    await resolveUserNodeOnce(failing).catch(() => {});
+    await resolveUserNodeOnce(failing).catch(() => {});
     expect(calls).toBe(1);
   });
 
@@ -326,15 +341,15 @@ describe('resolveWorkerNodeOnce', () => {
       notify: (message: string) => notices.push(message),
     };
 
-    await resolveWorkerNodeOnce(shellOptions);
-    await resolveWorkerNodeOnce(shellOptions);
+    await resolveUserNodeOnce(shellOptions);
+    await resolveUserNodeOnce(shellOptions);
     expect(notices).toHaveLength(1);
     expect(notices[0]).toContain('/versions/24/bin/node');
   });
 
   it('stays silent when the PATH node was good enough', async () => {
     const notices: string[] = [];
-    await resolveWorkerNodeOnce({
+    await resolveUserNodeOnce({
       ...options,
       notify: (message) => notices.push(message),
     });
@@ -356,7 +371,7 @@ describe('resolveWorkerNodeOnce', () => {
       probeShellPath: never,
     };
     const all = await Promise.all(
-      Array.from({ length: 20 }, () => resolveWorkerNodeOnce(slow)),
+      Array.from({ length: 20 }, () => resolveUserNodeOnce(slow)),
     );
     expect(calls).toBe(1);
     expect(new Set(all).size).toBe(1);
@@ -365,7 +380,7 @@ describe('resolveWorkerNodeOnce', () => {
 
 describe('configuredNodeBelowFloor', () => {
   afterEach(() => {
-    resetWorkerNodeCaches();
+    resetUserNodeCaches();
   });
 
   const configured = '/opt/node/bin/node';
@@ -387,9 +402,9 @@ describe('configuredNodeBelowFloor', () => {
     expect(message).toContain(configured);
     expect(message).toContain('20.19.4');
     expect(message).toContain(NODE_RUNTIME_LABEL);
-    expect(message).toContain('rstack.rstest.nodeExecutable');
+    expect(message).toContain('rstack.nodeExecutable');
     // The opposite consequence from `NodePreflightError`: this one runs.
-    expect(message).toContain('running tests with it anyway');
+    expect(message).toContain('using it anyway');
   });
 
   it('reports an executable that cannot answer at all', async () => {
@@ -416,7 +431,7 @@ describe('configuredNodeBelowFloor', () => {
     await configuredNodeBelowFloor(configured, counting);
     expect(calls).toBe(1);
 
-    resetWorkerNodeCaches();
+    resetUserNodeCaches();
     await configuredNodeBelowFloor(configured, counting);
     expect(calls).toBe(2);
   });

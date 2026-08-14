@@ -50,8 +50,8 @@ describe('LEGACY_MAPPINGS', () => {
       'rslint.binPath',
       'rslint.customBinPath',
       'rslint.trace.server',
-      'rstest.rstestPackagePath',
       'rstest.nodeExecutable',
+      'rstest.rstestPackagePath',
       'rstest.nodeExecArgs',
       'rstest.nodeEnv',
       'rstest.debugNodeEnv',
@@ -67,14 +67,19 @@ describe('LEGACY_MAPPINGS', () => {
     ]);
   });
 
-  it('renames every key into the rstack.<stack>.* namespace', () => {
+  it('renames every key into the rstack.<stack>.* namespace, except the shared runtime pin', () => {
     for (const mapping of LEGACY_MAPPINGS) {
+      if (mapping.to === 'rstack.nodeExecutable') {
+        continue;
+      }
       const [stack, ...rest] = mapping.from.split('.');
       expect(mapping.to).toBe(`rstack.${stack}.${rest.join('.')}`);
     }
   });
 
-  it('has no duplicate source or target keys', () => {
+  it('has no duplicate source keys and no shared targets', () => {
+    // One source per target: the planner writes each target at most once per
+    // layer, so no mapping order can silently decide which value survives.
     expect(new Set(LEGACY_MAPPINGS.map((m) => m.from)).size).toBe(
       LEGACY_MAPPINGS.length,
     );

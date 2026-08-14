@@ -11,13 +11,23 @@ import { readPackageJson } from './packageResolve';
  * - `@rslint/core >= 0.7.2` — first version whose package exports
  *   `./config-loader` and `./eslint-plugin`.
  * - `@rstest/core >= 0.6.0` — the existing `MIN_CORE_VERSION` upstream.
- * - `rstack >= 0.3.5` — first release with the full supported config and
- *   formatter surface.
+ * - `rstack >= 0.5.2` — first release with `rs fmt --lsp`, the language server
+ *   the fmt stack is a client of. There is no stdin fallback for older
+ *   releases: the editor would then format through a different code path than
+ *   the one it is tested against, so the floor is a version gate instead.
+ *   The floor is **uniform across consumers by decision**: the Rstest bridge
+ *   checks the same entry, so a project on rstack 0.3.5–0.5.1 reports
+ *   `version mismatch` for tests too, even though only fmt strictly needs
+ *   0.5.2. One matrix entry means "which rstack does the extension support?"
+ *   has one answer; per-stack rstack floors were considered and rejected —
+ *   they make the answer depend on which status the user happens to look at,
+ *   for the price of keeping tests alive on releases the toolchain has moved
+ *   past. The status message names the required version either way.
  */
 export const SUPPORT_MATRIX = {
   '@rslint/core': '>=0.7.2',
   '@rstest/core': '>=0.6.0',
-  rstack: '>=0.3.5',
+  rstack: '>=0.5.2',
 } as const;
 
 export type SupportedPackage = keyof typeof SUPPORT_MATRIX;
@@ -46,7 +56,8 @@ export const readPackageVersion = (
 };
 
 /**
- * The floor for the Node.js a test worker runs on. Not part of
+ * The floor for the Node.js a project-loading child process runs on — the test
+ * worker and the `rs fmt --lsp` server alike. Not part of
  * `SUPPORT_MATRIX`, which is keyed by npm package name, but the same kind of
  * fact and deliberately kept in the same file so "what does this extension
  * require?" has one answer.
@@ -56,14 +67,14 @@ export const readPackageVersion = (
  * unflagged in 23.6.0 and backported to the LTS line in 22.18.0, so 23.0–23.5
  * compare above 22.18.0 yet predate it — hence a disjunction, not a plain
  * floor. Verified: 22.17.1 reports `process.features.typescript` false,
- * 22.18.0 reports `strip`. See `stacks/test/nodeResolution.ts` for how
- * candidates are probed.
+ * 22.18.0 reports `strip`. See `shared/nodeResolution.ts` for how candidates
+ * are probed.
  */
 export const NODE_RUNTIME_RANGE = '^22.18.0 || >=23.6.0';
 
 /**
  * `NODE_RUNTIME_RANGE` for human eyes, interpolated into the user-facing
- * messages in `stacks/test/nodeResolution.ts`. The raw range reads as npm
+ * messages in `shared/nodeResolution.ts`. The raw range reads as npm
  * jargon in a status-bar sentence — a user on 23.2 would have to parse a `^`
  * to learn why they were refused. Logs keep the raw range, the precise
  * register there. Keep the two in lockstep.
@@ -81,7 +92,7 @@ export const NODE_RUNTIME_LABEL = '22.18+ (excluding 23.0–23.5)';
  * - `reportVersionCheck` below soft-passes it. A package whose version cannot
  *   be read is still installed, and there is no second candidate to fall back
  *   to, so refusing would cost the feature for nothing.
- * - `satisfiesFloor` in `stacks/test/nodeResolution.ts` rejects it. Runtime
+ * - `satisfiesFloor` in `shared/nodeResolution.ts` rejects it. Runtime
  *   candidates are an *ordered list*, so soft-passing lets a suspect PATH
  *   `node` win over a healthy one from the user's shell.
  *

@@ -4,10 +4,11 @@ import {
   checkVersion,
   NODE_RUNTIME_LABEL,
   NODE_RUNTIME_RANGE,
-} from '../../shared/versionCheck';
+} from './versionCheck';
 
 /**
- * Choosing the Node.js a test worker runs on.
+ * Choosing the User Node runtime a stack's project-loading child process runs
+ * on (the rstest worker, the `rs fmt --lsp` server).
  *
  * The bare `node` a GUI extension host inherits is a *login-shell* snapshot
  * taken at startup — typically a version manager's global default rather than
@@ -17,22 +18,31 @@ import {
  * own shell is the recovery path.
  *
  * The floor (`NODE_RUNTIME_RANGE`, in `shared/versionCheck`) is uniform rather
- * than per-project. It is set by the strictest thing a worker does — load an
- * `rstack.config.*` — and applying it to every project, including a native
- * `rstest.config.*` that Rsbuild's bundled jiti would load on older engines, is
- * a deliberate simplification. It costs Node 20.19–22.17 — but Node 20 left
+ * than per-project or per-stack. It is set by the strictest thing any of these
+ * children do — load an `rstack.config.*` — and applying it uniformly,
+ * including to projects whose config an older engine could load, is a
+ * deliberate simplification. It costs Node 20.19–22.17 — but Node 20 left
  * support on 2026-04-30 (`nodejs/Release`), so the users it actually turns away
  * sit on 22.12–22.17, a supported LTS line where the remedy is a patch-level
  * update within 22.x. See `docs/adr/0001-node-runtime-selection.md`.
  *
  * There is deliberately NO fallback to the VS Code Node runtime
  * (`process.execPath` + `ELECTRON_RUN_AS_NODE`). It would silently move the
- * test run onto Electron's Node — a different ABI line (measured: Electron
+ * run onto Electron's Node — a different ABI line (measured: Electron
  * reports NODE_MODULE_VERSION 146 where plain Node 24.18 reports 137, so
  * non-N-API addons fail to load) and a version chosen by VS Code's release
  * cadence rather than by the project. A green run has to mean the same thing in
  * the editor as in the terminal.
  */
+
+/**
+ * The one spelling of the shared runtime pin's key. The manifest, the two
+ * user-facing messages below and every `restartOnSettings` declaration refer
+ * to the same setting; this constant is what keeps them from drifting.
+ * (Defined here rather than in `nodeExecutableSetting.ts` so the messages can
+ * use it without this module gaining a `vscode` import.)
+ */
+export const NODE_EXECUTABLE_SETTING = 'rstack.nodeExecutable';
 
 /** `node --version` is instant when it works; a slow answer is a broken one. */
 const VERSION_PROBE_TIMEOUT_MS = 3_000;
@@ -65,7 +75,7 @@ export type NodeProbe =
   /** It exists but did not answer: non-zero exit, or hung past the timeout. */
   | { readonly kind: 'unusable' };
 
-export type WorkerNodeResolution = {
+export type UserNodeResolution = {
   readonly executable: string;
   /** Which candidate won. Drives the fallback notice, nothing else. */
   readonly source: 'path' | 'shell';
@@ -96,19 +106,35 @@ const formatNodePreflightFailure = (attempts: NodeAttempts): string => {
       ? 'interactive shell: not probed'
       : describeCandidate('interactive shell', attempts.shell),
   ].join(', ');
-  // The trailing consequence is load-bearing, not padding: this message and
-  // `formatConfiguredNodeBelowFloor` reach the user through the same
-  // `version-mismatch` status, and the outcomes are opposite — nothing runs
-  // here, the run goes ahead there. The sentence is the only thing that tells
-  // them apart.
-  return `No Node.js ${NODE_RUNTIME_LABEL} is available to run tests (${candidates}). Rstest needs it to load TypeScript config files. Install a newer Node.js, or set "rstack.rstest.nodeExecutable" to one; until then tests will not run.`;
+  return `No Node.js ${NODE_RUNTIME_LABEL} is available (${candidates}). Rstack needs it to load TypeScript config files. Install a newer Node.js, or set "${NODE_EXECUTABLE_SETTING}" to one`;
 };
 
-/** No candidate satisfied `NODE_RUNTIME_RANGE`. */
+/**
+ * No candidate satisfied `NODE_RUNTIME_RANGE`.
+ *
+ * `message` states the facts and the remedy but deliberately no consequence:
+ * one preflight serves stacks whose consequences differ ("tests will not run"
+ * vs "rs fmt will not format"), and the resolution is memoized host-wide, so
+ * the first caller's phrasing must not speak for the others. The consequence
+ * is load-bearing, not padding — this message and
+ * `formatConfiguredNodeBelowFloor` reach the user through the same
+ * `version-mismatch` status, and the outcomes are opposite (nothing runs here,
+ * the run goes ahead there). Reporting sites therefore go through
+ * `messageWith`, which owns the joining rule, rather than each hand-building
+ * the suffix.
+ */
 export class NodePreflightError extends Error {
   constructor(readonly attempts: NodeAttempts) {
     super(formatNodePreflightFailure(attempts));
     this.name = 'NodePreflightError';
+  }
+
+  /**
+   * The user-facing message with the reporting stack's consequence attached,
+   * e.g. `messageWith('tests will not run')`.
+   */
+  messageWith(consequence: string): string {
+    return `${this.message}; until then ${consequence}.`;
   }
 }
 
@@ -212,7 +238,7 @@ const satisfiesFloor = (probe: NodeProbe): boolean =>
   probe.kind === 'ok' &&
   checkVersion(probe.version, NODE_RUNTIME_RANGE).kind === 'ok';
 
-export type ResolveWorkerNodeOptions = {
+export type ResolveUserNodeOptions = {
   /** The user's shell, for the interactive probe. Omit to skip that step. */
   readonly shell?: string;
   /**
@@ -231,22 +257,23 @@ export type ResolveWorkerNodeOptions = {
 };
 
 /**
- * Picks the executable for a test worker. Callers holding an explicit
- * `nodeExecutable` setting must not call this at all — an explicit choice is
- * always honored, because it is the escape hatch for everything this function
- * can get wrong. It is still probed, by `configuredNodeBelowFloor`, so that
- * falling short of the floor produces a status rather than silence.
+ * Picks the executable for a stack's project-loading child process. Callers
+ * holding an explicit `rstack.nodeExecutable` setting must not call this at
+ * all — an explicit choice is always honored, because it is the escape hatch
+ * for everything this function can get wrong. It is still probed, by
+ * `configuredNodeBelowFloor`, so that falling short of the floor produces a
+ * status rather than silence.
  *
  * Throws `NodePreflightError` when no candidate satisfies the floor.
  */
-export async function resolveWorkerNode({
+export async function resolveUserNode({
   shell,
   cwd,
   probe = probeNodeVersion,
   probeShellPath = (probedShell: string) =>
     probeShellNodePath(probedShell, cwd),
   platform = process.platform,
-}: ResolveWorkerNodeOptions = {}): Promise<WorkerNodeResolution> {
+}: ResolveUserNodeOptions = {}): Promise<UserNodeResolution> {
   let onPath = await probe('node');
   for (
     let attempt = 0;
@@ -304,18 +331,17 @@ export async function resolveWorkerNode({
  *
  * `shell` and `notify` are options rather than imported singletons so this
  * module stays free of any one stack's — and of VS Code's — globals, which is
- * also what lets the tests drive it as a pure decision table. See the note in
- * AGENTS.md before moving it to `shared/`.
+ * also what lets the tests drive it as a pure decision table.
  */
-let cached: Promise<WorkerNodeResolution> | undefined;
+let cached: Promise<UserNodeResolution> | undefined;
 
-export const resolveWorkerNodeOnce = (
-  options: ResolveWorkerNodeOptions = {},
-): Promise<WorkerNodeResolution> =>
-  (cached ??= resolveWorkerNode(options).then((resolution) => {
+export const resolveUserNodeOnce = (
+  options: ResolveUserNodeOptions = {},
+): Promise<UserNodeResolution> =>
+  (cached ??= resolveUserNode(options).then((resolution) => {
     if (resolution.source === 'shell') {
       options.notify?.(
-        `Node.js on the extension host PATH cannot run tests (needs ${NODE_RUNTIME_RANGE}); using ${resolution.executable}${
+        `Node.js on the extension host PATH does not satisfy ${NODE_RUNTIME_RANGE}; using ${resolution.executable}${
           resolution.version ? ` (${resolution.version})` : ''
         } from your shell instead`,
       );
@@ -329,7 +355,7 @@ export const resolveWorkerNodeOnce = (
  * Node of two years ago is exactly the failure this module exists to catch, and
  * unprobed it produces a broken worker behind a green status bar.
  *
- * Memoized by resolved executable path because the caller
+ * Memoized by resolved executable path because the busiest caller
  * (`RstestApi.resolveWorkerNodeCommand`) runs on every worker spawn — config
  * init, `listTests`, every single run — and a process spawn per spawn is a cost
  * nobody asked for. Keyed by path rather than a single slot so a multi-root
@@ -353,13 +379,13 @@ const formatConfiguredNodeBelowFloor = (
   executable: string,
   version: string | undefined,
 ): string =>
-  `The Node.js set in "rstack.rstest.nodeExecutable" (${executable}, version ${version ?? 'unknown'}) does not satisfy ${NODE_RUNTIME_LABEL}, which Rstest needs to load TypeScript config files. Rstack is running tests with it anyway because the setting is your explicit choice; point it at a newer Node.js, or clear it to let the extension pick one.`;
+  `The Node.js set in "${NODE_EXECUTABLE_SETTING}" (${executable}, version ${version ?? 'unknown'}) does not satisfy ${NODE_RUNTIME_LABEL}, which Rstack needs to load TypeScript config files. Rstack is using it anyway because the setting is your explicit choice; point it at a newer Node.js, or clear it to let the extension pick one.`;
 
 /**
  * The message for a configured executable that falls short of the floor, or
  * `undefined` when it clears it.
  *
- * Unlike `resolveWorkerNodeOnce`, this does *not* raise its own notice from
+ * Unlike `resolveUserNodeOnce`, this does *not* raise its own notice from
  * inside the memo. It would have to be the first caller's `notify` that wins,
  * since later callers only see the settled promise — and a warmer that passed
  * none would silence the complaint for the whole session. Reporting stays with
@@ -384,7 +410,7 @@ export const configuredNodeBelowFloor = (
 };
 
 /** Clears both memos this module holds — a restart exists to clear stale resolution. */
-export const resetWorkerNodeCaches = (): void => {
+export const resetUserNodeCaches = (): void => {
   cached = undefined;
   configuredVerdicts.clear();
 };

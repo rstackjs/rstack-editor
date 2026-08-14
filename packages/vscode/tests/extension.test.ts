@@ -56,6 +56,14 @@ const harness = rs.hoisted(() => {
     contextKeys: new Map<string, boolean>(),
     /** What each stack's controller declares as restart-triggering settings. */
     restartOnSettings: new Map<string, readonly string[]>(),
+    /**
+     * Explicit setting values by fully qualified key (`rstack.fmt.enable`);
+     * anything absent resolves to the caller's fallback, like a defaults-only
+     * configuration.
+     */
+    settings: new Map<string, unknown>(),
+    /** How often `runRestart` reset the host-scoped User Node memo. */
+    nodeResets: 0,
     /** Every configuration listener the shell installed. */
     configListeners: [] as ((event: {
       affectsConfiguration(section: string): boolean;
@@ -186,8 +194,13 @@ rs.mock('vscode', () => {
     workspace: {
       isTrusted: true,
       workspaceFolders: [],
-      getConfiguration: () => ({
-        get: (_key: string, fallback?: unknown) => fallback,
+      getConfiguration: (section?: string) => ({
+        get: (key: string, fallback?: unknown) => {
+          const qualified = section ? `${section}.${key}` : key;
+          return harness.settings.has(qualified)
+            ? harness.settings.get(qualified)
+            : fallback;
+        },
       }),
       onDidChangeConfiguration: (
         listener: (event: {
@@ -240,6 +253,12 @@ rs.mock('../src/stacks/fmt', () => ({
 rs.mock('../src/migration', () => ({
   maybePromptForMigration: async () => undefined,
   runSettingsMigration: async () => undefined,
+}));
+// The real reset is inert in tests; the harness counts the calls.
+rs.mock('../src/shared/nodeResolution', () => ({
+  resetUserNodeCaches: () => {
+    harness.nodeResets += 1;
+  },
 }));
 
 import { activate, deactivate } from '../src/extension';
@@ -308,34 +327,74 @@ describe('restart-triggering settings', () => {
     await deactivate();
   });
 
-  it("still rebuilds a stack when another stack's gate moved too", async () => {
-    // One event covers a whole batch — saving settings.json moves everything
-    // at once. A gate change used to short-circuit the whole listener, so the
-    // restart was dropped on the floor with no trace.
-    changeSetting('rstack.rslint.enable', 'rstack.rstest.nodeExecutable');
+  it('runs one full restart pass for a declared setting', async () => {
+    // Selectivity was removed deliberately: settings edits are rare, and a
+    // full pass re-evaluates every gate, so there is no per-stack decision
+    // left to get wrong. One declared setting rebuilds everything.
+    changeSetting('rstack.rstest.nodeExecutable');
+    await settle();
+    expect(stacksOf('dispose').sort()).toEqual(['fmt', 'rslint', 'rstest']);
+    expect(stacksOf('register').sort()).toEqual(['fmt', 'rslint', 'rstest']);
+  });
+
+  it('does not swallow a shared setting saved alongside a no-op gate write', async () => {
+    // The regression the full pass exists to prevent: one save writes a gate
+    // key at its already-effective value (`"rstack.rstest.enable": true` when
+    // the default is already true) and moves a declared setting. The old
+    // per-stack split classified the stack as "gate moved — reconcile's
+    // business", the reconcile saw a live controller behind a still-open gate
+    // and kept it, and the declared-setting restart was silently dropped.
+    changeSetting('rstack.rstest.enable', 'rstack.rstest.nodeExecutable');
     await settle();
     expect(stacksOf('register')).toContain('rstest');
   });
 
-  it('leaves a stack whose own gate moved to the reconcile', async () => {
-    // Both moved for the same stack: rebuilding it here would fight a
-    // reconcile that may be retiring it.
-    changeSetting('rstack.rstest.enable', 'rstack.rstest.nodeExecutable');
+  it('runs a full pass for a bare gate write', async () => {
+    // The gate half of the trigger set, pinned in isolation: the enable keys
+    // must fire the pass on their own — the other gate tests here also move a
+    // declared setting, which would fire the pass regardless.
+    changeSetting('rstack.enable');
     await settle();
-    expect(stacksOf('register')).not.toContain('rstest');
+    expect(stacksOf('register').sort()).toEqual(['fmt', 'rslint', 'rstest']);
   });
 
-  it('rebuilds only the stack that declared the setting', async () => {
-    changeSetting('rstack.rstest.nodeExecutable');
+  it('drops a stack whose gate actually closed in the same pass', async () => {
+    // The full pass re-reads the gates: a stack whose enable flipped off is
+    // retired and not re-registered, with no reconcile hand-off needed. The
+    // per-stack enable key is the only changed setting, so this also pins
+    // that key as a trigger on its own.
+    harness.settings.set('rstack.rstest.enable', false);
+    changeSetting('rstack.rstest.enable');
     await settle();
-    expect(stacksOf('dispose')).toEqual(['rstest']);
-    expect(stacksOf('register')).toEqual(['rstest']);
+    expect(stacksOf('dispose')).toContain('rstest');
+    expect(stacksOf('register')).not.toContain('rstest');
+    expect(stacksOf('register').sort()).toEqual(['fmt', 'rslint']);
   });
 
   it('honours every setting a stack declares, not just the first', async () => {
     changeSetting('rstack.rslint.customBinPath');
     await settle();
-    expect(stacksOf('register')).toEqual(['rslint']);
+    expect(stacksOf('register').sort()).toEqual(['fmt', 'rslint', 'rstest']);
+  });
+
+  it('treats a declared rstack.* name as fully qualified, shared across stacks', async () => {
+    // The shared runtime pin (`rstack.nodeExecutable`) lives outside any stack
+    // namespace, so its declaration must not be re-prefixed into
+    // `rstack.<stack>.rstack.nodeExecutable` — re-prefixed, the change would
+    // match nothing and no restart would fire at all.
+    await deactivate();
+    harness.reset();
+    harness.detected = new Set(['rslint', 'rstest', 'fmt']);
+    harness.restartOnSettings = new Map([
+      ['rstest', ['rstack.nodeExecutable']],
+      ['fmt', ['rstack.nodeExecutable']],
+    ]);
+    await activate(context);
+    harness.events.length = 0;
+
+    changeSetting('rstack.nodeExecutable');
+    await settle();
+    expect(stacksOf('register').sort()).toEqual(['fmt', 'rslint', 'rstest']);
   });
 
   it('ignores a setting no stack declared', async () => {
@@ -352,9 +411,11 @@ describe('restart-triggering settings', () => {
     expect(harness.events).toEqual([]);
   });
 
-  it('leaves a stack behind a closed gate alone', async () => {
-    // Only live controllers are iterated: there is nothing to rebuild for a
-    // stack that never registered, and a restart would fight the gate.
+  it('ignores a setting declared by a stack that is not live', async () => {
+    // Declared settings are enumerated per live controller: a stack that never
+    // registered cannot have consumed the value, so its keys do not trigger a
+    // pass — an enable flip is what lets it register, reading everything
+    // fresh.
     harness.detected = new Set(['rslint', 'fmt']);
     await run('rstack.restart');
     harness.events.length = 0;
@@ -424,6 +485,32 @@ describe('the shell restart command', () => {
     // stale resolution gets redone — so it re-runs even for a single stack.
     expect(harness.refreshes).toBe(1);
     expect(harness.contextKeys.get('rstack.rstest.active')).toBe(true);
+  });
+
+  it('resets the shared Node memo only when no consumer stack survives the pass', async () => {
+    // A single-stack fmt restart leaves the live Rstest controller standing
+    // on the memoized runtime decision — the pass must not clear it under
+    // the workers that already took it.
+    await run('rstack.fmt.restart');
+    expect(harness.nodeResets).toBe(0);
+
+    // The full restart is the "like a window reload" gesture: every consumer
+    // is rebuilt, so the memo goes with them.
+    await restart();
+    expect(harness.nodeResets).toBe(1);
+  });
+
+  it('resets the memo on a single-stack restart once it is the only consumer', async () => {
+    harness.detected.delete('rstest');
+    // Rstest retires through the gate; fmt is still live, so no reset yet.
+    await run('rstack.rstest.restart');
+    expect(harness.nodeResets).toBe(0);
+
+    // fmt is now the only User-Node consumer and it is in the pass. The
+    // surviving lint controller does not hold the memo alive: it runs on the
+    // VS Code Node runtime and never reads it.
+    await run('rstack.fmt.restart');
+    expect(harness.nodeResets).toBe(1);
   });
 
   it('leaves a single-stack restart to the gate, same as a full one', async () => {

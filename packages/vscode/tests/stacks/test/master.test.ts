@@ -8,8 +8,8 @@ import { RstestApi } from '../../../src/stacks/test/master';
 import {
   type NodeProbe,
   configuredNodeBelowFloor,
-  resetWorkerNodeCaches,
-} from '../../../src/stacks/test/nodeResolution';
+  resetUserNodeCaches,
+} from '../../../src/shared/nodeResolution';
 import { status } from '../../../src/stacks/test/status';
 import type { StatusReporter } from '../../../src/types';
 
@@ -274,14 +274,16 @@ describe('RstestApi with a configured nodeExecutable', () => {
   beforeEach(() => {
     mismatches.length = 0;
     repaints = 0;
-    resetWorkerNodeCaches();
+    resetUserNodeCaches();
     status.bind(reporter);
-    settings.nodeExecutable = configuredNode;
+    // The shared pin is read by its fully-qualified name through a section-less
+    // `getConfiguration(undefined, folder)`, so the stub key carries the dots.
+    settings['rstack.nodeExecutable'] = configuredNode;
   });
 
   afterEach(() => {
     status.unbind();
-    resetWorkerNodeCaches();
+    resetUserNodeCaches();
   });
 
   // The verdict is reported off the spawn path, so a spawn resolves before the

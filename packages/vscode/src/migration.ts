@@ -1,8 +1,9 @@
 import vscode from 'vscode';
 
 /**
- * Settings migration from the two retired standalone extensions (`rstack.rslint`
- * and `rstack.rstest`) into the unified `rstack.*` namespace.
+ * Settings migration from retired names into current ones: the two standalone
+ * extensions (`rstack.rslint` and `rstack.rstest`) into the unified `rstack.*`
+ * namespace.
  *
  * Shape of the feature:
  *
@@ -89,7 +90,9 @@ const mapBinPath = (value: unknown): ValueMapping => {
 /**
  * Legacy Rstest keys, in manifest order. Every one of them is a mechanical
  * `rstest.<key>` -> `rstack.rstest.<key>` rename; only the scope of the *new*
- * key differs, and it is the new manifest that decides it.
+ * key differs, and it is the new manifest that decides it. The one exception,
+ * `rstest.nodeExecutable`, is mapped explicitly below: its target is the
+ * shared `rstack.nodeExecutable`, not a `rstack.rstest.*` key.
  *
  * Derived from `rstest/packages/vscode/package.json` (14 settings) and this
  * repository's `contributes.configuration`. Rstest contributes no `enable`
@@ -97,7 +100,6 @@ const mapBinPath = (value: unknown): ValueMapping => {
  */
 const RSTEST_KEYS: readonly (readonly [string, 'resource' | 'window'])[] = [
   ['rstestPackagePath', 'resource'],
-  ['nodeExecutable', 'resource'],
   ['nodeExecArgs', 'resource'],
   ['nodeEnv', 'resource'],
   ['debugNodeEnv', 'resource'],
@@ -139,6 +141,14 @@ export const LEGACY_MAPPINGS: readonly LegacyMapping[] = [
   {
     from: 'rslint.trace.server',
     to: 'rstack.rslint.trace.server',
+    targetScope: 'resource',
+  },
+  {
+    // The runtime pin became a shared setting when the fmt LSP server joined
+    // the test worker on the User Node runtime, so the standalone extension's
+    // key maps to `rstack.nodeExecutable`, not to a `rstack.rstest.*` one.
+    from: 'rstest.nodeExecutable',
+    to: 'rstack.nodeExecutable',
     targetScope: 'resource',
   },
   ...RSTEST_KEYS.map(([key, targetScope]) => ({
@@ -310,7 +320,8 @@ export const planMigration = (
       continue;
     }
 
-    scopeFor(reading).push({
+    const writes = scopeFor(reading);
+    writes.push({
       scopeId: reading.scopeId,
       layer: reading.layer,
       folderLabel: reading.folderLabel,
@@ -563,7 +574,7 @@ export const runSettingsMigration = async (
       void vscode.window.showInformationMessage(
         plan.skips.length > 0
           ? 'Rstack: nothing left to migrate. See the Rstack output channel for the settings that were left untouched.'
-          : 'Rstack: no legacy rslint.* / rstest.* settings were found.',
+          : 'Rstack: no settings under legacy names were found.',
       );
     }
     return false;
@@ -638,14 +649,12 @@ export const maybePromptForMigration = async (
   if (plan.writeCount === 0) {
     return;
   }
-  output.info(
-    `Found ${plan.writeCount} legacy setting(s) from the standalone Rslint/Rstest extensions.`,
-  );
+  output.info(`Found ${plan.writeCount} setting(s) under legacy names.`);
 
   const migrate = 'Migrate…';
   const dismiss = "Don't ask again";
   const choice = await vscode.window.showInformationMessage(
-    'Rstack found settings from the standalone Rslint/Rstest extensions. Migrate them to the rstack.* namespace?',
+    'Rstack found settings under legacy names (from the standalone Rslint/Rstest extensions). Migrate them to their current names?',
     migrate,
     'Not now',
     dismiss,
