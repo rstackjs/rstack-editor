@@ -1,0 +1,41 @@
+# Linting bridged folders through a generated shim
+
+A **bridged folder** — no native `rslint.config.*` anywhere in the workspace folder, an `rstack.config.*` at its root — is linted from `define.lint()`: the extension writes a **generated shim** into the project (`node_modules/.cache/rstack-editor/rslint.config.mjs`) and pins that folder's language server to it through the optional `configPath` of `rslint/configRefresh`, added by config-discovery protocol 2 (web-infra-dev/rslint#1630, first released in `@rslint/core` 0.8.0). Native mode stays byte-identical to upstream: the field is simply absent and the server keeps doing its own discovery. The rule, the shim and the gates live in `stacks/lint/rstackBridge.ts`, a pure module the shell's detection and the stack's mode selection both consult — one decision seen twice.
+
+## Why a generated shim
+
+`rs lint`'s own answer to "lint from the Rstack config" is a shim rstack ships (`dist/rslintConfig.js`) and injects through Rslint's ordinary explicit-config channel. The editor cannot point the server at that file: it calls `loadRstackConfig()` with no arguments, which probes the **evaluation** cwd — and the server evaluates config modules in the extension host, whose cwd is meaningless. So the extension renders its own shim with two absolute paths baked in: the project's `rstack/config` export (resolved out of the package's own `exports` map, so a layout change in rstack follows automatically) and the folder-root `rstack.config.*`. The body mirrors rstack's shipped shim — take `configs.lint ?? []`, await a function, default-export the result. `define.lint`'s value **is** an Rslint flat config; no translation happens anywhere in the chain, and none may ever be added.
+
+The shim lives inside the project, not in extension storage, so module and plugin resolution from it anchors on the project. `node_modules/.cache/` is the conventional home for tool-generated files, and living under `node_modules` is what makes its deliberately config-like basename safe: detection excludes `node_modules` outright, so the shim can never be mistaken for a native config and flip Ownership against itself. Its lifecycle follows the pin: written before the server starts, rewritten only when its content actually differs (it sits under the config watcher — every rewrite is a config mutation), re-materialized under the _same_ path on a dependency change (a reinstall can delete it or dangle the store path baked into it, and the pin cannot move), deleted when the folder starts in native mode.
+
+## Why Ownership is per folder, and only a root config bridges
+
+The granularity is the language server's, not a policy choice: the explicit-config decision is fixed for a server process's whole lifetime, there is one server per workspace folder, and its cwd is the folder root. One native `rslint.config.*` anywhere in the folder therefore means pure native mode — the bridge yields entirely, silently — and a `rstack.config.*` in a subdirectory does not light lint at all. That is a documented limitation with the same remedy fmt gives (ADR 0002): a subproject that needs its own config becomes its own workspace folder. A mode flip is a **restart** of the folder's server through the coordinator's existing replacement path, never a message to a live one — `lintConfigModeSignature` is exactly the identity the controller compares to notice one.
+
+## Why a capability gate, not a version number
+
+Bridged mode starts only when the project's own `@rslint/core/config-loader` reports `CONFIG_DISCOVERY_PROTOCOL_VERSION >= 2` — the version whose `rslint/configRefresh` carries `configPath`. The gate reads the constant instead of comparing release numbers because the capability is the thing the mode needs: a guessed release floor would either strand users whose build already speaks protocol 2 or start a mode the server cannot honour. Below the gate the extension starts nothing rather than a half-bridge: "falling back" to automatic discovery in a bridged folder would find no config and report nothing, which reads as a broken extension. The client-side set (`SUPPORTED_CONFIG_DISCOVERY_PROTOCOL_VERSIONS` in `shared/versionCheck.ts`) accepts both 1 and 2, so native mode keeps working on the very releases that make the bridge possible — v2 adds one optional field and changes nothing else.
+
+## Why a gated folder reports `version mismatch`, never `crashed`
+
+Two gates refuse a bridged folder, raised as one `RstackBridgeGateError` differing only in message: the **capability** gate above, and the **toolchain** gate — `@rslint/core` does not resolve from the folder at all. The toolchain gap is the _mainstream_ shape, not an edge case: `@rslint/core` reaches a bridged project only as `rstack`'s transitive dependency, and isolated `node_modules` layouts (pnpm's default) deliberately do not expose transitive dependencies, so the typical rstack-cli app — whose only config is `rstack.config.ts` — hits it. Nobody in that folder asked for Rslint by name; `crashed` outranks every other folder in the status aggregation; and the status detail is the only place the fix can be stated (add `@rslint/core` to `devDependencies`, or upgrade it, or write an `rslint.config.*`). Native mode's identical failure stays a crash — there the user wrote an `rslint.config.*`, an explicit request for a tool that is missing.
+
+## Considered options
+
+**Pointing the server at rstack's shipped shim** — rejected above: it probes the evaluation cwd, which only means the right thing when `rs` runs it from the project directory.
+
+**Re-implementing Rstack config semantics in the extension** — rejected everywhere in this repo (the test bridge set the precedent): the editor and the CLI must evaluate the config identically, which only holds when both go through the project's own `rstack` package.
+
+**Automatic-discovery fallback below the gate** — rejected: a server with no config silently lints nothing; a `version mismatch` status names the version it found and the way out.
+
+**Gating on a release number** — rejected in favour of the capability probe; the protocol constant is published by the exact module whose behaviour is in question.
+
+**Evaluating the Rstack config on a User Node runtime** — not taken now. The bridge evaluates the config on the VS Code Node runtime through rstack's `loadRstackConfig` — the `loader: 'native'`, no-jiti-fallback path ADR 0001 analysed — which widens the lint entry on that ADR's debt list rather than retiring it. Moving lint's config host and plugin pool onto a User Node runtime is its own spawn-and-protocol project, recorded there as known debt.
+
+## Consequences
+
+- A `.ts` Rstack config lints in the editor only when the VS Code Node runtime strips types natively — `@rslint/core`'s jiti fallback covers the entry config file it loads, not the imports that file makes, and the generated shim's import of the config goes through rstack's loader. The preflight (`describeRstackConfigLoaderPreflight`) turns that into a diagnostic, never a behaviour change; VS Code's release cadence owns the condition.
+- pnpm users must add `@rslint/core` to `devDependencies` for bridged linting; the README states it and the toolchain gate's status repeats it.
+- The generated shim is a build artifact the extension owes hygiene for: never committed, deleted on a native flip, and `writeGeneratedShim`'s no-churn rule keeps the config watcher from seeing phantom edits.
+- The mode choice is immutable per server process, so anything that changes it — a native config appearing, the root Rstack config vanishing — restarts that folder's server; there is no message path to a live one.
+- The bridge holds only for the folder root; monorepo subpackages with their own `rstack.config.*` lint through the bridge only when opened as their own workspace folder.
