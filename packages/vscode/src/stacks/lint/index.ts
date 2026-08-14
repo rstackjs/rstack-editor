@@ -11,6 +11,7 @@ import { Rslint, type RslintFolderConfigPaths } from './Rslint';
 import {
   decideLintConfigMode,
   lintConfigModeSignature,
+  removeGeneratedShim,
   RstackBridgeGateError,
 } from './rstackBridge';
 import { WorkspaceDocumentRouter } from './WorkspaceDocumentRouter';
@@ -328,10 +329,25 @@ class RslintController implements StackController {
       this.#folderStates.set(key, { ...previous, configMode });
       flipped.push(folder);
     }
-    for (const key of [...this.#folderStates.keys()]) {
-      if (!keys.has(key)) {
-        this.#folderStates.delete(key);
+    for (const [key, leaving] of [...this.#folderStates]) {
+      if (keys.has(key)) {
+        continue;
       }
+      // A bridged folder leaving detection (its root `rstack.config.*` deleted
+      // or renamed, no native config appearing) never passes through a native
+      // start — the only other place the generated shim is deleted — so the
+      // extension-owned artifact is removed with the folder. Unconditional on
+      // purpose: the delete is idempotent, and testing the mode here would
+      // mean parsing the signature this layer otherwise treats as opaque.
+      // Deliberately not done on dispose: an undisturbed bridged folder keeps
+      // its shim across window reloads and the next start re-materializes it
+      // in place. The key is `workspaceRootKey` — the folder URI verbatim.
+      if (removeGeneratedShim(vscode.Uri.parse(key).fsPath)) {
+        this.#logger?.info(
+          `Removed the generated Rslint config shim for ${leaving.name}: the folder is no longer detected`,
+        );
+      }
+      this.#folderStates.delete(key);
     }
     this.publishStatus();
     const folders = detected.map((entry) => entry.folder);

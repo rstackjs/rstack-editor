@@ -50,6 +50,21 @@ export class RslintResolutionError extends Error {
   }
 }
 
+/**
+ * The specific failure "no `@rslint/core` resolves from this folder at all" —
+ * the one resolution failure the lint × Rstack bridge reports through its
+ * toolchain gate ("install @rslint/core"). Every later failure (a missing
+ * platform binary, a broken exports map, an invalid custom binary path) means
+ * the package *is* installed and needs its own remedy, so it keeps the plain
+ * class and its ordinary classification.
+ */
+export class RslintCoreNotFoundError extends RslintResolutionError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RslintCoreNotFoundError';
+  }
+}
+
 // `require.resolve` is rewritten by the bundler; `createRequire` is not. Every
 // lookup passes an explicit `paths`/issuer, so the anchor itself is irrelevant.
 const nodeRequire = createRequire(__filename);
@@ -100,7 +115,7 @@ const locateCore = (searchRoot: string, logger: Logger): string => {
   const usesPnp = ['.pnp.cjs', '.pnp.js'].some((name) =>
     fs.existsSync(path.join(searchRoot, name)),
   );
-  throw new RslintResolutionError(
+  throw new RslintCoreNotFoundError(
     usesPnp
       ? `Could not resolve @rslint/core from ${searchRoot}: this project uses Yarn Plug'n'Play, which this extension does not support — switch to nodeLinker: node-modules to lint in the editor.`
       : `Could not resolve @rslint/core from ${searchRoot}. This extension ships no Rslint binary — install @rslint/core in the project (this extension requires ${SUPPORT_MATRIX['@rslint/core']}).`,

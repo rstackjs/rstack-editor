@@ -411,18 +411,26 @@ describe('resolving the project rstack config loader', () => {
       name: 'rstack',
       exports: { '.': './dist/index.js' },
     });
-    expect(() => resolveRstackConfigLoader(root)).toThrow(RstackBridgeError);
+    // A package-version prerequisite is a gate (`version mismatch`), never a
+    // crash: the remedy is an upgrade, and the status detail is where it goes.
+    expect(() => resolveRstackConfigLoader(root)).toThrow(
+      RstackBridgeGateError,
+    );
     expect(() => resolveRstackConfigLoader(root)).toThrow(/0\.4\.0/);
   });
 
   it('reports an unrecognised ./config shape without asking for an upgrade', () => {
     // The entry is there, so the install is not old — telling the user to
-    // upgrade would send them somewhere that cannot help.
+    // upgrade would send them somewhere that cannot help. Not a gate either:
+    // this is a broken install shape, not a version prerequisite.
     const root = makeProject({
       name: 'rstack',
       exports: { './config': { types: './dist/configExports.d.ts' } },
     });
     expect(() => resolveRstackConfigLoader(root)).toThrow(RstackBridgeError);
+    expect(() => resolveRstackConfigLoader(root)).not.toThrow(
+      RstackBridgeGateError,
+    );
     expect(() => resolveRstackConfigLoader(root)).toThrow(
       /no target an ESM import can take/,
     );
@@ -434,6 +442,10 @@ describe('resolving the project rstack config loader', () => {
     roots.push(root);
     expect(() => resolveRstackConfigLoader(root)).toThrow(
       /Could not resolve the "rstack" package/,
+    );
+    // Missing package = install prerequisite = gate, like the toolchain gap.
+    expect(() => resolveRstackConfigLoader(root)).toThrow(
+      RstackBridgeGateError,
     );
   });
 });

@@ -129,10 +129,10 @@ export class RstackBridgeError extends Error {
  * exists: a bridged folder was lit by an `rstack.config.*`, so its user never
  * asked for Rslint by name and must not be shown a crash.
  *
- * Two gates raise it, and they differ only in their message — one class,
- * because that is the whole granularity anything consumes (`Rslint`'s
- * start-failure classification and the coordinator's expected-failure
- * predicate both test exactly this type):
+ * The gates raising it differ only in their message — one class, because that
+ * is the whole granularity anything consumes (`Rslint`'s start-failure
+ * classification and the coordinator's expected-failure predicate both test
+ * exactly this type):
  *
  * 1. the **capability** gate — the project's `@rslint/core` speaks a
  *    config-discovery protocol with no `configPath`, so there is no channel to
@@ -145,7 +145,13 @@ export class RstackBridgeError extends Error {
  *    mainstream bridged project — an rstack-cli app whose only config is
  *    `rstack.config.ts` — cannot resolve it. Native mode's identical failure
  *    stays a crash: there the user wrote an `rslint.config.*`, an explicit
- *    request for a tool that is missing.
+ *    request for a tool that is missing;
+ * 3. the **rstack-loader** gates — `rstack` itself does not resolve from the
+ *    folder, or resolves but predates the `./config` export (`< 0.4.0`). Both
+ *    describe a package-version prerequisite whose remedy is an install or an
+ *    upgrade, exactly what `version mismatch` means. A *present* `./config`
+ *    entry in a shape this extension cannot take stays `RstackBridgeError`:
+ *    the install is not old, so "upgrade" would mislead.
  */
 export class RstackBridgeGateError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -309,14 +315,14 @@ const readConfigExportEntry = (
 export const resolveRstackConfigLoader = (folderPath: string): string => {
   const packageJsonPath = findPackageJsonUncached('rstack', folderPath);
   if (packageJsonPath === undefined) {
-    throw new RstackBridgeError(
+    throw new RstackBridgeGateError(
       `Could not resolve the "rstack" package from ${folderPath}. Linting from rstack.config.* needs the project's own rstack install — run the project's package manager.`,
     );
   }
   const packageJson = readPackageJson(packageJsonPath);
   const entry = packageJson ? readConfigExportEntry(packageJson) : undefined;
   if (entry === undefined) {
-    throw new RstackBridgeError(
+    throw new RstackBridgeGateError(
       `The installed "rstack" (${packageJsonPath}) does not export "./config". Upgrade rstack to a version that publishes the config loader (>= 0.4.0), or add an rslint.config.* file.`,
     );
   }

@@ -91,6 +91,7 @@ import {
   type ConfigLoaderModule,
 } from './configLoader';
 import {
+  RslintCoreNotFoundError,
   RslintResolutionError,
   resolveRslint,
   type RslintResolution,
@@ -515,6 +516,14 @@ export class Rslint implements Disposable {
         readonly rstackConfigPath: string;
       }
     | undefined;
+  /**
+   * True when a dependency change arrived since the last config refresh. The
+   * watcher debounce keeps only the *last* event's reason, so a lockfile event
+   * followed within the window by a config edit would otherwise lose the one
+   * signal that forces shim re-materialization. Accumulated per event (like
+   * `pluginDependencyRevision`), consumed by the refresh that fires.
+   */
+  private bridgeShimRefreshPending = false;
   // --- end rstack config bridge ---
   /** Non-fatal notes appended to the folder's status detail. */
   private statusNotes: string[] = [];
@@ -659,6 +668,7 @@ export class Rslint implements Disposable {
     const epoch = this.lifecycleEpoch;
     const pluginLintPool = this.pluginLintPool;
     this.pluginDependencyRevision = 0;
+    this.bridgeShimRefreshPending = false;
     this.statusNotes = [];
     this.report({ kind: 'starting' });
 
@@ -1006,7 +1016,9 @@ export class Rslint implements Disposable {
     try {
       return await resolveRslint(this.workspaceFolder, this.logger);
     } catch (error) {
-      if (mode.kind === 'bridged' && error instanceof RslintResolutionError) {
+      // Only the not-found shape is the toolchain gap — see
+      // `RslintCoreNotFoundError`'s doc for the carve-out.
+      if (mode.kind === 'bridged' && error instanceof RslintCoreNotFoundError) {
         throw new RstackBridgeGateError(
           formatBridgeToolchainGap(mode.rstackConfigPath, error.message),
           { cause: error },
@@ -1175,6 +1187,9 @@ export class Rslint implements Disposable {
         // identical. Feed a monotonic dependency revision into the staged host
         // fingerprint so any lockfile mutation forces a worker rebuild.
         this.pluginDependencyRevision++;
+        // --- rstack config bridge ---
+        this.bridgeShimRefreshPending = true;
+        // --- end rstack config bridge ---
       }
       this.logger.debug(`${reason}: ${uri.fsPath}`);
       clearTimeout(this.configReloadTimer);
@@ -1219,8 +1234,11 @@ export class Rslint implements Disposable {
       // --- rstack config bridge ---
       // The one thing that can invalidate a bridged folder's pin without
       // changing it: a reinstall under the shim, whose file the server is about
-      // to be told to reload.
-      if (reason === 'dependency-change') {
+      // to be told to reload. Keyed off the accumulated flag, not `reason`: the
+      // debounce keeps only the last event's reason, and a config edit landing
+      // right after a lockfile event must not swallow the re-materialization.
+      if (this.bridgeShimRefreshPending) {
+        this.bridgeShimRefreshPending = false;
         this.refreshGeneratedShim();
       }
       // --- end rstack config bridge ---
@@ -1425,6 +1443,7 @@ export class Rslint implements Disposable {
     }
     const results = await Promise.allSettled(asynchronousCleanups);
     this.pluginDependencyRevision = 0;
+    this.bridgeShimRefreshPending = false;
 
     for (const result of results) {
       if (result.status === 'rejected') {
