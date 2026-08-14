@@ -78,55 +78,41 @@ class ExtensionShell {
       }),
       vscode.workspace.onDidChangeConfiguration((event) => {
         // One event covers a whole batch of edits — saving settings.json moves
-        // everything at once — so the two paths are decided per stack rather
-        // than one short-circuiting the other. A stack whose gate moved is the
-        // reconcile's to deal with, and rebuilding it here would fight that:
-        // it may be on its way out.
-        const gated = new Set(
-          STACK_IDS.filter(
-            (stack) =>
-              event.affectsConfiguration('rstack.enable') ||
-              event.affectsConfiguration(`rstack.${stack}.enable`),
-          ),
-        );
-        if (gated.size > 0) {
-          this.scheduleReconcile();
+        // everything at once — and the answer to any relevant one is a single
+        // full restart pass: it re-evaluates every gate and rebuilds every
+        // controller, so a gate flip, a moved shared setting, or both in one
+        // save are all handled by construction. Per-stack selectivity (gate
+        // changes to the reconcile, declared settings to a targeted restart)
+        // was removed deliberately: settings edits are rare, and the split
+        // could swallow a restart when one save wrote a gate key at its
+        // already-effective value alongside a shared setting.
+        const reasons = new Set<string>();
+        const note = (key: string): void => {
+          if (event.affectsConfiguration(key)) {
+            reasons.add(key);
+          }
+        };
+        note('rstack.enable');
+        for (const stack of STACK_IDS) {
+          note(`rstack.${stack}.enable`);
         }
-        // A reconcile deliberately leaves a live stack alone, so a setting a
-        // controller consumed at registration needs the restart path instead.
-        // Only live controllers are iterated: a stack behind a closed gate has
-        // nothing to rebuild, and one already being retired is gone from the
-        // map, which is what keeps a change landing mid-rebuild from queuing a
-        // second one.
-        // One save can move a setting shared by several stacks (the runtime
-        // pin), so the moved stacks are collected and restarted as one pass —
-        // one detection sweep, one retire/reconcile wave — instead of one full
-        // restart each.
-        const moved: StackId[] = [];
-        const reasons: string[] = [];
+        // Declared settings are known per live controller. A stack behind a
+        // closed gate has none — and needs none: its own settings cannot
+        // matter until an enable flip (caught above) lets it register, which
+        // reads everything fresh.
         for (const [stack, controller] of this.#controllers) {
-          if (gated.has(stack)) {
-            continue;
-          }
-          // Entries are relative to the stack's namespace unless they name a
-          // fully qualified `rstack.*` key — the form shared settings use.
-          const settingKey = (setting: string): string =>
-            setting.startsWith('rstack.')
-              ? setting
-              : `rstack.${stack}.${setting}`;
-          const setting = controller.restartOnSettings?.find((candidate) =>
-            event.affectsConfiguration(settingKey(candidate)),
-          );
-          if (setting) {
-            moved.push(stack);
-            const key = settingKey(setting);
-            if (!reasons.includes(key)) {
-              reasons.push(key);
-            }
+          for (const setting of controller.restartOnSettings ?? []) {
+            // Entries are relative to the stack's namespace unless they name a
+            // fully qualified `rstack.*` key — the form shared settings use.
+            note(
+              setting.startsWith('rstack.')
+                ? setting
+                : `rstack.${stack}.${setting}`,
+            );
           }
         }
-        if (moved.length > 0) {
-          void this.restart(moved, `${reasons.join(', ')} changed`);
+        if (reasons.size > 0) {
+          void this.restart(undefined, `${[...reasons].join(', ')} changed`);
         }
       }),
       // Restricted Mode shows the status bar only; trust unlocks the stacks
@@ -241,8 +227,8 @@ class ExtensionShell {
    * assume they already own the queue — going through `enqueue` from inside
    * one would wait on itself. Everything else calls the wrappers.
    */
-  private reconcile(stacks?: readonly StackId[]): Promise<void> {
-    return this.enqueue(() => this.runReconcile(stacks));
+  private reconcile(): Promise<void> {
+    return this.enqueue(() => this.runReconcile());
   }
 
   private scheduleReconcile(): void {
@@ -266,26 +252,16 @@ class ExtensionShell {
    * `reason` is for the callers that are not a user picking the command —
    * `restartOnSettings` passes what moved.
    */
-  restart(
-    stacks?: StackId | readonly StackId[],
-    reason?: string,
-  ): Promise<void> {
-    return this.enqueue(() => this.runRestart(stacks, reason));
+  restart(stack?: StackId, reason?: string): Promise<void> {
+    return this.enqueue(() => this.runRestart(stack, reason));
   }
 
-  private async runRestart(
-    only?: StackId | readonly StackId[],
-    reason?: string,
-  ): Promise<void> {
+  private async runRestart(only?: StackId, reason?: string): Promise<void> {
     if (this.#disposed) {
       return;
     }
-    const stacks =
-      only === undefined ? STACK_IDS : typeof only === 'string' ? [only] : only;
-    const what =
-      stacks.length === STACK_IDS.length
-        ? 'Rstack'
-        : stacks.map((stack) => STACK_LABELS[stack]).join(', ');
+    const stacks = only === undefined ? STACK_IDS : [only];
+    const what = only === undefined ? 'Rstack' : STACK_LABELS[only];
     this.#channels.shell.info(
       `Restarting ${what}${reason ? ` (${reason})` : ''}`,
     );
@@ -310,10 +286,10 @@ class ExtensionShell {
     // Rstest controller's next worker spawn would silently re-take — its
     // controller was never rebuilt, so it could end up on a different runtime
     // than the workers it already has. The full `rstack.restart` (the "like a
-    // window reload" gesture) always qualifies, as does the batched restart a
-    // `rstack.nodeExecutable` change triggers, since every declaring stack is
-    // in that batch. `#controllers` holds only the survivors at this point —
-    // `retireAll` above removed everything being restarted.
+    // window reload" gesture) always qualifies, as does the full pass any
+    // relevant settings change triggers. `#controllers` holds only the
+    // survivors at this point — `retireAll` above removed everything being
+    // restarted.
     const memoConsumerSurvives = USER_NODE_STACKS.some((stack) =>
       this.#controllers.has(stack),
     );

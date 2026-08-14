@@ -124,11 +124,12 @@ export interface StackContext {
 export interface StackController {
   readonly id: StackId;
   /**
-   * Setting names whose change must rebuild this stack, because their value is
+   * Setting names whose change must trigger a rebuild, because their value is
    * consumed once at registration (a resolved binary, a probed Node) and a
-   * live controller would keep answering with the stale one. A bare name is
-   * relative to the stack's namespace (`rstack.<id>.<name>`); a name starting
-   * with `rstack.` is taken as-is, for shared settings like
+   * live controller would keep answering with the stale one. The shell
+   * answers with one full restart pass — every stack, not just the declarer.
+   * A bare name is relative to the stack's namespace (`rstack.<id>.<name>`);
+   * a name starting with `rstack.` is taken as-is, for shared settings like
    * `rstack.nodeExecutable`.
    *
    * Declared as data because restart is the shell's concern: the shell owns the
