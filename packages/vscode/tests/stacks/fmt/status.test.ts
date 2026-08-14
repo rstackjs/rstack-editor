@@ -3,6 +3,7 @@ import {
   foldFolderStatus,
   type FmtFolderStatus,
   type FmtRuntimeState,
+  isFailedFmtState,
 } from '../../../src/stacks/fmt/status';
 
 const folder = (
@@ -130,5 +131,25 @@ describe('foldFolderStatus', () => {
         DETECTED,
       ),
     ).toEqual({ kind: 'version-mismatch', detail: `pinned: ${advisory}` });
+  });
+});
+
+describe('isFailedFmtState', () => {
+  it('restarts exactly the terminal failures and keeps every live state', () => {
+    // Exhaustive over the union: reconcile restarts a failed runtime because
+    // the detection pass may be the install or upgrade that fixes it, and
+    // keeps healthy or in-progress ones — `starting` must stay kept, or every
+    // lockfile event would interrupt a healthy launch.
+    const verdicts: Record<FmtRuntimeState, boolean> = {
+      disabled: true,
+      'version-mismatch': true,
+      crashed: true,
+      stopped: false,
+      starting: false,
+      running: false,
+    };
+    for (const [state, failed] of Object.entries(verdicts)) {
+      expect(isFailedFmtState(state as FmtRuntimeState)).toBe(failed);
+    }
   });
 });

@@ -59,6 +59,18 @@ const STATE_RANK: Readonly<Record<FmtRuntimeState, number>> = {
 };
 
 /**
+ * The states a detection pass restarts instead of keeping: nothing about a
+ * failed runtime is worth preserving, and the pass may be the very install or
+ * upgrade that fixes it — detection notifies on lockfile events even when the
+ * detected folder set is unchanged, for exactly this retry. `starting` is
+ * deliberately not here: interrupting a server mid-start on every lockfile
+ * event would thrash a healthy launch, and a start that ends in failure is
+ * retried by the next pass.
+ */
+export const isFailedFmtState = (state: FmtRuntimeState): boolean =>
+  state === 'disabled' || state === 'version-mismatch' || state === 'crashed';
+
+/**
  * Folds every folder runtime's state into the one report the shell shows for
  * the fmt stack. The worst folder wins, and with multiple folders the detail
  * names the folders it came from — "crashed" without a folder name is not

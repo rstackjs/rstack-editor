@@ -41,6 +41,7 @@ import {
   foldFolderStatus,
   type FmtFolderStatus,
   type FmtRuntimeState,
+  isFailedFmtState,
 } from './status';
 
 // prettier 3.9.6 getSupportInfo() vscodeLanguageIds snapshot (rs fmt's pinned
@@ -294,9 +295,13 @@ class FmtFolderRuntime {
 
     const pkgJsonPath = findPackageJsonUncached('rstack', folderRoot);
     if (!pkgJsonPath) {
+      // The trailing hint covers the one recovery path no watcher sees: an
+      // install that changes no lockfile (a fresh clone whose lockfile is
+      // already current) fires no file event, so nothing rebuilds this
+      // runtime — the status message is where the way out has to live.
       this.setState(
         'disabled',
-        'rstack is not installed (node_modules missing)',
+        'rstack is not installed (node_modules missing) — install it, then run "Rstack: Restart rs fmt" if this status stays',
       );
       context.output.warn(
         `rstack is not installed in ${this.folder.name} (node_modules missing); searched from ${folderRoot}`,
@@ -624,9 +629,10 @@ class FmtController implements StackController {
 
   /**
    * Brings the folder set in line with detection: a newly detected folder gets
-   * a server, an undetected one loses it, and a folder that is in both sets is
-   * left alone — restarting a healthy server on an unrelated folder's detection
-   * change would drop its cached config for nothing.
+   * a server, an undetected one loses it, and a folder that is in both sets
+   * keeps a healthy server — restarting it on an unrelated folder's detection
+   * change would drop its cached config for nothing — but has a failed one
+   * (`isFailedFmtState`) restarted in place.
    */
   private reconcile(): void {
     const context = this.#context;
@@ -659,7 +665,14 @@ class FmtController implements StackController {
       }
     }
     for (const [folderPath, folder] of detected) {
-      if (this.#runtimes.has(folderPath)) {
+      const existing = this.#runtimes.get(folderPath);
+      if (existing) {
+        if (isFailedFmtState(existing.state)) {
+          // A failed runtime is retried in place, on the same path a config
+          // change uses: restart re-runs package resolution, the version
+          // check and the Node preflight. Why: `isFailedFmtState`'s doc.
+          void existing.restart('a dependency change may have fixed it');
+        }
         continue;
       }
       // The callback re-reads `#snapshot`, so a server that finishes starting
