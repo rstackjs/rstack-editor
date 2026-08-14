@@ -96,6 +96,30 @@ export const assertSingleResolutionRoot = (
   }
 };
 
+/**
+ * Diagnostic-only probe: does any ancestor of `fromDir` carry a Yarn PnP
+ * manifest? Walks ancestors exactly like the package lookup it diagnoses — in
+ * a PnP monorepo the `.pnp.cjs` sits at the repository root, not in the
+ * subpackage opened as the workspace folder.
+ */
+const usesYarnPnp = (fromDir: string): boolean => {
+  let dir = path.resolve(fromDir);
+  for (;;) {
+    if (
+      ['.pnp.cjs', '.pnp.js'].some((name) =>
+        fs.existsSync(path.join(dir, name)),
+      )
+    ) {
+      return true;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) {
+      return false;
+    }
+    dir = parent;
+  }
+};
+
 /** Returns the path of the project's `@rslint/core/package.json`. */
 const locateCore = (searchRoot: string, logger: Logger): string => {
   // Uncached on purpose: a failed root is retried after dependency changes
@@ -112,11 +136,8 @@ const locateCore = (searchRoot: string, logger: Logger): string => {
   // Diagnostic only, never a resolution branch: under Yarn PnP the usual
   // remedy (installing @rslint/core as a devDependency) writes no physical
   // `node_modules`, so the message must name the layout as the blocker.
-  const usesPnp = ['.pnp.cjs', '.pnp.js'].some((name) =>
-    fs.existsSync(path.join(searchRoot, name)),
-  );
   throw new RslintCoreNotFoundError(
-    usesPnp
+    usesYarnPnp(searchRoot)
       ? `Could not resolve @rslint/core from ${searchRoot}: this project uses Yarn Plug'n'Play, which this extension does not support — switch to nodeLinker: node-modules to lint in the editor.`
       : `Could not resolve @rslint/core from ${searchRoot}. This extension ships no Rslint binary — install @rslint/core in the project (this extension requires ${SUPPORT_MATRIX['@rslint/core']}).`,
   );
