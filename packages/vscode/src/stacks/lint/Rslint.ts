@@ -167,6 +167,14 @@ export const BRIDGED_CONFIG_REFRESH_WATCH_GLOB = `**/{${[
   ...RSTACK_CONFIG_PROBE_ORDER,
   ...LOCKFILE_NAMES,
 ].join(',')}}`;
+
+/**
+ * One constant so the success path of `refreshGeneratedShim` can remove
+ * exactly the note its failure path added. No restart instruction: every
+ * config refresh retries on its own.
+ */
+const SHIM_REFRESH_FAILURE_NOTE =
+  'the generated Rslint config shim could not be rewritten; fix the install and it heals on the next config refresh';
 // --- end rstack config bridge ---
 
 /**
@@ -508,22 +516,14 @@ export class Rslint implements Disposable {
         /** The generated shim the server is pinned to. */
         readonly configPath: string;
         /**
-         * The Rstack config the shim was generated from, kept for the *only*
-         * thing that may rewrite the shim after the start: a dependency change,
-         * which can delete it (it lives under `node_modules`) or dangle the
-         * store path baked into it.
+         * The Rstack config the shim was generated from, kept so every config
+         * refresh can re-materialize the shim in place — a reinstall or a
+         * cache wipe can delete it (it lives under `node_modules`) or dangle
+         * the store path baked into it.
          */
         readonly rstackConfigPath: string;
       }
     | undefined;
-  /**
-   * True when a dependency change arrived since the last config refresh. The
-   * watcher debounce keeps only the *last* event's reason, so a lockfile event
-   * followed within the window by a config edit would otherwise lose the one
-   * signal that forces shim re-materialization. Accumulated per event (like
-   * `pluginDependencyRevision`), consumed by the refresh that fires.
-   */
-  private bridgeShimRefreshPending = false;
   // --- end rstack config bridge ---
   /** Non-fatal notes appended to the folder's status detail. */
   private statusNotes: string[] = [];
@@ -611,6 +611,17 @@ export class Rslint implements Disposable {
     }
   }
 
+  private removeStatusNote(note: string): void {
+    const index = this.statusNotes.indexOf(note);
+    if (index === -1) {
+      return;
+    }
+    this.statusNotes.splice(index, 1);
+    if (this.isRunning()) {
+      this.report({ kind: 'running', detail: this.runningDetail() });
+    }
+  }
+
   public async start(signal: AbortSignal): Promise<void> {
     if (this.startPromise) {
       await this.startPromise;
@@ -668,7 +679,6 @@ export class Rslint implements Disposable {
     const epoch = this.lifecycleEpoch;
     const pluginLintPool = this.pluginLintPool;
     this.pluginDependencyRevision = 0;
-    this.bridgeShimRefreshPending = false;
     this.statusNotes = [];
     this.report({ kind: 'starting' });
 
@@ -1048,12 +1058,14 @@ export class Rslint implements Disposable {
   /**
    * Re-materializes the generated shim under its existing path.
    *
-   * Called on a dependency change and nowhere else. A reinstall can delete the
-   * shim outright (it lives under `node_modules`) or leave the loader path
-   * baked into it dangling, since that path is realpath'd into a
-   * version-pinned store — and the `configPath` the server was pinned to is
-   * immutable for its process lifetime, so the file has to come back at the
-   * same path rather than the pin moving to a new one.
+   * Called on every debounced config refresh, right before the server is told
+   * to reload. A reinstall or a cache wipe can delete the shim outright (it
+   * lives under `node_modules`) or leave the loader path baked into it
+   * dangling, since that path is realpath'd into a version-pinned store — and
+   * the `configPath` the server was pinned to is immutable for its process
+   * lifetime, so the file has to come back at the same path rather than the
+   * pin moving to a new one. The no-churn write keeps the common case (the
+   * shim is intact and nothing moved) a pure read.
    */
   private refreshGeneratedShim(): void {
     const bridge = this.bridge;
@@ -1064,19 +1076,18 @@ export class Rslint implements Disposable {
       const shim = this.materializeShim(bridge.rstackConfigPath);
       if (shim.written) {
         this.logger.info(
-          `Re-materialized the generated Rslint config shim after a dependency change: ${shim.path}`,
+          `Re-materialized the generated Rslint config shim: ${shim.path}`,
         );
       }
+      // Every refresh retries, so a past failure is cleared the moment one
+      // succeeds — the note must not outlive the condition it describes.
+      this.removeStatusNote(SHIM_REFRESH_FAILURE_NOTE);
     } catch (error) {
-      // The pin cannot move, so this is as far as recovery goes: say what
-      // happened and what clears it.
       this.logger.error(
         'Failed to re-materialize the generated Rslint config shim',
         error,
       );
-      this.addStatusNote(
-        'the generated Rslint config shim could not be rewritten after a dependency change; run Rstack: Restart Rslint',
-      );
+      this.addStatusNote(SHIM_REFRESH_FAILURE_NOTE);
     }
   }
 
@@ -1187,9 +1198,6 @@ export class Rslint implements Disposable {
         // identical. Feed a monotonic dependency revision into the staged host
         // fingerprint so any lockfile mutation forces a worker rebuild.
         this.pluginDependencyRevision++;
-        // --- rstack config bridge ---
-        this.bridgeShimRefreshPending = true;
-        // --- end rstack config bridge ---
       }
       this.logger.debug(`${reason}: ${uri.fsPath}`);
       clearTimeout(this.configReloadTimer);
@@ -1232,15 +1240,14 @@ export class Rslint implements Disposable {
         return;
       }
       // --- rstack config bridge ---
-      // The one thing that can invalidate a bridged folder's pin without
-      // changing it: a reinstall under the shim, whose file the server is about
-      // to be told to reload. Keyed off the accumulated flag, not `reason`: the
-      // debounce keeps only the last event's reason, and a config edit landing
-      // right after a lockfile event must not swallow the re-materialization.
-      if (this.bridgeShimRefreshPending) {
-        this.bridgeShimRefreshPending = false;
-        this.refreshGeneratedShim();
-      }
+      // A reinstall or a cache wipe can invalidate a bridged folder's pin
+      // without changing it — delete the shim outright or dangle the loader
+      // path baked into it — and not every such event reaches this watcher
+      // (`node_modules` events are excluded, and a frozen-lockfile reinstall
+      // rewrites no lockfile). So *every* refresh re-materializes the shim the
+      // server is about to reload, not just dependency-change ones; the
+      // no-churn write makes that a no-op whenever nothing actually moved.
+      this.refreshGeneratedShim();
       // --- end rstack config bridge ---
       const request: ConfigRefreshRequest = {
         protocolVersion: configLoader.CONFIG_DISCOVERY_PROTOCOL_VERSION,
@@ -1443,7 +1450,6 @@ export class Rslint implements Disposable {
     }
     const results = await Promise.allSettled(asynchronousCleanups);
     this.pluginDependencyRevision = 0;
-    this.bridgeShimRefreshPending = false;
 
     for (const result of results) {
       if (result.status === 'rejected') {

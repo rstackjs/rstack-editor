@@ -95,8 +95,11 @@ const GENERATED_SHIM_RELATIVE_DIR = path.join(
  * every `node_modules` path outright, so the generated shim can never be
  * mistaken for a native config — which would flip Ownership to native and
  * restart the folder into the mode that deletes the shim's reason to exist. The
- * config-refresh watcher is separately protected by being written before it is
- * installed, and by only being rewritten when its content actually changes.
+ * config-refresh watcher normally never sees the shim either — VS Code's
+ * default `files.watcherExclude` swallows `node_modules` events — but that is
+ * a user setting, so the no-churn write rule below is what actually guarantees
+ * a shim write cannot feed a refresh loop (and it keeps the intact case a pure
+ * read on every refresh).
  */
 const GENERATED_SHIM_BASENAME = 'rslint.config.mjs';
 
@@ -320,7 +323,14 @@ export const resolveRstackConfigLoader = (folderPath: string): string => {
     );
   }
   const packageJson = readPackageJson(packageJsonPath);
-  const entry = packageJson ? readConfigExportEntry(packageJson) : undefined;
+  // An unreadable manifest is a broken install, not a package prerequisite —
+  // "upgrade rstack" would mislead, so it is not a gate.
+  if (packageJson === undefined) {
+    throw new RstackBridgeError(
+      `Could not read the installed "rstack" manifest at ${packageJsonPath}. The install looks broken — run the project's package manager, or add an rslint.config.* file.`,
+    );
+  }
+  const entry = readConfigExportEntry(packageJson);
   if (entry === undefined) {
     throw new RstackBridgeGateError(
       `The installed "rstack" (${packageJsonPath}) does not export "./config". Upgrade rstack to a version that publishes the config loader (>= 0.4.0), or add an rslint.config.* file.`,

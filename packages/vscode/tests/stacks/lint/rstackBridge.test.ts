@@ -437,6 +437,25 @@ describe('resolving the project rstack config loader', () => {
     expect(() => resolveRstackConfigLoader(root)).not.toThrow(/0\.4\.0/);
   });
 
+  it('reports an unreadable manifest as a broken install, not a gate', () => {
+    // A manifest that cannot be parsed means a broken install, not an old
+    // one — "upgrade rstack" would mislead, so it must not join the
+    // no-./config prerequisite in the gate.
+    const root = makeProject({ name: 'rstack' });
+    fs.writeFileSync(
+      path.join(root, 'node_modules', 'rstack', 'package.json'),
+      'not json',
+    );
+    expect(() => resolveRstackConfigLoader(root)).toThrow(RstackBridgeError);
+    expect(() => resolveRstackConfigLoader(root)).not.toThrow(
+      RstackBridgeGateError,
+    );
+    expect(() => resolveRstackConfigLoader(root)).toThrow(
+      /Could not read the installed "rstack" manifest/,
+    );
+    expect(() => resolveRstackConfigLoader(root)).not.toThrow(/0\.4\.0/);
+  });
+
   it('reports a missing rstack install instead of guessing a path', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rstack-empty-'));
     roots.push(root);
