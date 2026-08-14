@@ -46,7 +46,7 @@ Linting a folder from `define.lint()` in `rstack.config.*` asks more:
 
 - `rstack` must publish its config loader (`>=0.4.0`).
 - `@rslint/core` must be **installed in the project**. `rstack` depends on it, but package managers with an isolated `node_modules` layout (pnpm by default) do not expose transitive dependencies, so add `@rslint/core` to your `devDependencies`.
-- `@rslint/core` must be new enough for the editor to pin the language server to a config. That is not a version number the extension can name yet — no released `@rslint/core` has it.
+- `@rslint/core` must be new enough to speak config-discovery protocol 2, which is what lets the editor pin the language server to a config — in practice `>= 0.8.0`, the first release that does. The extension probes the protocol, not the version number.
 - A TypeScript `rstack.config.ts` must be loadable by the VS Code extension host's Node: rstack's config loader relies on native type stripping and has no fallback, so on an older VS Code build use `rstack.config.mjs` (or `.js`).
 
 Until all of them hold, such a folder shows `version mismatch` with a message naming the missing piece instead of linting; adding an `rslint.config.*` is the way out today. Folders with an `rslint.config.*` are unaffected.
@@ -88,7 +88,7 @@ All settings live under the unified `rstack.*` namespace. There are no `rslint.*
 | `rstack.enable` | `true` | Master switch for the whole extension. |
 | `rstack.nodeExecutable` | — | Node binary used for the processes that load your project: the test worker and the `rs fmt` language server. Empty means the extension picks one (`PATH` first, then the `node` your interactive shell resolves). |
 | `rstack.rslint.enable` | `true` | Enable/disable the Rslint integration. |
-| `rstack.rslint.binPath` | `local` | `local` (project `node_modules`, incl. Yarn PnP) or `custom`. |
+| `rstack.rslint.binPath` | `local` | `local` (project `node_modules`) or `custom`. |
 | `rstack.rslint.customBinPath` | — | Binary path used when `binPath` is `custom`. |
 | `rstack.rslint.trace.server` | `off` | LSP trace level (`off` / `messages` / `verbose`). |
 | `rstack.rstest.enable` | `true` | Enable/disable the Rstest integration. |

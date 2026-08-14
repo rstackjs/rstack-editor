@@ -257,7 +257,8 @@ export class RstestApi {
   // `CORE_PACKAGE_JSON` specifier applies. Shared by the worker resolution and
   // the terminal CLI resolution, which both also report the configured path.
   private resolveConfiguredPackageJson(): string | undefined {
-    // TODO: support Yarn PnP
+    // Yarn PnP is not supported, by decision (see AGENTS.md), replacing
+    // upstream's "TODO: support Yarn PnP" here.
     let configuredPackagePath = getConfigValue(
       'rstestPackagePath',
       this.workspace,

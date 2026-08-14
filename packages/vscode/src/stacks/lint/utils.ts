@@ -51,7 +51,7 @@ export const getPlatformBinRequests = (): string[] => {
 /**
  * `built-in` is deliberately absent: this extension ships no Go
  * binary, so the only resolution order is explicit setting → workspace
- * `node_modules` → Yarn PnP, and a failed resolution surfaces in the status bar
+ * `node_modules`, and a failed resolution surfaces in the status bar
  * instead of silently falling back.
  */
 export type RslintBinPath = 'local' | 'custom';

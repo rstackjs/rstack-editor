@@ -164,7 +164,7 @@
             "default": "local",
             "scope": "resource",
             "markdownEnumDescriptions": [
-              "Resolve the Rslint binary from the workspace `node_modules` (Yarn PnP is supported). This extension ships no binary.",
+              "Resolve the Rslint binary from the workspace `node_modules`. This extension ships no binary.",
               "Use the binary at `#rstack.rslint.customBinPath#`, e.g. a global installation or a specific version of Rslint."
             ],
             "description": "How to locate the Rslint executable binary"

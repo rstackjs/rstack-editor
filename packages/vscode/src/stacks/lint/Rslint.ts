@@ -690,8 +690,7 @@ export class Rslint implements Disposable {
     this.assertStartCurrent(epoch, signal);
     this.resolution = resolution;
     this.logger.info(
-      `Rslint resolved from the project (${resolution.kind}): ${resolution.coreDir}` +
-        ` (version ${resolution.coreVersion ?? 'unknown'})`,
+      `Rslint resolved from the project: ${resolution.coreDir} (version ${resolution.coreVersion ?? 'unknown'})`,
     );
 
     // Compatibility seam (1): the support matrix. `@rslint/core` older than the
