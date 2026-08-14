@@ -7,9 +7,13 @@ import { readPackageJson } from './packageResolve';
  * checked against this matrix; a mismatch surfaces as the `version mismatch`
  * status bar state with actual vs required versions.
  *
- * Launch floors (verified against npm):
- * - `@rslint/core >= 0.7.2` — first version whose package exports
- *   `./config-loader` and `./eslint-plugin`.
+ * Floors (verified against npm):
+ * - `@rslint/core >= 0.8.0` — first release speaking config-discovery
+ *   protocol 2 (the capability the lint × Rstack bridge pins a server
+ *   through), and the release the E2E fixtures install — pre-1.0, the floor
+ *   follows what is actually tested. The launch floor was 0.7.2, the first
+ *   version whose package exports `./config-loader` and `./eslint-plugin`;
+ *   those exports are why the resolution errors quote this range.
  * - `@rstest/core >= 0.6.0` — the existing `MIN_CORE_VERSION` upstream.
  * - `rstack >= 0.5.2` — first release with `rs fmt --lsp`, the language server
  *   the fmt stack is a client of. There is no stdin fallback for older
@@ -25,7 +29,7 @@ import { readPackageJson } from './packageResolve';
  *   past. The status message names the required version either way.
  */
 export const SUPPORT_MATRIX = {
-  '@rslint/core': '>=0.7.2',
+  '@rslint/core': '>=0.8.0',
   '@rstest/core': '>=0.6.0',
   rstack: '>=0.5.2',
 } as const;

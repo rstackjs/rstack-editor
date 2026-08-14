@@ -36,7 +36,7 @@ The project-resolved packages are checked against a support matrix at runtime; a
 
 | Package        | Required  |
 | -------------- | --------- |
-| `@rslint/core` | `>=0.7.2` |
+| `@rslint/core` | `>=0.8.0` |
 | `@rstest/core` | `>=0.6.0` |
 | `rstack`       | `>=0.5.2` |
 

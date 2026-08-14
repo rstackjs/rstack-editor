@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { Uri, workspace, type WorkspaceFolder } from 'vscode';
 import { findPackageJsonUncached } from '../../shared/packageResolve';
-import { readPackageVersion } from '../../shared/versionCheck';
+import { readPackageVersion, SUPPORT_MATRIX } from '../../shared/versionCheck';
 import type { Logger } from './logger';
 import {
   fileExists,
@@ -103,7 +103,7 @@ const locateCore = (searchRoot: string, logger: Logger): string => {
   throw new RslintResolutionError(
     usesPnp
       ? `Could not resolve @rslint/core from ${searchRoot}: this project uses Yarn Plug'n'Play, which this extension does not support — switch to nodeLinker: node-modules to lint in the editor.`
-      : `Could not resolve @rslint/core from ${searchRoot}. This extension ships no Rslint binary — install @rslint/core in the project (this extension requires >= 0.7.2).`,
+      : `Could not resolve @rslint/core from ${searchRoot}. This extension ships no Rslint binary — install @rslint/core in the project (this extension requires ${SUPPORT_MATRIX['@rslint/core']}).`,
   );
 };
 
@@ -124,7 +124,7 @@ const resolveCoreSubpath = (
       return nodeRequire.resolve(specifier, { paths: [coreDir] });
     } catch {
       throw new RslintResolutionError(
-        `Could not resolve ${specifier} from ${coreDir}. Rslint >= 0.7.2 is required (its package exports ./config-loader and ./eslint-plugin).`,
+        `Could not resolve ${specifier} from ${coreDir}. Rslint ${SUPPORT_MATRIX['@rslint/core']} is required (its package exports ./config-loader and ./eslint-plugin).`,
         { cause: error },
       );
     }

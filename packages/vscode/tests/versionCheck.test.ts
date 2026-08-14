@@ -9,9 +9,9 @@ import {
 } from '../src/shared/versionCheck';
 
 describe('support matrix', () => {
-  it('pins the launch support floors', () => {
+  it('pins the support floors', () => {
     expect(SUPPORT_MATRIX).toEqual({
-      '@rslint/core': '>=0.7.2',
+      '@rslint/core': '>=0.8.0',
       '@rstest/core': '>=0.6.0',
       rstack: '>=0.5.2',
     });
@@ -20,7 +20,7 @@ describe('support matrix', () => {
 
 describe('checkPackageVersion', () => {
   it('accepts versions at and above the floor', () => {
-    expect(checkPackageVersion('@rslint/core', '0.7.2').kind).toBe('ok');
+    expect(checkPackageVersion('@rslint/core', '0.8.0').kind).toBe('ok');
     expect(checkPackageVersion('@rslint/core', '1.2.3').kind).toBe('ok');
     expect(checkPackageVersion('@rstest/core', '0.11.5').kind).toBe('ok');
     expect(checkPackageVersion('rstack', '0.5.2').kind).toBe('ok');
