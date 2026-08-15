@@ -611,17 +611,6 @@ export class Rslint implements Disposable {
     }
   }
 
-  private removeStatusNote(note: string): void {
-    const index = this.statusNotes.indexOf(note);
-    if (index === -1) {
-      return;
-    }
-    this.statusNotes.splice(index, 1);
-    if (this.isRunning()) {
-      this.report({ kind: 'running', detail: this.runningDetail() });
-    }
-  }
-
   public async start(signal: AbortSignal): Promise<void> {
     if (this.startPromise) {
       await this.startPromise;
@@ -1079,10 +1068,26 @@ export class Rslint implements Disposable {
           `Re-materialized the generated Rslint config shim: ${shim.path}`,
         );
       }
-      // Every refresh retries, so a past failure is cleared the moment one
-      // succeeds — the note must not outlive the condition it describes.
-      this.removeStatusNote(SHIM_REFRESH_FAILURE_NOTE);
+      // Success is where recovery becomes observable: drop the failure note
+      // and re-assert the running status — nothing else re-reports a
+      // still-running folder a gate degrade replaced with `version mismatch`.
+      this.statusNotes = this.statusNotes.filter(
+        (note) => note !== SHIM_REFRESH_FAILURE_NOTE,
+      );
+      if (this.isRunning()) {
+        this.report({ kind: 'running', detail: this.runningDetail() });
+      }
     } catch (error) {
+      if (error instanceof RstackBridgeGateError) {
+        // A prerequisite that vanished mid-life is the start path's gate, not
+        // a failure of ours: `version mismatch` with the written-out fix
+        // (ADR 0003), never a silently `running` folder on a stale shim.
+        this.logger.warn(
+          `The rstack bridge gate closed mid-life: ${error.message}`,
+        );
+        this.report({ kind: 'version-mismatch', detail: error.message });
+        return;
+      }
       this.logger.error(
         'Failed to re-materialize the generated Rslint config shim',
         error,
