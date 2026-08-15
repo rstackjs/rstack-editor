@@ -1061,6 +1061,13 @@ export class Rslint implements Disposable {
     if (!bridge) {
       return;
     }
+    // A pin whose source is gone must not be re-materialized: that deletion is
+    // what takes the folder out of detection, and a rewrite here would race
+    // the reconcile removing the shim (ADR 0003). A rename or atomic save
+    // merely skips one refresh — the shim stays, the next refresh restores it.
+    if (!fs.existsSync(bridge.rstackConfigPath)) {
+      return;
+    }
     try {
       const shim = this.materializeShim(bridge.rstackConfigPath);
       if (shim.written) {
