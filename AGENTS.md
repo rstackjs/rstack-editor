@@ -16,6 +16,7 @@ Unified editor support for the [Rstack](https://rstack.rs) toolchain. pnpm works
 - If extension source changed, also run the E2E slice covering the change (see `packages/vscode/AGENTS.md`). E2E launches a real VS Code and is the ground truth for editor behavior — unit tests are not a substitute.
 - Never delete `packages/vscode/.vscode-test/` — it caches the VS Code download the E2E suites reuse.
 - Report real command results only; never claim green without running.
+- Releases: `pnpm bump` on a branch → PR → merge → run the **Release** workflow on `main`. The workflow publishes to both marketplaces, tags `vX.Y.Z` and creates the GitHub Release; never tag or publish by hand. Details in CONTRIBUTING.md → Releasing.
 
 ## Agent skills
 
