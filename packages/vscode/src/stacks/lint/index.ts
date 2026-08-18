@@ -181,15 +181,19 @@ class RslintController implements StackController {
       logger,
       {
         folderMode: (folder) => this.folderMode(folder),
-        onDocumentFailure: ({ document, workspaceFolder, error }) => {
+        onDocumentFailure: ({ document, workspaceFolder, error, resolved }) => {
           // Last-good semantics: the document keeps whatever runtime it had.
           // The failure is still the folder's worst news, so it is folded in
-          // beside the runtimes rather than shown as a toast.
+          // beside the runtimes rather than shown as a toast. A start failure
+          // outlives its (already closed) runtime here, so it names the core.
+          const status = statusForRslintStartFailure(error);
           this.setState(
             folderKeyOf(workspaceFolder),
             'failures',
             document.uri.toString(),
-            statusForRslintStartFailure(error),
+            resolved
+              ? attributeToCore(status, resolved.installation.packageDirectory)
+              : status,
           );
         },
         onDocumentSettled: (document) => {

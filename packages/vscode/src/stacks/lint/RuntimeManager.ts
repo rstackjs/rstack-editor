@@ -57,6 +57,8 @@ export interface DocumentResolutionFailure {
   readonly document: TextDocument;
   readonly workspaceFolder: WorkspaceFolder;
   readonly error: unknown;
+  /** The core whose runtime failed to start; absent when resolution itself failed. */
+  readonly resolved?: ResolvedCoreRuntime;
 }
 
 export interface RuntimeManagerOptions {
@@ -231,7 +233,13 @@ export class RuntimeManager {
         await this.releaseRuntimeAfterFailure(replacement, key);
       }
       if (this.isCurrentDocument(document, epoch)) {
-        this.reportFailure(document, workspaceFolder, error, existing);
+        this.reportFailure(
+          document,
+          workspaceFolder,
+          error,
+          existing,
+          resolved,
+        );
       }
       return;
     }
@@ -393,6 +401,7 @@ export class RuntimeManager {
     workspaceFolder: WorkspaceFolder,
     error: unknown,
     existing: RuntimeEntry | undefined,
+    resolved?: ResolvedCoreRuntime,
   ): void {
     const suffix = existing
       ? ` (keeping ${existing.resolved.installation.packageDirectory} active)`
@@ -405,6 +414,7 @@ export class RuntimeManager {
       document,
       workspaceFolder,
       error,
+      resolved,
     });
   }
 
