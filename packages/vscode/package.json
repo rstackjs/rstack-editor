@@ -24,6 +24,7 @@
     "url": "git+https://github.com/rstackjs/rstack-editor.git"
   },
   "license": "MIT",
+  "qna": "https://github.com/rstackjs/rstack-editor/issues",
   "publisher": "rstack",
   "main": "./dist/extension.js",
   "scripts": {
@@ -201,6 +202,7 @@
           "rstack.rstest.testCaseCollectMethod": {
             "order": 3,
             "type": "string",
+            "description": "How test cases are discovered inside a test file: statically from the AST, or by running the file and collecting the registered tests.",
             "default": "ast",
             "enum": [
               "ast",
@@ -455,7 +457,12 @@
     "vscode": "^1.97.0"
   },
   "icon": "icon.png",
+  "preview": true,
   "capabilities": {
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "Rstack resolves `@rslint/core`, `@rstest/core` and `rstack` from the workspace's node_modules and spawns them as local processes, which needs a real file system."
+    },
     "untrustedWorkspaces": {
       "supported": "limited",
       "description": "Rstack spawns project-local executables (the Rslint language server, the Rstest worker, `rs fmt`) and loads project configuration files. In Restricted Mode only the status bar item is shown; no process is spawned and no project code is loaded."
