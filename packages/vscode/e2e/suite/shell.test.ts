@@ -34,7 +34,6 @@ suite('shell', () => {
     for (const command of [
       'rstack.showOutput',
       'rstack.restart',
-      'rstack.migrateSettings',
       'rstack.rslint.output.focus',
       'rstack.rslint.restart',
       'rstack.rstest.output.focus',

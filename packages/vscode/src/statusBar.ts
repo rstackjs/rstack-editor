@@ -415,10 +415,10 @@ export class StatusBar implements vscode.Disposable {
         `${actionCells.join('')}</tr>`
       );
     });
-    // In the same table as the stacks so all six icons share one column; a
+    // In the same table as the stacks so all five icons share one column; a
     // second table would size its columns independently and the two halves
-    // would drift apart. One row per action rather than three across, because
-    // three labelled actions do not fit across a card this narrow — they would
+    // would drift apart. One row per action rather than two across, because
+    // two labelled actions do not fit across a card this narrow — they would
     // wrap, and a wrapped row of links reads as one ragged paragraph.
     //
     // Unlike the per-stack restarts, "Relaunch" is unconditional: it is the
@@ -427,12 +427,6 @@ export class StatusBar implements vscode.Disposable {
     const shellActions = [
       actionRow(columns, 'rstack.restart', '$(debug-restart)', 'Relaunch'),
       actionRow(columns, 'rstack.showOutput', '$(selection)', 'Extension log'),
-      actionRow(
-        columns,
-        'rstack.migrateSettings',
-        '$(arrow-right)',
-        'Migrate settings',
-      ),
     ];
     const body = [...rows, ...sectionBreak(columns), ...shellActions];
     // The notices sit under their own divider, one full-width cell each. Named

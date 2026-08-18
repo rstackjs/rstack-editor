@@ -56,11 +56,6 @@
         "icon": "$(debug-restart)"
       },
       {
-        "command": "rstack.migrateSettings",
-        "title": "Migrate Rslint/Rstest Settings",
-        "category": "Rstack"
-      },
-      {
         "command": "rstack.rslint.output.focus",
         "title": "Show Rslint Log",
         "category": "Rstack"

@@ -43,7 +43,7 @@ This decision was written for one path, the rstest worker, and named two others 
 
 ## Consequences
 
-- An explicit `rstack.nodeExecutable` (shared with the fmt server since ADR 0002; the standalone Rstest extension's `rstest.nodeExecutable` migrates to it) is always honoured, but it is probed too: falling short of the floor produces a status, not a refusal. The escape hatch stays an escape hatch; it stops being silent.
+- An explicit `rstack.nodeExecutable` (shared with the fmt server since ADR 0002; the standalone Rstest extension's `rstest.nodeExecutable` had this role — it is not migrated, #15) is always honoured, but it is probed too: falling short of the floor produces a status, not a refusal. The escape hatch stays an escape hatch; it stops being silent.
 - A below-floor configured executable is reported through the same status as "no runtime found at all", so the two messages must state their _consequence_ explicitly — one says tests will not run, the other says the extension is running with it anyway.
 - The interactive-shell probe is the recovery path and does not exist on Windows (no `-i -c` equivalent reliably evaluates a user's profile across cmd and PowerShell). A Windows user whose PATH `node` is below the floor gets the failure status with no second candidate.
 - `NODE_OPTIONS` can carry `--no-strip-types`, which defeats the floor on any version. Deliberately not detected: the same setting breaks `rs test` in the terminal, so the editor failing identically is correct, and special-casing one flag would be permanent trivia bought for one diagnostic.

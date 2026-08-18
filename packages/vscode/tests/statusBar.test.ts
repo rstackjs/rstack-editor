@@ -110,11 +110,10 @@ describe('StatusBar hover', () => {
   it('shows one row per stack and the shell actions when nothing is detected', () => {
     const { html } = build();
     expect(stackRows(html())).toHaveLength(3);
-    // Divider, spacer, and the three shell actions still follow the stacks.
-    expect(rowsOf(html())).toHaveLength(8);
+    // Divider, spacer, and the two shell actions still follow the stacks.
+    expect(rowsOf(html())).toHaveLength(7);
     expect(html()).toContain('command:rstack.restart');
     expect(html()).toContain('command:rstack.showOutput');
-    expect(html()).toContain('command:rstack.migrateSettings');
   });
 
   it('spells a failure message out below the table, named by its stack', () => {
@@ -255,7 +254,7 @@ describe('StatusBar hover', () => {
     // `disabled` does spell its reason out — when it has one. Absent, it must
     // not leave a stray notice (or its divider) behind.
     expect(noticesOf(html())).toEqual([]);
-    expect(rowsOf(html())).toHaveLength(8);
+    expect(rowsOf(html())).toHaveLength(7);
   });
 
   it('spells out why a stack was deliberately turned off', () => {

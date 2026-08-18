@@ -250,10 +250,6 @@ rs.mock('../src/stacks/test', () => ({
 rs.mock('../src/stacks/fmt', () => ({
   createFmtController: () => harness.controller('fmt'),
 }));
-rs.mock('../src/migration', () => ({
-  maybePromptForMigration: async () => undefined,
-  runSettingsMigration: async () => undefined,
-}));
 // The real reset is inert in tests; the harness counts the calls.
 rs.mock('../src/shared/nodeResolution', () => ({
   resetUserNodeCaches: () => {

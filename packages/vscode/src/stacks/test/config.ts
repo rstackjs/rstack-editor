@@ -17,8 +17,7 @@ import vscode from 'vscode';
 /**
  * The namespace adaptation: the unified namespace is `rstack.*`, so
  * every key below is read from the `rstack.rstest` section instead of the
- * legacy `rstest` one. No aliases — `rstack.migrateSettings` is the migration
- * path.
+ * legacy `rstest` one. No aliases.
  */
 export const CONFIG_SECTION = 'rstack.rstest';
 
