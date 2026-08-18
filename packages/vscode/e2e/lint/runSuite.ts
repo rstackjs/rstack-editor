@@ -10,6 +10,13 @@
  *   for the lint stack to register through the extension's public exports
  *   channel (`whenStackActive('rslint')`) instead. The no-config suite asserts
  *   the opposite state and opts out via `createRun({ expectLintStack: false })`.
+ * - Since rslint #1617 that signal means "the controller registered its
+ *   detected folders and scheduled the open documents", not "a server is
+ *   running": a **Lint runtime** exists only while a document uses it, so a
+ *   freshly registered stack usually holds zero runtimes (the folder reports
+ *   `running: idle`) and that counts as active. A suite that needs a live
+ *   server opens a document and awaits its diagnostics — which is what the
+ *   ported suites already do.
  * - `fast-glob` is replaced by a small recursive walk (one dependency less).
  */
 import fs from 'node:fs';

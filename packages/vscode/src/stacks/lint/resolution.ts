@@ -61,6 +61,9 @@ function readPackageLocation(
       `${packageJsonPath} is not a valid ${packageName} package`,
     );
   }
+  // Upstream's CoreResolver refuses a package without a version string. Here
+  // an unknown version soft-passes the floor instead (`shared/versionCheck.ts`,
+  // the toolchain-wide policy), so only the name is a hard requirement.
   return {
     directory: path.dirname(packageJsonPath),
     version: typeof pkg.version === 'string' ? pkg.version : undefined,
@@ -104,6 +107,12 @@ export interface ResolveRslintOptions {
   readonly folderRoot: string;
   readonly mode: RslintMode;
   readonly corePath?: string;
+  /**
+   * Where the native walk-up starts (per-document resolution, rslint #1617);
+   * defaults to the folder root. Bridged mode starts at rstack's directory
+   * instead — one config choice per folder, ADR 0003.
+   */
+  readonly documentDirectory?: string;
 }
 
 /** Resolves the same package chain `rs lint` uses without loading project code. */
@@ -111,6 +120,7 @@ export function resolveRslint({
   folderRoot,
   mode,
   corePath,
+  documentDirectory,
 }: ResolveRslintOptions): RslintResolution {
   let rstack: PackageLocation | undefined;
   let shimPath: string | undefined;
@@ -133,7 +143,7 @@ export function resolveRslint({
     ? resolveConfiguredCore(folderRoot, configuredCorePath)
     : resolveInstalledPackage(
         '@rslint/core',
-        rstack?.directory ?? folderRoot,
+        rstack?.directory ?? documentDirectory ?? folderRoot,
         'missing-core',
       );
 

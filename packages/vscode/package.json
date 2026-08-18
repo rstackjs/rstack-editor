@@ -154,7 +154,7 @@
             "type": "string",
             "default": "",
             "scope": "resource",
-            "markdownDescription": "Path to an `@rslint/core` package directory. Relative paths are resolved from the workspace folder. When empty, the extension resolves the core from the folder's selected lint config source."
+            "markdownDescription": "Path to an `@rslint/core` package directory. Relative paths are resolved from the workspace folder. When empty, a native folder uses the nearest installation above each file and a bridged folder (root `rstack.config.*`) uses the one its `rstack` depends on."
           },
           "rstack.rslint.trace.server": {
             "order": 2,
