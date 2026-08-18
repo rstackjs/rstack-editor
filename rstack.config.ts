@@ -26,6 +26,38 @@ define.lint(async () => {
       },
     },
     {
+      // Resolve-from-project (packages/vscode/AGENTS.md, adaptation #3): the
+      // extension ships no tool packages, so extension source may only take
+      // *types* from them at compile time. Runtime modules come from the
+      // user's project through explicit paths — a static value import would
+      // bundle or `require()` the wrong copy.
+      files: ['packages/vscode/src/**/*.ts'],
+      rules: {
+        '@typescript-eslint/no-restricted-imports': [
+          'error',
+          {
+            patterns: [
+              {
+                group: [
+                  '@rslint/core',
+                  '@rslint/core/*',
+                  '@rstest/core',
+                  '@rstest/core/*',
+                  'rstack',
+                  'rstack/*',
+                  'jiti',
+                  'jiti/*',
+                ],
+                allowTypeImports: true,
+                message:
+                  'Extension source may only import types from tool packages; load the runtime module from the project (see AGENTS.md, resolve-from-project).',
+              },
+            ],
+          },
+        ],
+      },
+    },
+    {
       languageOptions: {
         parserOptions: {
           project: ['./packages/vscode/tsconfig.json'],
