@@ -28,6 +28,23 @@ export const statusForRslintStartFailure = (error: unknown): StackState => {
   };
 };
 
+/**
+ * Names the Rslint core a runtime's failure came from. With several runtimes
+ * in one folder, "the language server stopped" alone does not say which core
+ * to look at; the resolver's own messages already carry the directory, so it
+ * is appended only when missing.
+ */
+export const attributeToCore = (
+  state: StackState,
+  coreDirectory: string,
+): StackState => {
+  if (state.kind !== 'crashed' && state.kind !== 'version-mismatch') {
+    return state;
+  }
+  if (state.detail.includes(coreDirectory)) return state;
+  return { kind: state.kind, detail: `${state.detail} (${coreDirectory})` };
+};
+
 export const runningRslintStatus = (advisory?: string): StackState =>
   advisory === undefined
     ? { kind: 'running' }

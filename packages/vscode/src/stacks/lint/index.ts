@@ -13,6 +13,7 @@ import type { RslintMode } from './resolution';
 import { RuntimeManager } from './RuntimeManager';
 import {
   aggregateFolderStates,
+  attributeToCore,
   foldRslintFolderState,
   statusForRslintStartFailure,
 } from './status';
@@ -223,7 +224,12 @@ class RslintController implements StackController {
         `${workspaceFolder.name} @rslint/core ${installation.version ?? 'unknown'}`,
       ),
       reportStatus: (state) => {
-        this.setState(folderKey, 'runtimes', resolved.key, state);
+        this.setState(
+          folderKey,
+          'runtimes',
+          resolved.key,
+          attributeToCore(state, installation.packageDirectory),
+        );
       },
     });
   }

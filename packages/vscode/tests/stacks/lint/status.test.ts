@@ -2,6 +2,7 @@ import { describe, expect, it } from '@rstest/core';
 import { RslintResolutionError } from '../../../src/stacks/lint/resolution';
 import {
   aggregateFolderStates,
+  attributeToCore,
   foldRslintFolderState,
   RslintVersionMismatchError,
   runningRslintStatus,
@@ -49,6 +50,32 @@ describe('Rslint status classification', () => {
       kind: 'version-mismatch',
       detail: 'Node 22.17 is below the floor',
     });
+  });
+});
+
+describe('attributeToCore', () => {
+  const core = '/w/packages/a/node_modules/@rslint/core';
+
+  it('names the core a runtime failure came from', () => {
+    expect(
+      attributeToCore(
+        { kind: 'crashed', detail: 'the Rslint language server stopped' },
+        core,
+      ),
+    ).toEqual({
+      kind: 'crashed',
+      detail: `the Rslint language server stopped (${core})`,
+    });
+  });
+
+  it('leaves a detail that already names the core, and healthy states, alone', () => {
+    const mismatch = {
+      kind: 'version-mismatch',
+      detail: `@rslint/core 0.7.3 is not supported (${core})`,
+    } as const;
+    expect(attributeToCore(mismatch, core)).toBe(mismatch);
+    const running = { kind: 'running' } as const;
+    expect(attributeToCore(running, core)).toBe(running);
   });
 });
 
