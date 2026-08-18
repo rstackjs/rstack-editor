@@ -42,11 +42,12 @@ const folderReading = (
 });
 
 describe('LEGACY_MAPPINGS', () => {
-  it('covers the full legacy inventory of both retired extensions', () => {
+  it('covers the migratable legacy inventory of both retired extensions', () => {
     // The two Rslint binary settings have no valid core-directory equivalent;
-    // the remaining 2 Rslint settings and all 14 Rstest settings are mapped.
+    // the remaining 3 Rslint settings and all 14 Rstest settings are mapped.
     expect(LEGACY_MAPPINGS.map((mapping) => mapping.from)).toEqual([
       'rslint.enable',
+      'rslint.corePath',
       'rslint.trace.server',
       'rstest.nodeExecutable',
       'rstest.rstestPackagePath',
@@ -107,6 +108,19 @@ describe('LEGACY_MAPPINGS', () => {
 });
 
 describe('planMigration — mechanical renames', () => {
+  it('maps the standalone Rslint core package override', () => {
+    const plan = planMigration([
+      reading({ key: 'rslint.corePath', value: './vendor/rslint-core' }),
+    ]);
+
+    expect(plan.scopes[0]?.writes[0]).toMatchObject({
+      from: 'rslint.corePath',
+      to: 'rstack.rslint.corePath',
+      value: './vendor/rslint-core',
+      rewritten: false,
+    });
+  });
+
   it('carries values over untouched', () => {
     const plan = planMigration([
       reading({ key: 'rstest.nodeExecArgs', value: ['--flag'] }),
@@ -141,6 +155,33 @@ describe('planMigration — mechanical renames', () => {
     ]);
     expect(plan.writeCount).toBe(0);
     expect(plan.skips).toEqual([]);
+  });
+
+  it('reports retired Rslint binary settings without migrating them', () => {
+    const plan = planMigration([
+      reading({ key: 'rslint.binPath', value: 'custom' }),
+      reading({ key: 'rslint.customBinPath', value: '/opt/rslint' }),
+    ]);
+
+    expect(plan.writeCount).toBe(0);
+    expect(plan.skips).toMatchObject([
+      {
+        from: 'rslint.binPath',
+        value: 'custom',
+        reason: 'no-equivalent-setting',
+      },
+      {
+        from: 'rslint.customBinPath',
+        value: '/opt/rslint',
+        reason: 'no-equivalent-setting',
+      },
+    ]);
+    const preview = formatPreview(plan);
+    expect(preview).toContain('Left untouched');
+    expect(preview).toContain('rslint.binPath');
+    expect(preview).toContain('rslint.customBinPath');
+    expect(preview).toContain('this binary-only setting has no equivalent');
+    expect(preview).toContain('rstack.rslint.corePath');
   });
 
   it('ignores readings whose value is undefined', () => {
