@@ -43,9 +43,10 @@ export interface FmtFolderStatus {
  * reason).
  *
  * `disabled` outranks `running` — deliberately the opposite of the shell's
- * and lint's tables, where `disabled` is a kill switch the user flipped. Here
- * it means "this folder has no `rstack` installed and will never format", a
- * fact worth showing over a healthy sibling. `stopped` ranks with `starting`:
+ * table, where `disabled` is a kill switch the user flipped. Here it means
+ * "this folder has no `rstack` installed and will never format", a fact worth
+ * showing over a healthy sibling (lint's fold ranks it the same way, for the
+ * same reason). `stopped` ranks with `starting`:
  * both are "no server right now, none of it an error" (a restart passes
  * through `stopped` on its way back up).
  */

@@ -33,14 +33,11 @@ import {
   resolveUserNodeOnce,
 } from '../../shared/nodeResolution';
 import { getConfiguredNodeExecutable } from '../../shared/nodeExecutableSetting';
-import {
-  checkPackageVersion,
-  formatVersionMismatch,
-} from '../../shared/versionCheck';
 import type { StackState } from '../../types';
+import type { CoreInstallation } from './CoreResolver';
 import { LanguageServerProcessOwner } from './LanguageServerProcessOwner';
 import type { Logger } from './logger';
-import { resolveRslint, type RslintMode } from './resolution';
+import type { RslintMode } from './resolution';
 import {
   RslintVersionMismatchError,
   runningRslintStatus,
@@ -191,6 +188,19 @@ export interface LanguageClientCloseTarget {
 }
 
 export class ManagedLanguageClient extends LanguageClient {
+  public override async start(): Promise<void> {
+    const outerStart = super.start();
+    if (this.state !== State.Starting) return outerStart;
+
+    // languageclient v9 keeps a shared start promise behind its public async
+    // start() call. A transport close during initialize clears the private
+    // reference before the outer call adopts it, leaving its rejection
+    // unobserved. A second, idempotent call adopts that shared promise now.
+    const sharedStart = super.start();
+    void outerStart.catch(() => undefined);
+    return sharedStart;
+  }
+
   public override async stop(timeout?: number): Promise<void> {
     const stateBeforeStop = this.state;
     try {
@@ -278,12 +288,17 @@ export type RslintStatusSink = (state: StackState) => void;
 export interface RslintOptions {
   readonly rootKey: string;
   readonly workspaceFolder: WorkspaceFolder;
+  /**
+   * The one Rslint core this runtime serves, already resolved and version
+   * gated by `CoreResolver`. Upstream passes loaded module factories here; we
+   * pass paths, because the host never loads project code (ADR 0003).
+   */
+  readonly installation: CoreInstallation;
   readonly outputChannel: OutputChannel;
   readonly lspOutputChannel: OutputChannel;
   readonly router: WorkspaceDocumentRouter;
   readonly logger: Logger;
   readonly reportStatus: RslintStatusSink;
-  readonly getMode: () => RslintMode;
 }
 
 export class Rslint implements Disposable {
@@ -293,7 +308,7 @@ export class Rslint implements Disposable {
   public readonly workspaceFolder: WorkspaceFolder;
   private readonly router: WorkspaceDocumentRouter;
   private readonly reportStatus: RslintStatusSink;
-  private readonly getMode: () => RslintMode;
+  private readonly installation: CoreInstallation;
   private readonly lspOutputChannel: OutputChannel;
   private readonly outputChannel: OutputChannel;
   private readonly configWatchers: FileSystemWatcher[] = [];
@@ -315,7 +330,7 @@ export class Rslint implements Disposable {
     this.workspaceFolder = options.workspaceFolder;
     this.router = options.router;
     this.reportStatus = options.reportStatus;
-    this.getMode = options.getMode;
+    this.installation = options.installation;
     this.logger = options.logger;
     this.lspOutputChannel = options.lspOutputChannel;
     this.outputChannel = options.outputChannel;
@@ -362,47 +377,21 @@ export class Rslint implements Disposable {
     this.report({ kind: 'starting' });
 
     const folderRoot = this.workspaceFolder.uri.fsPath;
-    const mode = this.getMode();
-    const corePath = workspace
-      .getConfiguration('rstack.rslint', this.workspaceFolder.uri)
-      .get<string>('corePath');
-    const resolution = resolveRslint({ folderRoot, mode, corePath });
-    this.assertStartCurrent(epoch, signal);
-
-    if (mode === 'bridged') {
-      const rstackCheck = checkPackageVersion(
-        'rstack',
-        resolution.rstackVersion,
-      );
-      if (rstackCheck.kind === 'mismatch') {
-        throw new RslintVersionMismatchError(
-          formatVersionMismatch('rstack', rstackCheck),
-        );
-      }
-    }
-    const coreCheck = checkPackageVersion(
-      '@rslint/core',
-      resolution.coreVersion,
-    );
-    if (coreCheck.kind === 'mismatch') {
-      throw new RslintVersionMismatchError(
-        formatVersionMismatch('@rslint/core', coreCheck),
-      );
-    }
+    const { mode, packageDirectory, shimPath } = this.installation;
 
     this.logger.info(
-      `Rslint ${mode} mode: @rslint/core ${resolution.coreVersion ?? 'unknown'} at ${resolution.coreDir}`,
+      `Rslint ${mode} mode: @rslint/core ${this.installation.version ?? 'unknown'} at ${packageDirectory}`,
     );
-    if (resolution.shimPath !== undefined) {
-      this.logger.info(`Rstack lint shim: ${resolution.shimPath}`);
+    if (shimPath !== undefined) {
+      this.logger.info(`Rstack lint shim: ${shimPath}`);
     }
 
     const nodeExecutable = await this.resolveNodeExecutable();
     this.assertStartCurrent(epoch, signal);
     const workerPath = path.resolve(__dirname, 'lint-worker.js');
-    const workerArgs = [workerPath, '--lsp', '--core', resolution.coreDir];
-    if (resolution.shimPath !== undefined) {
-      workerArgs.push('--config', resolution.shimPath);
+    const workerArgs = [workerPath, '--lsp', '--core', packageDirectory];
+    if (shimPath !== undefined) {
+      workerArgs.push('--config', shimPath);
     }
     const serverProcessOwner = new LanguageServerProcessOwner(
       nodeExecutable,

@@ -1,49 +1,18 @@
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from '@rstest/core';
 import {
   resolveRslint,
   RslintResolutionError,
 } from '../../../src/stacks/lint/resolution';
+import {
+  installPackage,
+  installShim,
+  removeTemporaryDirectories,
+  temporaryDirectory,
+  writePackage,
+} from './packageFixtures';
 
-const temporaryDirectories: string[] = [];
-
-function temporaryDirectory(): string {
-  const directory = fs.mkdtempSync(
-    path.join(os.tmpdir(), 'rslint-resolution-'),
-  );
-  temporaryDirectories.push(directory);
-  return directory;
-}
-
-function writePackage(
-  directory: string,
-  name: 'rstack' | '@rslint/core',
-  version: string,
-): void {
-  fs.mkdirSync(directory, { recursive: true });
-  fs.writeFileSync(
-    path.join(directory, 'package.json'),
-    JSON.stringify({ name, version }),
-  );
-}
-
-function installPackage(
-  root: string,
-  name: 'rstack' | '@rslint/core',
-  version: string,
-): string {
-  const directory = path.join(root, 'node_modules', ...name.split('/'));
-  writePackage(directory, name, version);
-  return fs.realpathSync(directory);
-}
-
-afterEach(() => {
-  for (const directory of temporaryDirectories.splice(0)) {
-    fs.rmSync(directory, { recursive: true, force: true });
-  }
-});
+afterEach(removeTemporaryDirectories);
 
 describe('resolveRslint', () => {
   it('resolves a native folder directly from its @rslint/core installation', () => {
@@ -61,9 +30,7 @@ describe('resolveRslint', () => {
     const root = temporaryDirectory();
     const rstackDir = installPackage(root, 'rstack', '0.6.1');
     const coreDir = installPackage(rstackDir, '@rslint/core', '0.8.0');
-    const shimPath = path.join(rstackDir, 'dist', 'rslintConfig.js');
-    fs.mkdirSync(path.dirname(shimPath));
-    fs.writeFileSync(shimPath, 'export default [];');
+    const shimPath = installShim(rstackDir);
 
     expect(resolveRslint({ folderRoot: root, mode: 'bridged' })).toEqual({
       mode: 'bridged',
@@ -78,12 +45,12 @@ describe('resolveRslint', () => {
   it('uses corePath for the core hop in both modes', () => {
     const root = temporaryDirectory();
     const rstackDir = installPackage(root, 'rstack', '0.6.1');
-    const shimPath = path.join(rstackDir, 'dist', 'rslintConfig.js');
-    fs.mkdirSync(path.dirname(shimPath));
-    fs.writeFileSync(shimPath, 'export default [];');
-    const customCorePath = path.join(root, 'custom-core');
-    writePackage(customCorePath, '@rslint/core', '0.8.1');
-    const customCore = fs.realpathSync(customCorePath);
+    installShim(rstackDir);
+    const customCore = writePackage(
+      path.join(root, 'custom-core'),
+      '@rslint/core',
+      '0.8.1',
+    );
 
     for (const mode of ['native', 'bridged'] as const) {
       const resolution = resolveRslint({
@@ -94,6 +61,49 @@ describe('resolveRslint', () => {
       expect(resolution.coreDir).toBe(customCore);
       expect(resolution.coreVersion).toBe('0.8.1');
     }
+  });
+
+  it('starts the native walk at the document directory, not the folder root', () => {
+    // Per-document core resolution (rslint #1617): a file in a nested package
+    // lints with that package's copy, exactly as `rs lint` run there would.
+    const root = temporaryDirectory();
+    installPackage(root, '@rslint/core', '0.8.0');
+    const nested = path.join(root, 'packages', 'app');
+    const nestedCore = installPackage(nested, '@rslint/core', '0.8.1');
+
+    expect(
+      resolveRslint({
+        folderRoot: root,
+        mode: 'native',
+        documentDirectory: path.join(nested, 'src'),
+      }),
+    ).toEqual({ mode: 'native', coreDir: nestedCore, coreVersion: '0.8.1' });
+  });
+
+  it('ignores the document directory for a bridged folder', () => {
+    // A bridged folder is one config choice for the whole folder, so it is
+    // always exactly one core: rstack's own.
+    const root = temporaryDirectory();
+    const rstackDir = installPackage(root, 'rstack', '0.6.1');
+    const coreDir = installPackage(rstackDir, '@rslint/core', '0.8.0');
+    const shimPath = installShim(rstackDir);
+    const nested = path.join(root, 'packages', 'app');
+    installPackage(nested, '@rslint/core', '0.8.1');
+
+    expect(
+      resolveRslint({
+        folderRoot: root,
+        mode: 'bridged',
+        documentDirectory: path.join(nested, 'src'),
+      }),
+    ).toEqual({
+      mode: 'bridged',
+      coreDir,
+      coreVersion: '0.8.0',
+      rstackDir,
+      rstackVersion: '0.6.1',
+      shimPath,
+    });
   });
 
   it('reports a missing rstack shim before resolving its core', () => {

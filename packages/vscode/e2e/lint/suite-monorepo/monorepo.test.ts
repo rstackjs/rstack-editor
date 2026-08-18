@@ -1,11 +1,23 @@
-// Ported verbatim from web-infra-dev/rslint
-// `packages/vscode-extension/__tests__/suite-monorepo/monorepo.test.ts` (origin/main).
+// Ported from web-infra-dev/rslint
+// `packages/vscode-extension/__tests__/suite-monorepo/monorepo.test.ts`
+// (origin/main). Verbatim apart from the nested-physical-core fixture setup,
+// whose deviation is documented on `suiteSetup` below.
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import path from 'node:path';
 import fs from 'node:fs';
 import { waitForRslintDiagnostics as waitForDiagnostics } from '../utils/diagnostics';
 import { revertTextDocument } from '../utils/documents';
+import { CoreResolver } from '../../../src/stacks/lint/CoreResolver';
+import type { StackState } from '../../../src/types';
+import { extensionExports } from '../utils/extension';
+
+function getRuntimeStates(): ReadonlyMap<string, StackState> {
+  const exports = extensionExports().getStackExports('rslint') as
+    { getRuntimeStates?: () => ReadonlyMap<string, StackState> } | undefined;
+  assert.ok(exports?.getRuntimeStates, 'lint stack exports are unavailable');
+  return exports.getRuntimeStates();
+}
 
 suite('rslint monorepo multi-config support', function () {
   this.timeout(120000);
@@ -28,7 +40,138 @@ suite('rslint monorepo multi-config support', function () {
     });
   }
 
+  /**
+   * Give `packages/foo` its own **physical** `@rslint/core` copy, so the
+   * monorepo exercises two Lint runtimes in one workspace folder (rslint
+   * #1617). Upstream's fixture does the same by copying `package.json` + `dist`
+   * out of the workspace-resolved core and symlinking that core's own
+   * `node_modules` next to the copy.
+   *
+   * Adaptation: this repo installs published npm packages into one shared
+   * fixture root (`e2e/lint/fixtures/package.json`), and with pnpm's isolated
+   * store the core's dependencies (`picomatch`, `jiti`, the platform
+   * `@rslint/native-*`) live in the `node_modules` **two levels above** the
+   * package directory, not inside it. Those entries are linked individually —
+   * `@rslint/core` itself is skipped, because a link to the original would
+   * shadow the copy the Lint worker is meant to load.
+   */
+  suiteSetup(async function () {
+    this.timeout(120000);
+    const linkType = process.platform === 'win32' ? 'junction' : 'dir';
+    // Resolve the core the *workspace* resolves, not the one this extension
+    // package happens to carry as a devDependency.
+    const sourceCore = path.dirname(
+      require.resolve('@rslint/core/package.json', {
+        paths: [getWorkspaceRoot()],
+      }),
+    );
+    const nestedCore = path.join(
+      getWorkspaceRoot(),
+      'packages/foo/node_modules/@rslint/core',
+    );
+    await fs.promises.mkdir(nestedCore, { recursive: true });
+    await Promise.all([
+      fs.promises.copyFile(
+        path.join(sourceCore, 'package.json'),
+        path.join(nestedCore, 'package.json'),
+      ),
+      fs.promises.cp(
+        path.join(sourceCore, 'dist'),
+        path.join(nestedCore, 'dist'),
+        { recursive: true, force: false, errorOnExist: true },
+      ),
+    ]);
+
+    const dependencyRoot = path.resolve(sourceCore, '..', '..');
+    const nestedModules = path.join(nestedCore, 'node_modules');
+    await fs.promises.mkdir(nestedModules, { recursive: true });
+    for (const entry of await fs.promises.readdir(dependencyRoot, {
+      withFileTypes: true,
+    })) {
+      if (entry.name.startsWith('.')) continue;
+      if (!entry.name.startsWith('@')) {
+        await fs.promises.symlink(
+          path.join(dependencyRoot, entry.name),
+          path.join(nestedModules, entry.name),
+          linkType,
+        );
+        continue;
+      }
+      const scopeSource = path.join(dependencyRoot, entry.name);
+      const scopeTarget = path.join(nestedModules, entry.name);
+      await fs.promises.mkdir(scopeTarget, { recursive: true });
+      for (const scoped of await fs.promises.readdir(scopeSource)) {
+        if (entry.name === '@rslint' && scoped === 'core') continue;
+        await fs.promises.symlink(
+          path.join(scopeSource, scoped),
+          path.join(scopeTarget, scoped),
+          linkType,
+        );
+      }
+    }
+  });
+
   // ======== Basic multi-config resolution ========
+
+  test('root and nested physical core copies run concurrently', async () => {
+    const rootDoc = await openFile('src/index.ts');
+    const fooDoc = await openFile('packages/foo/src/index.ts');
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    assert.ok(workspaceFolder);
+
+    // The resolver takes the folder's detection decision; this fixture is a
+    // plain native Rslint folder (`rslint.config.js` at the root).
+    const resolver = new CoreResolver();
+    const [rootCore, fooCore] = await Promise.all([
+      resolver.resolve(rootDoc, workspaceFolder, { mode: 'native' }),
+      resolver.resolve(fooDoc, workspaceFolder, { mode: 'native' }),
+    ]);
+    assert.notStrictEqual(
+      rootCore.installation.identity,
+      fooCore.installation.identity,
+    );
+    assert.strictEqual(
+      rootCore.installation.version,
+      fooCore.installation.version,
+    );
+
+    await vscode.window.showTextDocument(rootDoc, { preview: false });
+    await vscode.window.showTextDocument(fooDoc, { preview: false });
+    const [rootDiagnostics, fooDiagnostics] = await Promise.all([
+      waitForDiagnostics(rootDoc, (diagnostics) =>
+        diagnostics.some((diagnostic) =>
+          diagnostic.message.includes('no-explicit-any'),
+        ),
+      ),
+      waitForDiagnostics(fooDoc, (diagnostics) =>
+        diagnostics.some((diagnostic) =>
+          diagnostic.message.includes('no-unsafe-member-access'),
+        ),
+      ),
+    ]);
+
+    assert.ok(
+      rootDiagnostics.some((diagnostic) =>
+        diagnostic.message.includes('no-explicit-any'),
+      ),
+    );
+    assert.ok(
+      fooDiagnostics.some((diagnostic) =>
+        diagnostic.message.includes('no-unsafe-member-access'),
+      ),
+    );
+
+    // Added to upstream's assertions: both documents getting diagnostics is
+    // also what a single runtime would produce, so "run concurrently" is
+    // pinned through the extension's exports — two live Lint runtimes, one
+    // per physical core, inside this one workspace folder.
+    const runtimeStates = getRuntimeStates();
+    assert.strictEqual(
+      runtimeStates.size,
+      2,
+      `expected two Lint runtimes, saw ${[...runtimeStates.keys()].join(', ')}`,
+    );
+  });
 
   test('root file should use root config (no-explicit-any: error)', async () => {
     const doc = await openFile('src/index.ts');
