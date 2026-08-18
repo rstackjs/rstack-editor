@@ -460,8 +460,8 @@
   "preview": true,
   "capabilities": {
     "virtualWorkspaces": {
-      "supported": false,
-      "description": "Rstack resolves `@rslint/core`, `@rstest/core` and `rstack` from the workspace's node_modules and spawns them as local processes, which needs a real file system."
+      "supported": "limited",
+      "description": "Rslint, Rstest and `rs fmt` are resolved from the workspace's node_modules and spawned as local processes, so they only start for file-system workspace folders. In a virtual workspace only the status bar item is shown; no tool starts."
     },
     "untrustedWorkspaces": {
       "supported": "limited",
