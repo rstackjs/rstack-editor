@@ -46,6 +46,7 @@ define.lint(async () => {
                   'rstack',
                   'rstack/*',
                   'jiti',
+                  'jiti/*',
                 ],
                 allowTypeImports: true,
                 message:
