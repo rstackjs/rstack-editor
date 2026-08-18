@@ -274,22 +274,28 @@ suite('local core resolver', () => {
     // Upstream's binary existence check, restated on the gate this host owns:
     // the resolver refuses an unusable core before any runtime is created, and
     // names the directory it came from (a folder can run several cores).
-    // The status detail names the *physical* core directory, which is what the
-    // resolver walked to (`/var` is a symlink to `/private/var` on macOS).
-    const packageDirectory = path.normalize(
-      await fs.realpath(await createInstalledCore(temporaryDirectory, '0.7.3')),
+    // The status detail names the core directory the resolver walked to. Its
+    // spelling is the resolver's (on Windows possibly an 8.3 alias), so the
+    // named path is compared as a physical identity, not as text.
+    const packageDirectory = await createInstalledCore(
+      temporaryDirectory,
+      '0.7.3',
     );
     const document = await createSource('src/index.ts');
 
-    await assert.rejects(
-      new CoreResolver().resolve(document, temporaryWorkspaceFolder(), {
+    let failure: unknown;
+    try {
+      await new CoreResolver().resolve(document, temporaryWorkspaceFolder(), {
         mode: 'native',
-      }),
-      (error: unknown) =>
-        error instanceof Error &&
-        error.message.includes('0.7.3') &&
-        error.message.includes(packageDirectory),
-    );
+      });
+    } catch (error) {
+      failure = error;
+    }
+    assert.ok(failure instanceof Error, 'expected the resolver to reject');
+    assert.ok(failure.message.includes('0.7.3'), failure.message);
+    const named = /\(([^()]+)\)$/.exec(failure.message)?.[1];
+    assert.ok(named, `expected a core directory in: ${failure.message}`);
+    await assertSamePhysicalPath(named, packageDirectory);
   });
 
   test('does not execute a Yarn PnP resolver as a fallback', async () => {
