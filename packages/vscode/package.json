@@ -440,7 +440,7 @@
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.9.2",
     "birpc": "^4.0.0",
-    "bumpp": "^12.2.1",
+    "bumpp": "^11.1.0",
     "core-js-pure": "^3.49.0",
     "cross-env": "^7.0.3",
     "mocha": "^11.7.6",

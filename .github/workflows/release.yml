@@ -13,9 +13,28 @@ permissions:
   contents: read
 
 jobs:
+  # A real release may only be dispatched from `main`: `gh workflow run --ref`
+  # accepts any branch or tag, and publishing plus tagging from anywhere else
+  # would permanently release the wrong commit. Dry runs are allowed from any
+  # ref so a branch can rehearse the packaging matrix. Failing here (instead
+  # of silently skipping the publish steps) makes the mistake visible.
+  preflight:
+    name: Preflight
+    if: github.repository == 'rstackjs/rstack-editor' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require main for a real release
+        if: ${{ !inputs.dry_run && github.ref != 'refs/heads/main' }}
+        run: |
+          echo "::error::A real release must be dispatched from main (got ${GITHUB_REF}). Re-run with dry run enabled, or dispatch from main."
+          exit 1
+      - name: Report
+        run: echo "ref=${GITHUB_REF} sha=${GITHUB_SHA} dry_run=${{ inputs.dry_run }}"
+
   release_vscode_extension:
     name: Release VS Code Extension (${{ matrix.vsce-target }})
-    if: github.repository == 'rstackjs/rstack-editor' && github.event_name == 'workflow_dispatch'
+    needs: preflight
     runs-on: ${{ matrix.runner }}
     environment: vscode-marketplace
     timeout-minutes: 30
@@ -120,8 +139,10 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           # changelogithub needs the tags and history to find the previous
-          # release and list the commits since it.
+          # release and list the commits since it; the tag step compares an
+          # existing tag's target against this commit.
           fetch-depth: 0
+          fetch-tags: true
 
       - name: Setup Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
@@ -139,17 +160,24 @@ jobs:
         id: version
         run: echo "tag=v$(node -p "require('./packages/vscode/package.json').version")" >> "$GITHUB_OUTPUT"
 
-      # Idempotent: re-running a release (e.g. after one marketplace publish
-      # flaked and `--skip-duplicate` covered the rest) must not fail here.
+      # Idempotent for a re-run of the same commit (e.g. after one marketplace
+      # publish flaked and `--skip-duplicate` covered the rest), but a tag that
+      # already points at a *different* commit means the version was never
+      # bumped after the last release: fail instead of attaching VSIX files
+      # built from this commit to a release tagged at another one.
       - name: Push Tag
         env:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
-            echo "tag $TAG already exists, leaving it as is"
-          else
+          existing=$(git rev-parse --verify --quiet "refs/tags/$TAG^{commit}" || true)
+          if [ -z "$existing" ]; then
             git tag "$TAG" "$GITHUB_SHA"
             git push origin "refs/tags/$TAG"
+          elif [ "$existing" = "$GITHUB_SHA" ]; then
+            echo "tag $TAG already points at $GITHUB_SHA, leaving it as is"
+          else
+            echo "::error::tag $TAG already exists at $existing but this run is at $GITHUB_SHA — bump the version (pnpm bump) before releasing again."
+            exit 1
           fi
 
       - name: GitHub Release
