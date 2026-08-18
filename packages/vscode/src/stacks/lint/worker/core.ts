@@ -25,7 +25,6 @@ interface PluginHostModule {
 }
 
 interface CorePackageJson {
-  readonly name: string;
   readonly version: string;
 }
 
@@ -75,7 +74,7 @@ async function readPackageJson(
       `${packageJsonPath} is not a valid ${CORE_PACKAGE_NAME} package`,
     );
   }
-  return { name: parsed.name, version: parsed.version };
+  return { version: parsed.version };
 }
 
 function resolveExport(packageDirectory: string, subpath: string): string {

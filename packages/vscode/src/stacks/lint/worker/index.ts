@@ -80,7 +80,6 @@ async function spawnRslint(
   binaryPath: string,
 ): Promise<ChildProcessWithoutNullStreams> {
   const child = spawn(binaryPath, ['--lsp'], {
-    cwd: process.cwd(),
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   await new Promise<void>((resolve, reject) => {

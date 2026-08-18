@@ -142,16 +142,15 @@ export const LEGACY_MAPPINGS: readonly LegacyMapping[] = [
  * required by the lint worker. Detect them for the preview, but never rewrite
  * or remove them.
  */
-const DROPPED_LEGACY_KEYS = ['rslint.binPath', 'rslint.customBinPath'] as const;
+const DROPPED_LEGACY_KEY_SET: ReadonlySet<string> = new Set([
+  'rslint.binPath',
+  'rslint.customBinPath',
+]);
 
 const LEGACY_SOURCE_KEYS: readonly string[] = [
   ...LEGACY_MAPPINGS.map((mapping) => mapping.from),
-  ...DROPPED_LEGACY_KEYS,
+  ...DROPPED_LEGACY_KEY_SET,
 ];
-
-const DROPPED_LEGACY_KEY_SET: ReadonlySet<string> = new Set(
-  DROPPED_LEGACY_KEYS,
-);
 
 const MAPPINGS_BY_KEY = new Map(
   LEGACY_MAPPINGS.map((mapping) => [mapping.from, mapping]),
@@ -369,9 +368,8 @@ const SKIP_EXPLANATIONS: Readonly<
   Record<SkipReason, (skip: PlannedSkip) => string>
 > = {
   'unsupported-value': (skip) =>
-    `${formatValue(skip.value)} is not a valid value of ${skip.to ?? 'the replacement setting'}`,
-  'target-already-set': (skip) =>
-    `${skip.to ?? 'the replacement setting'} is already set here`,
+    `${formatValue(skip.value)} is not a valid value of ${skip.to}`,
+  'target-already-set': (skip) => `${skip.to} is already set here`,
   'not-folder-scoped': (skip) =>
     `${skip.to} is a window-scoped setting and cannot be set per folder`,
   'no-equivalent-setting': () =>

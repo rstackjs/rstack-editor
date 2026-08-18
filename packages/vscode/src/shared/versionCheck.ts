@@ -10,10 +10,10 @@ import { readPackageJson } from './packageResolve';
  * Launch floors (verified against npm):
  * - `@rslint/core >= 0.8.0` — explicit protocol-2 config selection.
  * - `@rstest/core >= 0.6.0` — the existing `MIN_CORE_VERSION` upstream.
- * - `rstack >= 0.6.1` — the release whose lint shim uses @rslint/core 0.8.
- *   There is no stdin fallback for older
- *   releases: the editor would then format through a different code path than
- *   the one it is tested against, so the floor is a version gate instead.
+ * - `rstack >= 0.6.1` — the first release depending on `@rslint/core ~0.8.0`,
+ *   whose lint shim the bridged lint worker pins (protocol 2). It also carries
+ *   `rs fmt --lsp`; there is no stdin fallback for older releases, since the
+ *   editor would then format through a code path it is not tested against.
  *   The floor is **uniform across consumers by decision**: the Rstest bridge
  *   checks the same entry, so an older rstack reports `version mismatch` for
  *   tests too, even when that stack's own API would still work. One matrix

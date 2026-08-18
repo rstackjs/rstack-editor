@@ -29,7 +29,7 @@ Glossary of terms used across rstack-editor. Code, docs, commit messages and rev
 
 ## lint
 
-- **Lint worker** — the process the extension ships and runs for one lint server: it hosts Rslint's JS side (config evaluation, plugin rules) on a User Node runtime with its cwd at the config root, and fronts the Go `rslint --lsp` process it spawns, so the editor sees one language server. _Avoid_: lint host, lint proxy, lint server (that is what the worker presents, not what it is).
+- **Lint worker** — the process the extension ships and runs for one lint server: it hosts Rslint's JS side (config evaluation, plugin rules) on a User Node runtime with its cwd at the workspace folder root, and fronts the Go `rslint --lsp` process it spawns, so the editor sees one language server. _Avoid_: lint host, lint proxy, lint server (that is what the worker presents, not what it is).
 - **Bridged folder** — a workspace folder whose lint runs against the Rstack config: no native `rslint.config.*` anywhere in the folder, a `rstack.config.*` at its root, and the lint worker pinned to rstack's shipped shim for its whole lifetime. _Avoid_: bridged workspace, rstack folder.
 - **Native folder** — a workspace folder whose lint runs against its own `rslint.config.*`, exactly as the standalone Rslint extension would.
 

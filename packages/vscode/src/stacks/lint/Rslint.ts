@@ -57,6 +57,11 @@ const LOCKFILE_NAMES = [
   'yarn.lock',
 ] as const;
 
+/**
+ * Kept verbatim from upstream, JSON names included: they are not detection
+ * signals but watching them is harmless, and the Go server does load
+ * `rslint.json` from its cwd as a no-JS-config fallback in automatic mode.
+ */
 const RSLINT_CONFIG_WATCH_NAMES = [
   'rslint.config.js',
   'rslint.config.mjs',
@@ -364,7 +369,7 @@ export class Rslint implements Disposable {
     const resolution = resolveRslint({ folderRoot, mode, corePath });
     this.assertStartCurrent(epoch, signal);
 
-    if (resolution.rstackDir !== undefined) {
+    if (mode === 'bridged') {
       const rstackCheck = checkPackageVersion(
         'rstack',
         resolution.rstackVersion,

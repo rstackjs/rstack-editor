@@ -7,7 +7,7 @@ import type {
 import type { CancellationToken } from 'vscode-jsonrpc/node';
 import type { WorkerLogger } from './logger';
 
-export type PluginHostFactory = (
+type PluginHostFactory = (
   configs: ConfigDescriptor[],
   onLog: (record: { level: string; source: string; text: string }) => void,
 ) => Promise<PluginLintHost>;
