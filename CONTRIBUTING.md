@@ -33,7 +33,7 @@ To try the extension: press F5 in VS Code at the repo root — the playground la
 
 The VS Code extension is the only versioned artifact; its version lives in `packages/vscode/package.json`.
 
-1. On a branch, run `pnpm bump` (interactive; or `pnpm bump --release minor`) — [bumpp](https://github.com/antfu-collective/bumpp) bumps the manifest and commits `chore(vscode): release vX.Y.Z`. It does not tag or push.
+1. On a branch, run `pnpm bump` (interactive; or `pnpm bump --release minor`) — [bumpp](https://github.com/antfu-collective/bumpp) bumps the manifest and commits `vX.Y.Z`. It does not tag or push.
 2. Open a PR with that commit and merge it into `main`.
 3. Run the **Release** workflow (`Actions → Release → Run workflow`, branch `main`; `gh workflow run release.yml`). Tick **dry run** to only build the six VSIX artifacts. A real run publishes every platform target to the VS Code Marketplace and Open VSX, then tags `main` as `vX.Y.Z` and creates the GitHub Release with notes generated from the conventional commits since the previous tag and the VSIX files attached.
 
