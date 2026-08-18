@@ -1,11 +1,3 @@
-// Copied from web-infra-dev/rslint
-// `packages/vscode-extension/src/ConfigTransactionAdapter.ts` (origin/main).
-//
-// Adapted for the resolve-from-project adaptation: `@rslint/core/config-loader` is not bundled, so
-// `CONFIG_DISCOVERY_PROTOCOL_VERSION` is no longer a compile-time constant. It
-// is read from the project-resolved loader module and injected here, and a
-// mismatch reported by the Go server is routed to `onProtocolMismatch` so the
-// status bar can show the `version mismatch` state.
 import type {
   ActivateConfigsRequest,
   ActivateConfigsResponse,
@@ -18,9 +10,7 @@ import type {
 
 interface ConfigActivationWireResponse {
   transactionId: string;
-  /** Empty when no matching worker generation could be staged. */
   eslintPluginEntries: ConfigModuleEslintPluginEntry[];
-  /** False lets Go preserve its last-good catalog instead of committing. */
   pluginHostReady: boolean;
 }
 
@@ -39,7 +29,6 @@ interface ConfigAbortWireResponse {
   aborted: true;
 }
 
-/** Structural seams keep the JSON-RPC transaction adapter independently testable. */
 interface ConfigModuleHostAdapter {
   loadConfigs(
     request: LoadConfigsRequest,
@@ -69,24 +58,6 @@ function throwIfAborted(signal?: AbortSignal): void {
   throw new Error('config transaction was cancelled');
 }
 
-/**
- * Raised when the Go server speaks a config-discovery protocol version other
- * than the one the project-resolved loader implements. This must be
- * surfaced as the `version mismatch` status-bar state rather than as a generic
- * transaction failure.
- */
-export class ConfigTransactionProtocolMismatchError extends Error {
-  constructor(
-    readonly serverProtocolVersion: unknown,
-    readonly loaderProtocolVersion: number,
-  ) {
-    super(
-      `unsupported config transaction protocol ${String(serverProtocolVersion)} (the project's @rslint/core config-loader implements ${loaderProtocolVersion})`,
-    );
-    this.name = 'ConfigTransactionProtocolMismatchError';
-  }
-}
-
 function assertTransactionControlRequest(
   request: ConfigTransactionControlRequest,
   protocolVersion: number,
@@ -95,9 +66,8 @@ function assertTransactionControlRequest(
     throw new Error('config transaction request must be an object');
   }
   if (request.protocolVersion !== protocolVersion) {
-    throw new ConfigTransactionProtocolMismatchError(
-      request.protocolVersion,
-      protocolVersion,
+    throw new Error(
+      `unsupported config transaction protocol ${String(request.protocolVersion)}`,
     );
   }
   if (
@@ -108,13 +78,7 @@ function assertTransactionControlRequest(
   }
 }
 
-/**
- * LSP transport adapter for the shared config module host.
- *
- * Go owns discovery, ignore semantics, last-good selection and catalog commit.
- * This adapter only evaluates Go's candidates, stages the matching plugin host,
- * and mirrors Go's final commit/abort for the same transaction ID.
- */
+/** Hosts one Go config-discovery transaction inside the lint worker. */
 export class LspConfigTransactionAdapter {
   private readonly transactions = new Set<string>();
   private disposed = false;
@@ -123,39 +87,19 @@ export class LspConfigTransactionAdapter {
     private readonly host: ConfigModuleHostAdapter,
     private readonly pluginLintPool: PluginLintPoolAdapter,
     private readonly fingerprint: (plan: ConfigModuleActivationPlan) => string,
-    /** `CONFIG_DISCOVERY_PROTOCOL_VERSION` of the project-resolved loader. */
     private readonly protocolVersion: number,
-    private readonly onProtocolMismatch?: (
-      error: ConfigTransactionProtocolMismatchError,
-    ) => void,
   ) {}
-
-  private assertRequest(request: ConfigTransactionControlRequest): void {
-    try {
-      assertTransactionControlRequest(request, this.protocolVersion);
-    } catch (error) {
-      if (error instanceof ConfigTransactionProtocolMismatchError) {
-        this.onProtocolMismatch?.(error);
-      }
-      throw error;
-    }
-  }
 
   async loadConfigs(
     request: LoadConfigsRequest,
     signal?: AbortSignal,
   ): Promise<LoadConfigsResponse> {
     this.assertActive();
-    this.assertRequest(request);
+    assertTransactionControlRequest(request, this.protocolVersion);
     throwIfAborted(signal);
     const transactionId = request.transactionId;
     this.transactions.add(transactionId);
     try {
-      // Editor reloads must not reuse the config entry module. Go still sends
-      // the shared envelope, but the LSP transport makes that entry-freshness
-      // invariant explicit for every frontier. Static transitive imports retain
-      // Node's normal module-cache semantics; full graph isolation requires a
-      // separate evaluator realm rather than query-busting only the entry URL.
       const response = await this.host.loadConfigs(
         { ...request, loadMode: 'fresh' },
         signal,
@@ -174,7 +118,7 @@ export class LspConfigTransactionAdapter {
     signal?: AbortSignal,
   ): Promise<ConfigActivationWireResponse> {
     this.assertActive();
-    this.assertRequest(request);
+    assertTransactionControlRequest(request, this.protocolVersion);
     throwIfAborted(signal);
     const transactionId = request.transactionId;
     try {
@@ -198,10 +142,6 @@ export class LspConfigTransactionAdapter {
       throwIfAborted(signal);
       return {
         transactionId: activation.transactionId,
-        // Never ask Go to register/dispatch placeholder rules without the
-        // matching worker generation. On first startup Go may still commit the
-        // ordinary native config as a degraded no-host generation; with a
-        // last-good generation it instead aborts this transaction.
         eslintPluginEntries: pluginHostReady
           ? activation.eslintPluginEntries
           : [],
@@ -218,7 +158,7 @@ export class LspConfigTransactionAdapter {
     request: ConfigTransactionControlRequest,
   ): Promise<ConfigCommitWireResponse> {
     this.assertActive();
-    this.assertRequest(request);
+    assertTransactionControlRequest(request, this.protocolVersion);
     const transactionId = request.transactionId;
     if (!(await this.pluginLintPool.commit(transactionId))) {
       throw new Error(
@@ -226,47 +166,20 @@ export class LspConfigTransactionAdapter {
       );
     }
     this.cleanup(transactionId);
-    return {
-      transactionId,
-      committed: true,
-    };
+    return { transactionId, committed: true };
   }
 
   async abortConfigs(
     request: ConfigTransactionControlRequest,
   ): Promise<ConfigAbortWireResponse> {
-    this.assertRequest(request);
+    assertTransactionControlRequest(request, this.protocolVersion);
     const transactionId = request.transactionId;
     try {
       await this.pluginLintPool.abort(transactionId);
     } finally {
       this.cleanup(transactionId);
     }
-    return {
-      transactionId,
-      aborted: true,
-    };
-  }
-
-  /**
-   * Drop transactions orphaned by a native-server restart while keeping the
-   * adapter reusable for the replacement process. A transaction that reached
-   * PluginLintPool.commit but whose response was lost is compensated by abort;
-   * an older fully committed host is not in this set and remains available
-   * until the replacement server commits its first catalog.
-   */
-  async resetForServerRestart(): Promise<void> {
-    this.assertActive();
-    const orphaned = [...this.transactions];
-    this.transactions.clear();
-    for (const transactionId of orphaned) {
-      this.host.deleteSession(transactionId);
-    }
-    await Promise.allSettled(
-      orphaned.map(async (transactionId) =>
-        this.pluginLintPool.abort(transactionId),
-      ),
-    );
+    return { transactionId, aborted: true };
   }
 
   dispose(): void {

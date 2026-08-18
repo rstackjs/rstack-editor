@@ -3,7 +3,6 @@ import {
   checkPackageVersion,
   checkVersion,
   formatVersionMismatch,
-  isSupportedConfigDiscoveryProtocolVersion,
   NODE_RUNTIME_RANGE,
   SUPPORT_MATRIX,
 } from '../src/shared/versionCheck';
@@ -11,19 +10,19 @@ import {
 describe('support matrix', () => {
   it('pins the launch support floors', () => {
     expect(SUPPORT_MATRIX).toEqual({
-      '@rslint/core': '>=0.7.2',
+      '@rslint/core': '>=0.8.0',
       '@rstest/core': '>=0.6.0',
-      rstack: '>=0.5.2',
+      rstack: '>=0.6.1',
     });
   });
 });
 
 describe('checkPackageVersion', () => {
   it('accepts versions at and above the floor', () => {
-    expect(checkPackageVersion('@rslint/core', '0.7.2').kind).toBe('ok');
+    expect(checkPackageVersion('@rslint/core', '0.8.0').kind).toBe('ok');
     expect(checkPackageVersion('@rslint/core', '1.2.3').kind).toBe('ok');
     expect(checkPackageVersion('@rstest/core', '0.11.5').kind).toBe('ok');
-    expect(checkPackageVersion('rstack', '0.5.2').kind).toBe('ok');
+    expect(checkPackageVersion('rstack', '0.6.1').kind).toBe('ok');
   });
 
   it('accepts prereleases of a supported range', () => {
@@ -52,12 +51,5 @@ describe('node runtime range', () => {
     expect(checkVersion('22.18.0', NODE_RUNTIME_RANGE).kind).toBe('ok');
     expect(checkVersion('23.5.0', NODE_RUNTIME_RANGE).kind).toBe('mismatch');
     expect(checkVersion('23.6.0', NODE_RUNTIME_RANGE).kind).toBe('ok');
-  });
-});
-
-describe('config discovery protocol', () => {
-  it('supports exactly the protocol versions the copied client speaks', () => {
-    expect(isSupportedConfigDiscoveryProtocolVersion(1)).toBe(true);
-    expect(isSupportedConfigDiscoveryProtocolVersion(2)).toBe(false);
   });
 });

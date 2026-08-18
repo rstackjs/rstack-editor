@@ -14,8 +14,8 @@ export const expandWorkspaceFolder = (
 
 /**
  * The shared User Node runtime pin (`rstack.nodeExecutable`), read by every
- * stack that spawns a project-loading child process (the rstest worker, the
- * `rs fmt --lsp` server). One setting rather than one per stack on purpose:
+ * stack that spawns a project-loading child process (the lint worker, the
+ * rstest worker and the `rs fmt --lsp` server). One setting rather than one per stack on purpose:
  * the runtime selection logic is uniform across stacks, so the escape hatch
  * must be too — a user pinning Node for one tool means it for the toolchain.
  *

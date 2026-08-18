@@ -3,9 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "E2E fixture: an rstack-cli project whose only config is `rstack.config.ts`, which lights the Rstest and rs fmt stacks.",
+  "description": "E2E fixture: an rstack-cli project whose only config is `rstack.config.ts`, which lights all three stacks.",
   "dependencies": {
-    "rstack": "0.5.2"
+    "rstack": "0.6.1"
   },
   "devDependencies": {
     "jiti": "^2.0.0"

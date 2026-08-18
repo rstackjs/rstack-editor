@@ -45,6 +45,7 @@ const sourceMap = process.env.SOURCEMAP === 'true';
 // while the stacks are still being copied in.
 const workerEntry = './src/stacks/test/worker/index.ts';
 const hasWorkerEntry = existsSync(path.join(rootDir, workerEntry));
+const lintWorkerEntry = './src/stacks/lint/worker/main.ts';
 
 const libs: LibConfig[] = [
   {
@@ -112,5 +113,27 @@ if (hasWorkerEntry) {
     },
   });
 }
+
+libs.push({
+  syntax: 'es2023',
+  format: 'cjs',
+  source: {
+    entry: {
+      'lint-worker': lintWorkerEntry,
+    },
+  },
+  output: {
+    target: 'node',
+    externals,
+    sourceMap,
+  },
+  tools: {
+    rspack: {
+      output: {
+        devtoolModuleFilenameTemplate: '[absolute-resource-path]',
+      },
+    },
+  },
+});
 
 export default defineConfig({ lib: libs });

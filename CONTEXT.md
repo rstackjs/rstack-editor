@@ -14,7 +14,7 @@ Glossary of terms used across rstack-editor. Code, docs, commit messages and rev
 - **VS Code Node runtime** — the Node.js shipped inside VS Code, which the extension host itself runs on. Its version follows VS Code's release cadence, and it is Electron's Node, on a different ABI line from plain Node. _Avoid_: host runtime, extension host runtime.
 - **User Node runtime** — the Node.js the user's own environment provides, discovered by the extension rather than shipped with it. _Avoid_: worker runtime, project-side Node.
 - **Load bound** — the limit on what a piece of work can end up loading: what the extension ships, plus ABI-stable N-API bindings. Work that stays inside the bound may run on the VS Code Node runtime; work that can load project code has no load bound and belongs on a User Node runtime. _Avoid_: load surface.
-- **Preflight** — the check that picks a User Node runtime, run once per extension host and shared by every process that loads project code (the test worker, the fmt server). Its failure is a status, never a crash.
+- **Preflight** — the check that picks a User Node runtime, run once per extension host and shared by every process that loads project code (the lint worker, the test worker, the fmt server). Its failure is a status, never a crash.
 - **Runtime floor** — the version range a User Node runtime must satisfy (`NODE_RUNTIME_RANGE` in `shared/versionCheck.ts`). A declared support contract, not a probed capability.
 
 ## Tools and configs
@@ -25,7 +25,13 @@ Glossary of terms used across rstack-editor. Code, docs, commit messages and rev
 - **Shim** — the module rstack-cli ships per tool that loads the Rstack config and exposes that tool's section through the tool's ordinary explicit-config channel. The extension points upstream machinery at the shim rather than re-implementing Rstack config semantics.
 - **Bridged project** — a test project the extension synthesizes for a directory whose test signal is a Rstack config, wired to the shim. _Avoid_: virtual project, rstack project.
 - **Config root** — the directory a tool's config is loaded from, which is also the directory the tool's process stands in. For the fmt server the editor anchors it at the workspace folder root, so it loads the config a terminal opened on that folder would, and a subproject that needs its own config becomes its own workspace folder. The test stack does not share this anchor: a project's cwd is set per project (for native configs, upstream's config-file-directory rule). _Avoid_: config directory, project root.
-- **Ownership** — the editor-side rule assigning a directory to one tool when both a native config and a Rstack config are present there: the atomic tool's native config wins and the bridge yields. This rule exists only in the editor; upstream CLIs never face the choice, since each reads only its own config.
+- **Ownership** — the editor-side rule choosing one config source for a tool's unit of work when both a native config and a Rstack config are present: the atomic tool's native config wins and the bridge yields. The unit is the tool's own — a project for test (one per config directory), a workspace folder for lint (one server per folder, one config choice per server process). This rule exists only in the editor; upstream CLIs never face the choice, since each reads only its own config.
+
+## lint
+
+- **Lint worker** — the process the extension ships and runs for one lint server: it hosts Rslint's JS side (config evaluation, plugin rules) on a User Node runtime with its cwd at the workspace folder root, and fronts the Go `rslint --lsp` process it spawns, so the editor sees one language server. _Avoid_: lint host, lint proxy, lint server (that is what the worker presents, not what it is).
+- **Bridged folder** — a workspace folder whose lint runs against the Rstack config: no native `rslint.config.*` anywhere in the folder, a `rstack.config.*` at its root, and the lint worker pinned to rstack's shipped shim for its whole lifetime. _Avoid_: bridged workspace, rstack folder.
+- **Native folder** — a workspace folder whose lint runs against its own `rslint.config.*`, exactly as the standalone Rslint extension would.
 
 ## fmt
 

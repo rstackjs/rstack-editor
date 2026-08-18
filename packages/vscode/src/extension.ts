@@ -25,13 +25,8 @@ const STACK_FACTORIES: Readonly<Record<StackId, StackControllerFactory>> = {
   fmt: createFmtController,
 };
 
-/**
- * The stacks that run project code on a User Node runtime and therefore read
- * the host-scoped preflight memo (`shared/nodeResolution.ts`) — the set
- * `runRestart` checks before resetting it. Lint is deliberately absent: it
- * still runs on the VS Code Node runtime (ADR 0001's recorded debt).
- */
-const USER_NODE_STACKS: readonly StackId[] = ['rstest', 'fmt'];
+/** Stacks that run project-loading children on the shared User Node runtime. */
+const USER_NODE_STACKS: readonly StackId[] = ['rslint', 'rstest', 'fmt'];
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? (error.stack ?? error.message) : String(error);

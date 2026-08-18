@@ -1,10 +1,7 @@
 // Ported from web-infra-dev/rslint
 // `packages/vscode-extension/__tests__/suite-eslint-plugins/plugin-pool.test.ts`
-// (origin/main). Only the import paths changed: the copied extension sources
-// live under `src/stacks/lint/` in this repo. The type-only
-// `@rslint/core/eslint-plugin` import stays a devDependency; the runtime pool
-// under test loads nothing from it (the runtime module is always resolved from
-// the user's project, never bundled).
+// (origin/main). The pool now lives in the dedicated lint worker, so this test
+// covers that worker-owned lifecycle implementation directly.
 import * as assert from 'node:assert';
 
 import type {
@@ -13,9 +10,9 @@ import type {
   EslintPluginLintResult,
   PluginLintHost,
 } from '@rslint/core/eslint-plugin';
-import { CancellationTokenSource } from 'vscode';
-import { PluginLintPool } from '../../../src/stacks/lint/PluginLintPool';
-import type { Logger } from '../../../src/stacks/lint/logger';
+import { CancellationTokenSource } from 'vscode-jsonrpc/node';
+import { PluginLintPool } from '../../../src/stacks/lint/worker/PluginLintPool';
+import type { WorkerLogger } from '../../../src/stacks/lint/worker/logger';
 
 function deferred<T>(): {
   promise: Promise<T>;
@@ -61,11 +58,11 @@ function request(generation: string): EslintPluginLintRequest {
   };
 }
 
-function testLogger(): Logger {
+function testLogger(): WorkerLogger {
   return {
     error() {},
     debug() {},
-  } as unknown as Logger;
+  } as unknown as WorkerLogger;
 }
 
 suite('PluginLintPool generations', () => {

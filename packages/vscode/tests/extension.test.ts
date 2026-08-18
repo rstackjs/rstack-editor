@@ -317,7 +317,7 @@ describe('restart-triggering settings', () => {
     harness.detected = new Set(['rslint', 'rstest', 'fmt']);
     harness.restartOnSettings = new Map([
       ['rstest', ['nodeExecutable']],
-      ['rslint', ['binPath', 'customBinPath']],
+      ['rslint', ['rstack.nodeExecutable', 'corePath', 'trace.server']],
     ]);
     await activate(context);
     harness.events.length = 0;
@@ -372,7 +372,7 @@ describe('restart-triggering settings', () => {
   });
 
   it('honours every setting a stack declares, not just the first', async () => {
-    changeSetting('rstack.rslint.customBinPath');
+    changeSetting('rstack.rslint.corePath');
     await settle();
     expect(stacksOf('register').sort()).toEqual(['fmt', 'rslint', 'rstest']);
   });
@@ -404,9 +404,9 @@ describe('restart-triggering settings', () => {
   });
 
   it('ignores a declared name under another stack namespace', async () => {
-    // The section is built as `rstack.<stack>.<setting>`, so rslint's binPath
+    // The section is built as `rstack.<stack>.<setting>`, so rslint's corePath
     // must not move rstest even though both are declared somewhere.
-    changeSetting('rstack.rstest.binPath');
+    changeSetting('rstack.rstest.corePath');
     await settle();
     expect(harness.events).toEqual([]);
   });
@@ -502,13 +502,16 @@ describe('the shell restart command', () => {
 
   it('resets the memo on a single-stack restart once it is the only consumer', async () => {
     harness.detected.delete('rstest');
-    // Rstest retires through the gate; fmt is still live, so no reset yet.
+    // Rstest retires through the gate; lint and fmt still consume the memo, so
+    // no reset occurs yet.
     await run('rstack.rstest.restart');
     expect(harness.nodeResets).toBe(0);
 
-    // fmt is now the only User-Node consumer and it is in the pass. The
-    // surviving lint controller does not hold the memo alive: it runs on the
-    // VS Code Node runtime and never reads it.
+    harness.detected.delete('rslint');
+    await run('rstack.rslint.restart');
+    expect(harness.nodeResets).toBe(0);
+
+    // fmt is now the only User-Node consumer and it is in the pass.
     await run('rstack.fmt.restart');
     expect(harness.nodeResets).toBe(1);
   });

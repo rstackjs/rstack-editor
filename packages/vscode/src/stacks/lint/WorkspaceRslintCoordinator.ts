@@ -150,13 +150,14 @@ export class WorkspaceRslintCoordinator {
   public handleWorkspaceFoldersChanged(
     event: WorkspaceFoldersChangeEvent,
     folders: readonly WorkspaceFolder[],
+    forceReplaceRoots: ReadonlySet<string> = new Set(),
   ): void {
     if (this.closing) return;
     const removedKeys = new Set<string>();
     for (const folder of event.removed) {
       removedKeys.add(workspaceRootKey(folder));
     }
-    const forceReplace = new Set<string>();
+    const forceReplace = new Set<string>(forceReplaceRoots);
     for (const folder of event.added) {
       const key = workspaceRootKey(folder);
       // A rename/remove+add replacement can preserve the URI. A plain added

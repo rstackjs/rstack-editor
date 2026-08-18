@@ -96,6 +96,10 @@ async function runIsolatedSuite(
       recursive: true,
       force: false,
       errorOnExist: true,
+      // Dependency lookup is reconstructed as one read-only parent symlink
+      // below. Copying a fixture's disposable node_modules would be both slow
+      // and a writable second resolution root inside the sandbox.
+      filter: (source) => path.basename(source) !== 'node_modules',
     });
     const expectedWorkspaceFolders = await Promise.all(
       (suite.workspaceFolders ?? ['.']).map((folder) =>
@@ -181,7 +185,13 @@ async function main(): Promise<void> {
   // `__dirname` is `<package>/tests-dist/e2e/lint` (see tsconfig.e2e.json).
   const extensionDevelopmentPath = path.resolve(__dirname, '../../..');
   const fixturesRoot = path.join(extensionDevelopmentPath, 'e2e/lint/fixtures');
+  const sharedFixturesRoot = path.join(
+    extensionDevelopmentPath,
+    'e2e/fixtures',
+  );
   const fixture = (name: string): string => path.join(fixturesRoot, name);
+  const sharedFixture = (name: string): string =>
+    path.join(sharedFixturesRoot, name);
   const suiteDir = (name: string): string => path.resolve(__dirname, name);
 
   // The extension host loads `main` from `package.json`; an unbuilt repo would
@@ -268,6 +278,11 @@ async function main(): Promise<void> {
       name: 'eslintPlugins tests',
       workspace: fixture('eslint-plugins'),
       tests: suiteDir('suite-eslint-plugins'),
+    },
+    {
+      name: 'Rstack lint bridge tests',
+      workspace: sharedFixture('rstack'),
+      tests: suiteDir('suite-bridge'),
     },
   ];
 

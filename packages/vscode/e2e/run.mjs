@@ -39,10 +39,11 @@ const SLICES = [
     compile: true,
   },
   {
-    // The ported Rslint suites; `RSTACK_LINT_E2E_SUITES=<name,...>` filters
-    // which of them run.
+    // The ported Rslint suites plus the Rstack lint bridge; the latter uses the
+    // shared `rstack` fixture. `RSTACK_LINT_E2E_SUITES=<name,...>` filters
+    // which suites run.
     name: 'lint',
-    fixtures: ['lint'],
+    fixtures: ['lint', 'rstack'],
     entry: 'tests-dist/e2e/lint/runTest.js',
     compile: true,
   },

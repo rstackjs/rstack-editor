@@ -45,16 +45,18 @@ export type SkipReason =
   /** The new key already has an explicit value in the same layer. */
   | 'target-already-set'
   /** A folder-layer value for a window-scoped target setting. */
-  | 'not-folder-scoped';
+  | 'not-folder-scoped'
+  /** The legacy setting represented a feature that no longer exists. */
+  | 'no-equivalent-setting';
 
 type ValueMapping =
   | { readonly kind: 'value'; readonly value: unknown }
   | { readonly kind: 'skip'; readonly reason: SkipReason };
 
 export interface LegacyMapping {
-  /** Fully qualified legacy key, e.g. `rslint.binPath`. */
+  /** Fully qualified legacy key, e.g. `rslint.enable`. */
   readonly from: string;
-  /** Fully qualified new key, e.g. `rstack.rslint.binPath`. */
+  /** Fully qualified new key, e.g. `rstack.rslint.enable`. */
   readonly to: string;
   /**
    * Scope of the *new* key in this extension's manifest. A window-scoped
@@ -69,23 +71,6 @@ export interface LegacyMapping {
    */
   readonly mapValue?: (value: unknown) => ValueMapping;
 }
-
-/**
- * `rslint.binPath` is the one non-mechanical mapping: the old
- * default `built-in` no longer exists because the extension ships no Rslint
- * binary. The new default is `local`; an explicitly set `built-in` becomes
- * `local`, `custom` carries over together with `customBinPath`, and anything
- * else is not in the new enum and would poison the setting.
- */
-const mapBinPath = (value: unknown): ValueMapping => {
-  if (value === 'built-in') {
-    return { kind: 'value', value: 'local' };
-  }
-  if (value === 'local' || value === 'custom') {
-    return { kind: 'value', value };
-  }
-  return { kind: 'skip', reason: 'unsupported-value' };
-};
 
 /**
  * Legacy Rstest keys, in manifest order. Every one of them is a mechanical
@@ -115,8 +100,8 @@ const RSTEST_KEYS: readonly (readonly [string, 'resource' | 'window'])[] = [
 ];
 
 /**
- * The complete legacy inventory: 4 Rslint keys + 14 Rstest keys. Kept in one
- * table so the preview, the writer and the tests cannot disagree.
+ * The migratable legacy inventory: 3 Rslint keys + 14 Rstest keys. Kept in one
+ * table so the preview, writer and tests cannot disagree.
  */
 export const LEGACY_MAPPINGS: readonly LegacyMapping[] = [
   {
@@ -128,14 +113,8 @@ export const LEGACY_MAPPINGS: readonly LegacyMapping[] = [
     targetScope: 'window',
   },
   {
-    from: 'rslint.binPath',
-    to: 'rstack.rslint.binPath',
-    targetScope: 'resource',
-    mapValue: mapBinPath,
-  },
-  {
-    from: 'rslint.customBinPath',
-    to: 'rstack.rslint.customBinPath',
+    from: 'rslint.corePath',
+    to: 'rstack.rslint.corePath',
     targetScope: 'resource',
   },
   {
@@ -156,6 +135,21 @@ export const LEGACY_MAPPINGS: readonly LegacyMapping[] = [
     to: `rstack.rstest.${key}`,
     targetScope,
   })),
+];
+
+/**
+ * These retired binary-only settings cannot name the core package directory
+ * required by the lint worker. Detect them for the preview, but never rewrite
+ * or remove them.
+ */
+const DROPPED_LEGACY_KEY_SET: ReadonlySet<string> = new Set([
+  'rslint.binPath',
+  'rslint.customBinPath',
+]);
+
+const LEGACY_SOURCE_KEYS: readonly string[] = [
+  ...LEGACY_MAPPINGS.map((mapping) => mapping.from),
+  ...DROPPED_LEGACY_KEY_SET,
 ];
 
 const MAPPINGS_BY_KEY = new Map(
@@ -200,7 +194,7 @@ export interface PlannedSkip {
   readonly layer: MigrationLayer;
   readonly folderLabel?: string;
   readonly from: string;
-  readonly to: string;
+  readonly to?: string;
   readonly value: unknown;
   readonly reason: SkipReason;
 }
@@ -247,8 +241,8 @@ const LAYER_ORDER: Readonly<Record<MigrationLayer, number>> = {
  * Turns raw readings into the exact set of writes to perform, grouped by the
  * scope they are written to. Pure: same readings in, same plan out.
  *
- * Readings for keys outside {@link LEGACY_MAPPINGS} and readings whose value is
- * `undefined` (i.e. not explicitly set in that layer) are ignored.
+ * Readings for unknown keys and readings whose value is `undefined` (i.e. not
+ * explicitly set in that layer) are ignored.
  */
 export const planMigration = (
   readings: readonly LegacyReading[],
@@ -274,9 +268,7 @@ export const planMigration = (
     return writes;
   };
 
-  const order = new Map(
-    LEGACY_MAPPINGS.map((mapping, index) => [mapping.from, index]),
-  );
+  const order = new Map(LEGACY_SOURCE_KEYS.map((key, index) => [key, index]));
   const sorted = [...readings].sort((a, b) => {
     const byLayer = LAYER_ORDER[a.layer] - LAYER_ORDER[b.layer];
     if (byLayer !== 0) {
@@ -286,10 +278,22 @@ export const planMigration = (
   });
 
   for (const reading of sorted) {
-    const mapping = MAPPINGS_BY_KEY.get(reading.key);
-    if (!mapping || reading.value === undefined) {
+    if (reading.value === undefined) {
       continue;
     }
+    if (DROPPED_LEGACY_KEY_SET.has(reading.key)) {
+      skips.push({
+        scopeId: reading.scopeId,
+        layer: reading.layer,
+        folderLabel: reading.folderLabel,
+        from: reading.key,
+        value: reading.value,
+        reason: 'no-equivalent-setting',
+      });
+      continue;
+    }
+    const mapping = MAPPINGS_BY_KEY.get(reading.key);
+    if (!mapping) continue;
 
     const skip = (reason: SkipReason): void => {
       skips.push({
@@ -368,6 +372,8 @@ const SKIP_EXPLANATIONS: Readonly<
   'target-already-set': (skip) => `${skip.to} is already set here`,
   'not-folder-scoped': (skip) =>
     `${skip.to} is a window-scoped setting and cannot be set per folder`,
+  'no-equivalent-setting': () =>
+    'this binary-only setting has no equivalent; configure rstack.rslint.corePath with an @rslint/core package directory if an override is still needed',
 };
 
 /**
@@ -443,19 +449,18 @@ export const collectLegacyReadings = (): {
     folders.set(folder.uri.toString(), folder);
   }
 
-  for (const mapping of LEGACY_MAPPINGS) {
-    const legacy = vscode.workspace
-      .getConfiguration()
-      .inspect<unknown>(mapping.from);
-    const target = vscode.workspace
-      .getConfiguration()
-      .inspect<unknown>(mapping.to);
+  for (const key of LEGACY_SOURCE_KEYS) {
+    const mapping = MAPPINGS_BY_KEY.get(key);
+    const legacy = vscode.workspace.getConfiguration().inspect<unknown>(key);
+    const target = mapping
+      ? vscode.workspace.getConfiguration().inspect<unknown>(mapping.to)
+      : undefined;
 
     if (legacy?.globalValue !== undefined) {
       readings.push({
         scopeId: USER_SCOPE,
         layer: 'user',
-        key: mapping.from,
+        key,
         value: legacy.globalValue,
         targetValue: target?.globalValue,
       });
@@ -464,7 +469,7 @@ export const collectLegacyReadings = (): {
       readings.push({
         scopeId: WORKSPACE_SCOPE,
         layer: 'workspace',
-        key: mapping.from,
+        key,
         value: legacy.workspaceValue,
         targetValue: target?.workspaceValue,
       });
@@ -472,7 +477,7 @@ export const collectLegacyReadings = (): {
 
     for (const folder of workspaceFolders) {
       const scoped = vscode.workspace.getConfiguration(undefined, folder.uri);
-      const value = scoped.inspect<unknown>(mapping.from)?.workspaceFolderValue;
+      const value = scoped.inspect<unknown>(key)?.workspaceFolderValue;
       if (value === undefined) {
         continue;
       }
@@ -480,9 +485,11 @@ export const collectLegacyReadings = (): {
         scopeId: folder.uri.toString(),
         layer: 'folder',
         folderLabel: folder.name,
-        key: mapping.from,
+        key,
         value,
-        targetValue: scoped.inspect<unknown>(mapping.to)?.workspaceFolderValue,
+        targetValue: mapping
+          ? scoped.inspect<unknown>(mapping.to)?.workspaceFolderValue
+          : undefined,
       });
     }
   }

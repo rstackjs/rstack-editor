@@ -36,12 +36,10 @@ Note that _worker_ names a process, not a runtime. The worker is our own code; t
 
 ### Where the line is drawn today
 
-This decision was written for one path, the rstest worker, and named two others that sat on the wrong side of the line. One of them has since moved:
+This decision was written for one path, the rstest worker, and named two others that sat on the wrong side of the line. Both have since moved:
 
 - **fmt** used to spawn the project's `rs` bin on `process.execPath` with `ELECTRON_RUN_AS_NODE=1` (`stacks/fmt/run.ts`) — the VS Code Node runtime — and let `rs fmt` load the project's config in that process: unbounded load, no floor, no preflight. It now runs `rs fmt --lsp` as a language server on a User Node runtime chosen by this decision's own logic, against the same floor, with the shared `rstack.nodeExecutable` as its escape hatch. Why the server, and why one per workspace folder: `docs/adr/0002-fmt-lsp-on-user-node-runtime.md`.
-- **lint** imports the project's `@rslint/core/config-loader` into the extension host and loads the user's `rslint.config.ts` there (`stacks/lint/configLoader.ts`), and runs user plugin rules on the same runtime (`stacks/lint/PluginLintPool.ts`). `stacks/lint/jitiPreflight.ts` already records the resulting divergence in so many words: that loader "runs on the extension host's Node — whose version is fixed by VS Code, not by the user — so the jiti branch can trigger in the editor even when the CLI works fine". Its answer is a diagnostic, not a runtime choice.
-
-Lint is what moving costs when it is not cheap: fmt's move needed a whole upstream language server to exist first, and lint needs its own spawn-and-protocol work for the config loader and the plugin host, with no reported bug behind it yet. It stays known debt, deliberately — the rule is not universal until that entry is gone, and nobody should describe it as if it were.
+- **lint** now runs an editor-shipped, vscode-free worker on the same User Node runtime. The worker owns the Go LSP, config evaluation and plugin rules, so no project code is imported into the extension host. The worker and the Rstack lint bridge are the decision in `docs/adr/0003-lint-through-editor-worker.md`; that ADR retires lint from this decision's debt list.
 
 ## Consequences
 

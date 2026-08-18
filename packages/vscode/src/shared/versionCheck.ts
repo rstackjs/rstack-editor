@@ -8,26 +8,25 @@ import { readPackageJson } from './packageResolve';
  * status bar state with actual vs required versions.
  *
  * Launch floors (verified against npm):
- * - `@rslint/core >= 0.7.2` — first version whose package exports
- *   `./config-loader` and `./eslint-plugin`.
+ * - `@rslint/core >= 0.8.0` — explicit protocol-2 config selection.
  * - `@rstest/core >= 0.6.0` — the existing `MIN_CORE_VERSION` upstream.
- * - `rstack >= 0.5.2` — first release with `rs fmt --lsp`, the language server
- *   the fmt stack is a client of. There is no stdin fallback for older
- *   releases: the editor would then format through a different code path than
- *   the one it is tested against, so the floor is a version gate instead.
+ * - `rstack >= 0.6.1` — the first release depending on `@rslint/core ~0.8.0`,
+ *   whose lint shim the bridged lint worker pins (protocol 2). It also carries
+ *   `rs fmt --lsp`; there is no stdin fallback for older releases, since the
+ *   editor would then format through a code path it is not tested against.
  *   The floor is **uniform across consumers by decision**: the Rstest bridge
- *   checks the same entry, so a project on rstack 0.3.5–0.5.1 reports
- *   `version mismatch` for tests too, even though only fmt strictly needs
- *   0.5.2. One matrix entry means "which rstack does the extension support?"
+ *   checks the same entry, so an older rstack reports `version mismatch` for
+ *   tests too, even when that stack's own API would still work. One matrix
+ *   entry means "which rstack does the extension support?"
  *   has one answer; per-stack rstack floors were considered and rejected —
  *   they make the answer depend on which status the user happens to look at,
  *   for the price of keeping tests alive on releases the toolchain has moved
  *   past. The status message names the required version either way.
  */
 export const SUPPORT_MATRIX = {
-  '@rslint/core': '>=0.7.2',
+  '@rslint/core': '>=0.8.0',
   '@rstest/core': '>=0.6.0',
-  rstack: '>=0.5.2',
+  rstack: '>=0.6.1',
 } as const;
 
 export type SupportedPackage = keyof typeof SUPPORT_MATRIX;
@@ -56,8 +55,8 @@ export const readPackageVersion = (
 };
 
 /**
- * The floor for the Node.js a project-loading child process runs on — the test
- * worker and the `rs fmt --lsp` server alike. Not part of
+ * The floor for the Node.js a project-loading child process runs on — the lint
+ * worker, test worker and `rs fmt --lsp` server alike. Not part of
  * `SUPPORT_MATRIX`, which is keyed by npm package name, but the same kind of
  * fact and deliberately kept in the same file so "what does this extension
  * require?" has one answer.
@@ -143,22 +142,3 @@ export const reportVersionCheck = (
   }
   return true;
 };
-
-/**
- * The reverse config-discovery protocol between the Rslint Go server and the
- * project-resolved `@rslint/core/config-loader` is versioned independently of
- * the package version, so `semver.satisfies` is necessary but
- * not sufficient: the client additionally validates the `protocolVersion`
- * carried by `rslint/configRefresh`.
- */
-export const SUPPORTED_CONFIG_DISCOVERY_PROTOCOL_VERSIONS: ReadonlySet<number> =
-  new Set([1]);
-
-export const isSupportedConfigDiscoveryProtocolVersion = (
-  version: number,
-): boolean => SUPPORTED_CONFIG_DISCOVERY_PROTOCOL_VERSIONS.has(version);
-
-export const formatProtocolVersionMismatch = (version: number): string =>
-  `Rslint config-discovery protocol version ${version} is not supported (supported: ${[
-    ...SUPPORTED_CONFIG_DISCOVERY_PROTOCOL_VERSIONS,
-  ].join(', ')})`;

@@ -1,65 +1,20 @@
-/**
- * VS Code-side host for ESLint-plugin lint requests.
- *
- * The Go LSP server lints natively, but rules mounted via a config's
- * object-form `plugins` run in JS. So when Go encounters such a rule it sends a
- * server→client `rslint/pluginLint` request back to this extension;
- * we answer it from an in-process WorkerPool owned by `@rslint/core`'s
- * `createPluginLintHost`. This file is a thin lifecycle wrapper over that
- * host — the request→tasks→result boundary itself lives in `@rslint/core`
- * (`buildPluginLintTasks` / `buildPluginLintResult`), shared with the CLI
- * engine so the two paths never drift.
- *
- * Copied from web-infra-dev/rslint `packages/vscode-extension/src/PluginLintPool.ts`
- * (origin/main), with the module-load path adapted for the resolve-from-project
- * adaptation.
- *
- * Upstream loads the host through the RELATIVE specifier
- * `./eslint-plugin/index.js`, which resolves to the extension's own staged
- * `dist/eslint-plugin/`. This extension stages nothing: the host is resolved
- * from the *project*, out of the same `@rslint/core` install as the Go binary
- * (`resolution.ts`), and handed in through the mandatory `createHost` factory.
- * This is a verified non-requirement — a plain project
- * install runs the whole pipeline unpatched, worker and napi parser included —
- * so the relative-import fix is the only change needed, and it lives here.
- *
- * The host is ESM (it spawns its sibling `lint-worker.js` via
- * `import.meta.url`) while this extension is bundled to CJS, so the factory
- * must reach it through a dynamic `import()`, never `require`.
- */
-
-import { window } from 'vscode';
-import type { CancellationToken } from 'vscode';
-import type { Logger } from './logger';
 import type {
   ConfigDescriptor,
-  PluginLintHost,
   EslintPluginLintRequest,
   EslintPluginLintResult,
+  PluginLintHost,
 } from '@rslint/core/eslint-plugin';
+import type { CancellationToken } from 'vscode-jsonrpc/node';
+import type { WorkerLogger } from './logger';
 
-export type PluginHostFactory = (
+type PluginHostFactory = (
   configs: ConfigDescriptor[],
-  onLog: (rec: { level: string; source: string; text: string }) => void,
+  onLog: (record: { level: string; source: string; text: string }) => void,
 ) => Promise<PluginLintHost>;
 
-// One predecessor is retained without a timer so an active commit can be
-// rolled back if its JSON-RPC response is lost and Go subsequently aborts.
-// Keep one additional grace generation for already-dispatched requests: the
-// bound remains two old pools plus the active pool. Hosts with an acquired
-// lint lease may temporarily exceed this bound until requests drain.
 const MAX_GRACE_GENERATIONS = 1;
 
-/**
- * Latches the one-shot "host failed to load" warning at MODULE scope (not
- * per-instance) so a persistent failure (e.g. a broken vsix that didn't ship
- * the worker payload) surfaces once per session — not once per workspace folder
- * in a multi-root window, where each folder owns its own PluginLintPool.
- */
-let warnedOnce = false;
-
 export class PluginLintPool {
-  private readonly logger: Logger;
   private readonly generations = new Map<string, HostGeneration>();
   private readonly generationRetirementTimers = new Map<
     string,
@@ -67,66 +22,24 @@ export class PluginLintPool {
   >();
   private activeGeneration: string | undefined;
   private activeState: HostGeneration | undefined;
-  /**
-   * The active generation's compensating rollback record. JSON-RPC has no
-   * response acknowledgement, so commit cannot discard this predecessor: Go
-   * may keep last-good and send abort when the commit response is lost or
-   * invalid. A later successful commit proves Go accepted this generation and
-   * moves its predecessor into the ordinary grace-retirement queue.
-   */
   private activeCommitRollback: ActiveCommitRollback | undefined;
   private readonly liveStates = new Set<HostGeneration>();
   private readonly shutdowns = new Set<Promise<void>>();
-  /**
-   * Serializes every lifecycle op (prepare/commit/abort/dispose). Each op
-   * chains onto the previous one's settlement, so concurrent config reloads
-   * cannot race host installation or map mutation. Lint requests for an
-   * installed generation take a lease immediately; only a generation that is
-   * not installed yet waits for this chain and checks again.
-   */
   private opChain: Promise<void> = Promise.resolve();
   private disposed = false;
-  private readonly createHost: PluginHostFactory;
-  private readonly retirementDelayMs: number;
 
   constructor(
-    logger: Logger,
-    // No default: there is no extension-local host to fall back to. The caller
-    // supplies a factory that loads the project-resolved module.
-    createHost: PluginHostFactory,
-    retirementDelayMs = 30_000,
-  ) {
-    this.logger = logger;
-    this.createHost = createHost;
-    this.retirementDelayMs = retirementDelayMs;
-  }
+    private readonly logger: WorkerLogger,
+    private readonly createHost: PluginHostFactory,
+    private readonly retirementDelayMs = 30_000,
+  ) {}
 
-  /** Append `op` to the serialized lifecycle chain and await its turn. */
-  private async enqueue(op: () => Promise<void>): Promise<void> {
-    const run = this.opChain.then(op, op);
-    // Keep the chain alive even if `op` throws — swallow on the chain copy so a
-    // single failed op doesn't poison every subsequent one. Callers awaiting
-    // the returned promise still observe the rejection.
+  private async enqueue(operation: () => Promise<void>): Promise<void> {
+    const run = this.opChain.then(operation, operation);
     this.opChain = run.catch(() => undefined);
     return run;
   }
 
-  /**
-   * Prepare a generation without making it the active fallback for requests
-   * without a key. The transport commits it at the matching config
-   * transaction's commit point;
-   * an abort after commit can still compensate for a lost response and return
-   * to the prior Go last-good generation.
-   *
-   * Returns whether the requested host state is active. Rebuilds are
-   * transactional: a failed replacement leaves the previous host available so
-   * the caller can preserve the matching last-good config payload.
-   *
-   * Empty `descriptors` needs no host, avoiding a module load and worker-pool
-   * allocation when no object-form community plugins are configured. The
-   * matching activation publishes no plugin metadata, so Go must never issue
-   * a plugin-lint request for that generation without a host.
-   */
   async prepare(
     descriptors: ConfigDescriptor[],
     fingerprint: string,
@@ -142,8 +55,6 @@ export class PluginLintPool {
         return;
       }
 
-      // Config-only changes can reuse the same plugin host. The new generation
-      // is still staged separately and is not routable as active until commit.
       if (
         this.activeState?.ready &&
         this.activeState.fingerprint === fingerprint
@@ -167,13 +78,12 @@ export class PluginLintPool {
       }
 
       try {
-        const replacement = await this.createHost(descriptors, (rec) => {
-          const text = `[rslint:plugin] ${rec.text}`;
-          if (rec.level === 'error') this.logger.error(text);
+        const replacement = await this.createHost(descriptors, (record) => {
+          const text = `[rslint:plugin] ${record.text}`;
+          if (record.level === 'error') this.logger.error(text);
           else this.logger.debug(text);
         });
         if (this.disposed) {
-          // Disposed while initializing — shut the fresh pool back down.
           await replacement.shutdown().catch(() => undefined);
           return;
         }
@@ -187,13 +97,7 @@ export class PluginLintPool {
         this.liveStates.add(state);
         this.generations.set(generation, state);
         ready = true;
-      } catch (err: unknown) {
-        // Init failed: either the host module couldn't be loaded (a broken or
-        // partial `@rslint/core` install in the project — see `resolution.ts`),
-        // or a referenced plugin failed to import. Keep the previous
-        // active host intact. Record an unavailable staged generation so the
-        // first valid config can still be committed and serve native rules;
-        // later prepares retry instead of caching this failure as ready.
+      } catch (error: unknown) {
         const state: HostGeneration = {
           fingerprint,
           ready: false,
@@ -202,23 +106,12 @@ export class PluginLintPool {
         };
         this.liveStates.add(state);
         this.generations.set(generation, state);
-        this.logger.error('Failed to initialize ESLint-plugin host', err);
-        // Make the failure visible — but ONLY when a config actually mounted
-        // plugins (an empty-descriptor host builds no worker and failing is
-        // not a user-facing problem), and only once per session so a
-        // persistent failure doesn't re-warn on every reload.
-        if (descriptors.length > 0 && !warnedOnce) {
-          warnedOnce = true;
-          void window.showWarningMessage(
-            'Rstack: failed to load the Rslint ESLint-plugin host; rules mounted via a config’s `plugins` will report no diagnostics. See the "Rstack: Rslint" output channel for details.',
-          );
-        }
+        this.logger.error('Failed to initialize ESLint-plugin host', error);
       }
     });
     return ready;
   }
 
-  /** Commit a previously prepared generation after Go accepts its config. */
   async commit(generation: string): Promise<boolean> {
     let committed = false;
     await this.enqueue(async () => {
@@ -248,7 +141,6 @@ export class PluginLintPool {
     return committed;
   }
 
-  /** Discard a staged generation when source validation or Go commit fails. */
   async abort(generation: string): Promise<void> {
     await this.enqueue(async () => {
       if (generation === this.activeGeneration) {
@@ -280,64 +172,50 @@ export class PluginLintPool {
     });
   }
 
-  /** Answer one reverse `rslint/pluginLint` request. */
   async lint(
-    req: EslintPluginLintRequest,
+    request: EslintPluginLintRequest,
     token?: CancellationToken,
   ): Promise<EslintPluginLintResult> {
     if (this.disposed) return { results: [] };
 
-    let state = req.generation
-      ? this.generations.get(req.generation)
+    let state = request.generation
+      ? this.generations.get(request.generation)
       : this.activeState;
-
-    // A reverse request may arrive after Go accepts a config but just before
-    // Node installs that generation. Wait only in that case. Existing
-    // generations must remain routable while an unrelated prepare is slow.
-    if (req.generation && !state) {
+    if (request.generation && !state) {
       if (!(await this.waitForLifecycle(token))) return { results: [] };
       if (this.disposed) return { results: [] };
-      state = this.generations.get(req.generation);
+      state = this.generations.get(request.generation);
     }
-    if (req.generation && !state) {
+    if (request.generation && !state) {
       throw new Error(
-        `unknown ESLint-plugin config generation: ${req.generation}`,
+        `unknown ESLint-plugin config generation: ${request.generation}`,
       );
     }
     if (!state) return { results: [] };
     const host = state.host;
     if (!host) {
-      // Generations without a host are valid committed states for native-only or
-      // degraded catalogs, but their activation exposes no plugin metadata.
-      // Reaching this branch therefore means Go and the extension disagree on
-      // the committed lifecycle. Do not turn that protocol failure into a
-      // false-green empty diagnostic set. Cancellation remains benign.
       if (token?.isCancellationRequested) return { results: [] };
-      const generation = req.generation ?? this.activeGeneration;
+      const generation = request.generation ?? this.activeGeneration;
       throw new Error(
         `LSP pluginLint requested for config generation ${JSON.stringify(generation)} without an activated plugin host`,
       );
     }
 
-    // Take the lease before yielding. Retirement removes future routing
-    // references, but cannot shut this state down until the lease is released.
     state.activeLints++;
-    // Bridge the LSP CancellationToken → AbortSignal for the core host, so a
-    // superseding keystroke / close (Go sends $/cancelRequest) stops the worker
-    // instead of letting it run to completion.
     let signal: AbortSignal | undefined;
     let cancellationSubscription: { dispose(): unknown } | undefined;
     try {
       if (token) {
-        const ac = new AbortController();
-        if (token.isCancellationRequested) ac.abort();
-        else
+        const controller = new AbortController();
+        if (token.isCancellationRequested) controller.abort();
+        else {
           cancellationSubscription = token.onCancellationRequested(() => {
-            ac.abort();
+            controller.abort();
           });
-        signal = ac.signal;
+        }
+        signal = controller.signal;
       }
-      return await host.lint(req, signal);
+      return await host.lint(request, signal);
     } finally {
       cancellationSubscription?.dispose();
       state.activeLints--;
@@ -347,7 +225,6 @@ export class PluginLintPool {
     }
   }
 
-  /** Wait for the lifecycle snapshot that could be installing a generation. */
   private async waitForLifecycle(token?: CancellationToken): Promise<boolean> {
     const pending = this.opChain;
     if (!token) {
@@ -411,9 +288,6 @@ export class PluginLintPool {
     }, this.retirementDelayMs);
     this.generationRetirementTimers.set(generation, timer);
 
-    // A burst of config updates must not retain one complete WorkerPool per
-    // generation for the full production grace period. Expire the oldest
-    // routing generation immediately once the bounded history is full.
     while (this.generationRetirementTimers.size > MAX_GRACE_GENERATIONS) {
       const oldest = this.generationRetirementTimers.keys().next().value;
       if (oldest === undefined) break;
@@ -453,8 +327,8 @@ export class PluginLintPool {
       }
     }
     const shutdown = state.host
-      ? state.host.shutdown().catch((err: unknown) => {
-          this.logger.error('Error shutting down previous plugin host', err);
+      ? state.host.shutdown().catch((error: unknown) => {
+          this.logger.error('Error shutting down previous plugin host', error);
         })
       : Promise.resolve();
     state.shutdown = shutdown;
@@ -465,7 +339,6 @@ export class PluginLintPool {
     });
   }
 
-  /** Shut down the worker pool. Idempotent. */
   async dispose(): Promise<void> {
     this.disposed = true;
     await this.enqueue(async () => {
@@ -478,11 +351,7 @@ export class PluginLintPool {
       this.activeGeneration = undefined;
       this.activeState = undefined;
       this.activeCommitRollback = undefined;
-      for (const state of states) {
-        // Terminal disposal intentionally forces shutdown even if a request is
-        // still active; WorkerPool turns those tasks into benign cancellation.
-        this.startShutdown(state);
-      }
+      for (const state of states) this.startShutdown(state);
     });
     await Promise.all([...this.shutdowns]);
   }
