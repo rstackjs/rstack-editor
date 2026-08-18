@@ -10,7 +10,7 @@ const CHANNEL_NAMES: Readonly<Record<StackId | 'shell', string>> = {
 
 /**
  * The extension's four output channels — a deliberate cap: one per stack plus
- * one for the shell (detection results, state transitions, migration logs).
+ * one for the shell (detection results, state transitions).
  *
  * Stacks never create their own channel — a copied stack that used to create
  * one per workspace folder has to log into the shared channel instead.

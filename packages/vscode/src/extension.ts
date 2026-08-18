@@ -1,7 +1,6 @@
 import vscode from 'vscode';
 import { Channels } from './channels';
 import { DetectionService } from './detection';
-import { maybePromptForMigration, runSettingsMigration } from './migration';
 import { resetUserNodeCaches } from './shared/nodeResolution';
 import { StatusBar } from './statusBar';
 import {
@@ -132,8 +131,6 @@ class ExtensionShell {
     // is still initialising — and running beside it would let that restart
     // retire a controller whose `register()` has not returned yet.
     await this.reconcile();
-
-    void maybePromptForMigration(this.context, this.#channels.shell);
   }
 
   private registerCommands(): void {
@@ -145,9 +142,6 @@ class ExtensionShell {
 
     register('rstack.showOutput', () => this.#channels.shell.show());
     register('rstack.restart', () => this.restart());
-    register('rstack.migrateSettings', () =>
-      runSettingsMigration(this.#channels.shell),
-    );
     for (const stack of STACK_IDS) {
       register(stackCommand(stack, 'output.focus'), () =>
         this.#channels.forStack(stack).show(),

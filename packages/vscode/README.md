@@ -103,14 +103,9 @@ To use `rs fmt` as the formatter for supported documents, opt in through your VS
 
 Formatting runs one `rs fmt` language server per workspace folder, which loads `define.fmt()` from the `rstack.config.*` at the **folder root** — the same config `rs fmt` in a terminal there would use, so a config in a subdirectory is not picked up (open that subdirectory as its own workspace folder if it needs different settings). Editing the config restarts the server for you. Your editor's own formatting options (tab size, spaces) are not consulted: the project config decides, exactly as on the command line.
 
-## Migrating from the standalone extensions
+## Coming from the standalone extensions
 
-Run **Rstack: Migrate Rslint/Rstest Settings** from the Command Palette (it is also offered once, dismissibly, when legacy keys are found).
-
-- Settings are migrated per layer (User, Workspace, Workspace Folder), and the legacy keys are removed after they are copied. Workspace and folder layers touch files inside your repository, so nothing is written before you confirm the previewed key mapping.
-- Legacy `rslint.binPath` / `rslint.customBinPath` values are left untouched: a standalone binary path cannot be translated safely into the `@rslint/core` directory the worker requires.
-- **Keybindings are not migrated.** Command ids were renamed to `rstack.*` with no aliases, and VS Code has no keybindings API, so any keybinding bound to an old `rslint.*` / `rstest.*` command id has to be re-bound by hand.
-- Projects with only `rslint.json` / `rslint.jsonc` are reported as `not detected`; run `rslint --init` to migrate to a JS/TS config.
+Settings and keybindings are not carried over from the retired `rstack.rslint` / `rstack.rstest` extensions: re-enter your settings under the `rstack.*` keys listed above and re-bind any keybinding to the new `rstack.*` command ids. Legacy `rslint.binPath` / `rslint.customBinPath` have no equivalent — use `rstack.rslint.corePath` to point at an `@rslint/core` package directory if you still need an override.
 
 ## Community
 

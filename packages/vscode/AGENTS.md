@@ -1,6 +1,6 @@
 # AGENTS.md — `rstack.rstack` VS Code extension
 
-One extension replacing the standalone `rstack.rslint` and `rstack.rstest` extensions: a thin shell (activation, detection, status bar, settings migration) hosting one stack per tool under `src/stacks/`.
+One extension replacing the standalone `rstack.rslint` and `rstack.rstest` extensions: a thin shell (activation, detection, status bar) hosting one stack per tool under `src/stacks/`.
 
 ## The copies are intentional
 
@@ -10,7 +10,7 @@ One extension replacing the standalone `rstack.rslint` and `rstack.rstest` exten
 ## The seven adaptations
 
 1. **Shell activation** — stacks never self-activate; `register()` returns fast and never blocks on starting a server/worker.
-2. **Namespace** — everything user-visible is `rstack.*`. Legacy `rslint.*` / `rstest.*` names appear only in the migration mapping. Command IDs were renamed without aliases (breaking old keybindings was an accepted cost).
+2. **Namespace** — everything user-visible is `rstack.*`. Legacy `rslint.*` / `rstest.*` settings and command ids are not read, aliased or migrated (breaking old settings and keybindings was an accepted cost).
 3. **Resolve-from-project** — no tool binaries or tool packages in the VSIX; everything resolves from the user's project so the editor runs the CLI's exact versions. Version floors surface as a status, never a crash. All cooperating lint pieces (binary, config loader, plugin host) must come from one resolution root. Enforced by lint: `@typescript-eslint/no-restricted-imports` in the root `rstack.config.ts` rejects any non-type import of `@rslint/core`, `@rstest/core`, `rstack` or `jiti` under `src/` — types only at compile time, runtime modules through explicit project paths.
 4. **Status aggregation** — stacks own no UI chrome; they report to the shell's single status bar item, which always exists. In CI the test stack's `MasterLogger` also mirrors every entry to stderr (`RSTACK_E2E_MIRROR_LOGS=1`, set by `e2e/rstest/runTest.ts`) — the output channel is unreadable there; rationale in `stacks/test/logger.ts`.
 5. **Worker-cwd decoupling** (test) — a project's cwd is explicit, not derived from the config file path; for native configs behavior stays byte-identical to upstream.
@@ -19,7 +19,7 @@ One extension replacing the standalone `rstack.rslint` and `rstack.rstest` exten
 
 ## Rules
 
-- **Pre-1.0.0 the extension breaks freely.** No compatibility is owed with earlier unpublished states of this extension — settings, command ids and behavior may change without deprecation paths, and dead compat code for them is removed, not kept. Only the **latest released** `rstack`, `@rstest/core` and `@rslint/core` need support: whenever a change touches a floor in `SUPPORT_MATRIX`, set it to the latest release at that time — do not reason about which older release would still work — and raise it without a transition story (the floor status names the required version). The settings migration exists for users of the two retired standalone extensions, never for earlier states of this one.
+- **Pre-1.0.0 the extension breaks freely.** No compatibility is owed with earlier unpublished states of this extension — settings, command ids and behavior may change without deprecation paths, and dead compat code for them is removed, not kept. Only the **latest released** `rstack`, `@rstest/core` and `@rslint/core` need support: whenever a change touches a floor in `SUPPORT_MATRIX`, set it to the latest release at that time — do not reason about which older release would still work — and raise it without a transition story (the floor status names the required version). No settings migration exists either — not for earlier states of this extension, and not for the two retired standalone extensions (removed in #15; users re-enter their settings under `rstack.*`).
 - **The three tools are treated uniformly by default.** Detection, dependency-change retry, restart semantics, version gating and status reporting follow one shared pattern across the lint/test/fmt stacks; a stack diverges only when its tool forces it, and the divergence is recorded here as a gotcha. When adding behavior to one stack, first ask whether it belongs to all three. This is about behavior, not code — the upstream copies still must not be deduplicated.
 - One stack failing to register or crashing must never take another stack (or the shell) down.
 - The shell always activates; per-folder config detection decides which stacks start, and re-runs on config/lockfile changes without a window reload. Enable-settings are coarse kill switches only.
