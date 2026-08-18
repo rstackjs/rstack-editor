@@ -2,8 +2,7 @@
 //
 // This fixture has NO tool-native config: no `rslint.config.*`, no
 // `rstest.config.*`. `rstack.config.ts` is the single config source, and its
-// presence alone must light the Rstest and rs fmt stacks (Rslint via
-// `define.lint()` is deferred — TODO(rstack-bridge)) — `rs lint` and
+// presence alone must light all three stacks. The lint bridge, `rs lint` and
 // `rs test` inject rstack's own shim configs, so a tool-native file never has
 // to exist.
 import { define } from 'rstack';

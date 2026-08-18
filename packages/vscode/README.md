@@ -11,7 +11,7 @@ The extension ships no tool binaries: `@rslint/core`, `@rstest/core` and `rstack
 
 ## Features
 
-- **Linting (Rslint)** — diagnostics, quick fixes and auto-fix on save via Rslint's language server.
+- **Linting (Rslint)** — diagnostics, quick fixes and auto-fix on save via Rslint's language server, from either a native config or `define.lint()`.
 - **Testing (Rstest)** — a Test Explorer tree built from your test files: run or debug individual tests, suites or files; the tree stays in sync as files change; failed tests show up as editor diagnostics.
 - **rstack-cli** — document formatting through the project-local `rs fmt` language server, one per workspace folder.
 - **One status bar item** — a single `Rstack` entry shows which tools are active in the current workspace and why.
@@ -22,13 +22,13 @@ The extension activates on startup, then decides **per workspace folder** which 
 
 | Tool | Started when the folder contains |
 | --- | --- |
-| Rslint | `rslint.config.{js,mjs,ts,mts}` |
+| Rslint | `rslint.config.{js,mjs,ts,mts}` anywhere in the folder, or `rstack.config.*` at the folder root when no native config exists |
 | Rstest | `rstest.config.{mjs,ts,js,cjs,mts,cts}` (configurable) or `rstack.config.*` |
 | rstack-cli | `rstack.config.*` or `node_modules/.bin/rs` |
 
 Config files and lockfiles are watched, so detection re-runs without a window reload. When something changes that none of those files record — a reinstall that leaves the lockfile untouched, or a `node_modules` that ends up broken — run **Rstack: Relaunch Extension** from the Command Palette (also on the status bar hover) to tear every tool down and start over. To rebuild a single tool, use **Rstack: Restart Rslint** / **Restart Rstest** / **Restart rs fmt**.
 
-A restart re-resolves every binary and package version and respawns every tool process, but it cannot reload JavaScript the editor has already imported from your project — Node keeps those modules for the lifetime of the window. If a reinstall replaced `@rslint/core` in place and lint still behaves like the old version, reload the window. Deprecated `rslint.json` / `rslint.jsonc` configs are **not** detection signals — migrate them with `rslint --init`.
+A restart re-resolves every binary and package version and respawns every tool process. Deprecated `rslint.json` / `rslint.jsonc` configs are **not** detection signals — migrate them with `rslint --init`.
 
 ## Supported package versions
 
@@ -36,11 +36,11 @@ The project-resolved packages are checked against a support matrix at runtime; a
 
 | Package        | Required  |
 | -------------- | --------- |
-| `@rslint/core` | `>=0.7.2` |
+| `@rslint/core` | `>=0.8.0` |
 | `@rstest/core` | `>=0.6.0` |
-| `rstack`       | `>=0.5.2` |
+| `rstack`       | `>=0.6.1` |
 
-`rstack` 0.5.2 is the first release with `rs fmt --lsp`, the language server the formatter is a client of; on older releases the formatter reports `version mismatch` instead of formatting.
+`rstack` 0.6.1 and `@rslint/core` 0.8.0 provide the explicit lint config protocol used by the Rstack bridge. Older releases report `version mismatch`.
 
 ## Auto-fix on save (Rslint)
 
@@ -77,10 +77,9 @@ All settings live under the unified `rstack.*` namespace. There are no `rslint.*
 | Setting | Default | Description |
 | --- | --- | --- |
 | `rstack.enable` | `true` | Master switch for the whole extension. |
-| `rstack.nodeExecutable` | — | Node binary used for the processes that load your project: the test worker and the `rs fmt` language server. Empty means the extension picks one (`PATH` first, then the `node` your interactive shell resolves). |
+| `rstack.nodeExecutable` | — | Node binary used for the processes that load your project: the lint worker, test worker and `rs fmt` language server. Empty means the extension picks one (`PATH` first, then the `node` your interactive shell resolves). |
 | `rstack.rslint.enable` | `true` | Enable/disable the Rslint integration. |
-| `rstack.rslint.binPath` | `local` | `local` (project `node_modules`, incl. Yarn PnP) or `custom`. |
-| `rstack.rslint.customBinPath` | — | Binary path used when `binPath` is `custom`. |
+| `rstack.rslint.corePath` | — | Path to an `@rslint/core` package directory; relative paths resolve from the workspace folder. |
 | `rstack.rslint.trace.server` | `off` | LSP trace level (`off` / `messages` / `verbose`). |
 | `rstack.rstest.enable` | `true` | Enable/disable the Rstest integration. |
 | `rstack.rstest.configFileGlobPattern` | `["**/rstest.config.{mjs,ts,js,cjs,mts,cts}"]` | Glob patterns used to discover config files. |
@@ -107,7 +106,7 @@ Formatting runs one `rs fmt` language server per workspace folder, which loads `
 Run **Rstack: Migrate Rslint/Rstest Settings** from the Command Palette (it is also offered once, dismissibly, when legacy keys are found).
 
 - Settings are migrated per layer (User, Workspace, Workspace Folder), and the legacy keys are removed after they are copied. Workspace and folder layers touch files inside your repository, so nothing is written before you confirm the previewed key mapping.
-- `rslint.binPath: "built-in"` becomes `rstack.rslint.binPath: "local"`: this extension ships no binary and always resolves it from your project.
+- Legacy `rslint.binPath` / `rslint.customBinPath` values are left untouched: a standalone binary path cannot be translated safely into the `@rslint/core` directory the worker requires.
 - **Keybindings are not migrated.** Command ids were renamed to `rstack.*` with no aliases, and VS Code has no keybindings API, so any keybinding bound to an old `rslint.*` / `rstest.*` command id has to be re-bound by hand.
 - Projects with only `rslint.json` / `rslint.jsonc` are reported as `not detected`; run `rslint --init` to migrate to a JS/TS config.
 

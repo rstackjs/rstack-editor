@@ -1,12 +1,12 @@
 // Ported from web-infra-dev/rslint
 // `packages/vscode-extension/__tests__/suite-jsconfig/config-transaction.test.ts`
 // (origin/main). Adaptations:
-// - Import paths: the copied extension sources live under `src/stacks/lint/`.
+// - The transaction adapter now lives under the dedicated lint worker.
 // - `LspConfigTransactionAdapter` no longer bakes in a compile-time protocol
 //   constant: `@rslint/core/config-loader` is resolved from the project at
 //   runtime, so the adapter takes the loader's
 //   `CONFIG_DISCOVERY_PROTOCOL_VERSION` as a constructor argument. The tests
-//   inject the devDependency's constant, which tracks the same `^0.7.2` floor
+//   inject the devDependency's constant, which tracks the same `^0.8.0` floor
 //   as the fixtures.
 // - The watch-glob test asserts upstream's glob is kept verbatim, lockfiles
 //   included.
@@ -28,7 +28,7 @@ import {
   recoverConfigDiscoveryOnServerState,
   retryConfigRefreshOnSourceChange,
 } from '../../../src/stacks/lint/Rslint';
-import { LspConfigTransactionAdapter } from '../../../src/stacks/lint/ConfigTransactionAdapter';
+import { LspConfigTransactionAdapter } from '../../../src/stacks/lint/worker/ConfigTransactionAdapter';
 import { State } from 'vscode-languageclient/node';
 import {
   RelativePattern,
@@ -335,60 +335,18 @@ suite('LSP config discovery transactions', () => {
     assert.deepStrictEqual(host.deletedTransactions, ['tx-abort']);
   });
 
-  test('native-server restart aborts orphaned state and accepts a new transaction', async () => {
-    const host = new TestConfigHost();
-    const pool = new TestPluginPool();
-    const adapter = new LspConfigTransactionAdapter(
-      host,
-      pool,
-      () => 'fingerprint-restart',
-      CONFIG_DISCOVERY_PROTOCOL_VERSION,
-    );
-
-    await adapter.loadConfigs(loadRequest('old-process-tx'));
-    await adapter.activateConfigs({
-      protocolVersion: CONFIG_DISCOVERY_PROTOCOL_VERSION,
-      transactionId: 'old-process-tx',
-      effectiveConfigIds: ['root'],
-    });
-    await adapter.resetForServerRestart();
-    assert.deepStrictEqual(pool.abortCalls, ['old-process-tx']);
-    assert.deepStrictEqual(host.deletedTransactions, ['old-process-tx']);
-
-    await adapter.loadConfigs(loadRequest('new-process-tx'));
-    const activation = await adapter.activateConfigs({
-      protocolVersion: CONFIG_DISCOVERY_PROTOCOL_VERSION,
-      transactionId: 'new-process-tx',
-      effectiveConfigIds: ['root'],
-    });
-    assert.strictEqual(activation.transactionId, 'new-process-tx');
-  });
-
-  test('a later Running state resets orphaned state before requesting an initial catalog', async () => {
-    const host = new TestConfigHost();
-    const pool = new TestPluginPool();
-    const adapter = new LspConfigTransactionAdapter(
-      host,
-      pool,
-      () => 'fingerprint-restart',
-      CONFIG_DISCOVERY_PROTOCOL_VERSION,
-    );
-    await adapter.loadConfigs(loadRequest('orphaned-tx'));
-
+  test('a later Running state requests a fresh initial catalog', async () => {
     const events: string[] = [];
     const recovery = recoverConfigDiscoveryOnServerState(
       State.Running,
-      async (reason, beforeRequest) => {
+      async (reason) => {
         events.push(`request:${reason}`);
-        await beforeRequest?.(adapter);
         events.push('send');
       },
     );
     await recovery;
 
     assert.deepStrictEqual(events, ['request:initial', 'send']);
-    assert.deepStrictEqual(pool.abortCalls, ['orphaned-tx']);
-    assert.deepStrictEqual(host.deletedTransactions, ['orphaned-tx']);
 
     let stoppedRefresh = false;
     const ignored = recoverConfigDiscoveryOnServerState(

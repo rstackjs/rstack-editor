@@ -43,12 +43,10 @@ const folderReading = (
 
 describe('LEGACY_MAPPINGS', () => {
   it('covers the full legacy inventory of both retired extensions', () => {
-    // 4 settings from rslint/packages/vscode-extension + 14 from
-    // rstest/packages/vscode, verified against their manifests.
+    // The two Rslint binary settings have no valid core-directory equivalent;
+    // the remaining 2 Rslint settings and all 14 Rstest settings are mapped.
     expect(LEGACY_MAPPINGS.map((mapping) => mapping.from)).toEqual([
       'rslint.enable',
-      'rslint.binPath',
-      'rslint.customBinPath',
       'rslint.trace.server',
       'rstest.nodeExecutable',
       'rstest.rstestPackagePath',
@@ -102,11 +100,9 @@ describe('LEGACY_MAPPINGS', () => {
     ]);
   });
 
-  it('only rewrites the value of rslint.binPath', () => {
+  it('does not rewrite any migrated value', () => {
     const rewriting = LEGACY_MAPPINGS.filter((mapping) => mapping.mapValue);
-    expect(rewriting.map((mapping) => mapping.from)).toEqual([
-      'rslint.binPath',
-    ]);
+    expect(rewriting).toEqual([]);
   });
 });
 
@@ -157,63 +153,10 @@ describe('planMigration — mechanical renames', () => {
   });
 });
 
-describe('planMigration — rslint.binPath', () => {
-  it('maps an explicit built-in to local', () => {
-    const plan = planMigration([
-      reading({ key: 'rslint.binPath', value: 'built-in' }),
-    ]);
-    expect(plan.scopes[0]?.writes[0]).toMatchObject({
-      to: 'rstack.rslint.binPath',
-      fromValue: 'built-in',
-      value: 'local',
-      rewritten: true,
-    });
-  });
-
-  it('carries local and custom over unchanged', () => {
-    for (const value of ['local', 'custom']) {
-      const plan = planMigration([reading({ key: 'rslint.binPath', value })]);
-      expect(plan.scopes[0]?.writes[0]).toMatchObject({
-        value,
-        rewritten: false,
-      });
-    }
-  });
-
-  it('carries the custom path over next to the mode', () => {
-    const plan = planMigration([
-      reading({ key: 'rslint.binPath', value: 'custom' }),
-      reading({ key: 'rslint.customBinPath', value: '/opt/rslint' }),
-    ]);
-    expect(
-      plan.scopes[0]?.writes.map((write) => [write.to, write.value]),
-    ).toEqual([
-      ['rstack.rslint.binPath', 'custom'],
-      ['rstack.rslint.customBinPath', '/opt/rslint'],
-    ]);
-  });
-
-  it('never invents a value when the setting was not set', () => {
-    // The dropped `built-in` default must not leak in as an explicit `local`.
-    expect(planMigration([]).writeCount).toBe(0);
-  });
-
-  it('skips values that are not in the new enum', () => {
-    for (const value of ['auto', '', 42, null]) {
-      const plan = planMigration([reading({ key: 'rslint.binPath', value })]);
-      expect(plan.writeCount).toBe(0);
-      expect(plan.skips[0]).toMatchObject({
-        from: 'rslint.binPath',
-        reason: 'unsupported-value',
-      });
-    }
-  });
-});
-
 describe('planMigration — layers', () => {
   it('groups writes per layer and orders them user, workspace, folder', () => {
     const plan = planMigration([
-      folderReading('file:///w/app', 'app', 'rslint.customBinPath', '/x/bin'),
+      folderReading('file:///w/app', 'app', 'rstest.rstestPackagePath', '/x'),
       reading({
         scopeId: 'workspace',
         layer: 'workspace',
@@ -232,16 +175,16 @@ describe('planMigration — layers', () => {
 
   it('keeps same-named folders of a multi-root workspace apart', () => {
     const plan = planMigration([
-      folderReading('file:///a/app', 'app', 'rslint.customBinPath', '/a/bin'),
-      folderReading('file:///b/app', 'app', 'rslint.customBinPath', '/b/bin'),
+      folderReading('file:///a/app', 'app', 'rstest.rstestPackagePath', '/a'),
+      folderReading('file:///b/app', 'app', 'rstest.rstestPackagePath', '/b'),
     ]);
     expect(plan.scopes.map((scope) => scope.scopeId)).toEqual([
       'file:///a/app',
       'file:///b/app',
     ]);
     expect(plan.scopes.map((scope) => scope.writes[0]?.value)).toEqual([
-      '/a/bin',
-      '/b/bin',
+      '/a',
+      '/b',
     ]);
   });
 
@@ -303,15 +246,15 @@ describe('planMigration — conflicts', () => {
   it('never overwrites a new key the user already set in the same layer', () => {
     const plan = planMigration([
       reading({
-        key: 'rslint.binPath',
-        value: 'built-in',
-        targetValue: 'custom',
+        key: 'rslint.trace.server',
+        value: 'messages',
+        targetValue: 'verbose',
       }),
     ]);
     expect(plan.writeCount).toBe(0);
     expect(plan.skips[0]).toMatchObject({
-      from: 'rslint.binPath',
-      to: 'rstack.rslint.binPath',
+      from: 'rslint.trace.server',
+      to: 'rstack.rslint.trace.server',
       reason: 'target-already-set',
     });
   });
@@ -350,28 +293,27 @@ describe('formatPreview', () => {
   it('shows the old -> new mapping under its layer heading', () => {
     const preview = formatPreview(
       planMigration([
-        reading({ key: 'rslint.binPath', value: 'built-in' }),
-        folderReading('file:///w/app', 'app', 'rslint.customBinPath', '/x'),
+        reading({ key: 'rslint.trace.server', value: 'messages' }),
+        folderReading('file:///w/app', 'app', 'rstest.rstestPackagePath', '/x'),
       ]),
     );
     expect(preview).toContain('User Settings');
-    expect(preview).toContain('rslint.binPath -> rstack.rslint.binPath');
-    expect(preview).toContain('"built-in" -> "local"');
+    expect(preview).toContain(
+      'rslint.trace.server -> rstack.rslint.trace.server',
+    );
     expect(preview).toContain('Folder Settings — app');
     expect(preview).toContain(
-      'rslint.customBinPath -> rstack.rslint.customBinPath',
+      'rstest.rstestPackagePath -> rstack.rstest.rstestPackagePath',
     );
   });
 
   it('lists what was left untouched and why', () => {
     const preview = formatPreview(
       planMigration([
-        reading({ key: 'rslint.binPath', value: 'auto' }),
         folderReading('file:///w/app', 'app', 'rstest.applyDiagnostic', false),
       ]),
     );
     expect(preview).toContain('Left untouched');
-    expect(preview).toContain('is not a valid value of rstack.rslint.binPath');
     expect(preview).toContain('window-scoped setting');
   });
 

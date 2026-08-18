@@ -5,8 +5,10 @@ import type {
   StackController,
   StackState,
 } from '../../types';
+import { NODE_EXECUTABLE_SETTING } from '../../shared/nodeResolution';
 import { Logger } from './logger';
-import { Rslint, type RslintFolderConfigPaths } from './Rslint';
+import { Rslint } from './Rslint';
+import type { RslintMode } from './resolution';
 import { WorkspaceDocumentRouter } from './WorkspaceDocumentRouter';
 import {
   WorkspaceRslintCoordinator,
@@ -109,12 +111,11 @@ export const aggregateFolderStates = (
 
 class RslintController implements StackController {
   readonly id = 'rslint' as const;
-  // A `binPath`/`customBinPath` change must re-resolve the binary, which only
-  // happens on a fresh start (upstream documents `customBinPath` as requiring a
-  // reload; a restart is strictly better). A shallower local restart would
-  // replace the coordinator but keep this controller's already-resolved binary
-  // and version check.
-  readonly restartOnSettings = ['binPath', 'customBinPath', 'trace.server'];
+  readonly restartOnSettings = [
+    NODE_EXECUTABLE_SETTING,
+    'corePath',
+    'trace.server',
+  ];
 
   #context: StackContext | undefined;
   #logger: Logger | undefined;
@@ -122,6 +123,7 @@ class RslintController implements StackController {
   #snapshot: DetectionSnapshot | undefined;
   readonly #subscriptions: vscode.Disposable[] = [];
   readonly #folderStates = new Map<string, FolderStatus>();
+  readonly #folderModes = new Map<string, RslintMode>();
   #disposed = false;
 
   async register(context: StackContext): Promise<Record<string, unknown>> {
@@ -131,8 +133,16 @@ class RslintController implements StackController {
 
     this.#subscriptions.push(
       context.onDidChangeDetection((snapshot) => {
+        const changedModes = new Set<string>();
+        for (const entry of snapshot.foldersFor('rslint')) {
+          const key = workspaceRootKey(entry.folder);
+          const mode = entry.stacks.rslint.mode;
+          if (mode !== undefined && this.#folderModes.get(key) !== mode) {
+            changedModes.add(key);
+          }
+        }
         this.#snapshot = snapshot;
-        this.reconcileFolders({ added: [], removed: [] });
+        this.reconcileFolders({ added: [], removed: [] }, changedModes);
         // A detection pass fires on config topology and lockfile changes —
         // exactly the moments a previously failed root (missing binary,
         // uninstalled dependencies) may have become startable.
@@ -173,15 +183,14 @@ class RslintController implements StackController {
     );
   }
 
-  private configPathsFor(
-    folder: vscode.WorkspaceFolder,
-  ): RslintFolderConfigPaths {
-    const detection = this.#snapshot?.forFolder(folder)?.stacks.rslint;
-    return {
-      rslintConfigPaths: (detection?.configFiles ?? []).map(
-        (uri) => uri.fsPath,
-      ),
-    };
+  private modeFor(folder: vscode.WorkspaceFolder): RslintMode {
+    const mode = this.#snapshot?.forFolder(folder)?.stacks.rslint.mode;
+    if (mode === undefined) {
+      throw new Error(
+        `Rslint mode is unavailable for ${folder.uri.toString()}`,
+      );
+    }
+    return mode;
   }
 
   private startCoordinator(): void {
@@ -206,7 +215,7 @@ class RslintController implements StackController {
           reportStatus: (state) => {
             this.setFolderState(rootKey, workspaceFolder.name, state);
           },
-          getConfigPaths: () => this.configPathsFor(workspaceFolder),
+          getMode: () => this.modeFor(workspaceFolder),
         }),
       logger,
     );
@@ -214,7 +223,9 @@ class RslintController implements StackController {
 
     const folders = this.detectedFolders();
     for (const folder of folders) {
-      this.setFolderState(workspaceRootKey(folder), folder.name, {
+      const key = workspaceRootKey(folder);
+      this.#folderModes.set(key, this.modeFor(folder));
+      this.setFolderState(key, folder.name, {
         kind: 'starting',
       });
     }
@@ -230,7 +241,10 @@ class RslintController implements StackController {
     });
   }
 
-  private reconcileFolders(event: vscode.WorkspaceFoldersChangeEvent): void {
+  private reconcileFolders(
+    event: vscode.WorkspaceFoldersChangeEvent,
+    forceReplace: ReadonlySet<string> = new Set(),
+  ): void {
     const coordinator = this.#coordinator;
     if (!coordinator || this.#disposed) {
       return;
@@ -240,16 +254,18 @@ class RslintController implements StackController {
     for (const key of [...this.#folderStates.keys()]) {
       if (!keys.has(key)) {
         this.#folderStates.delete(key);
+        this.#folderModes.delete(key);
       }
     }
     for (const folder of folders) {
       const key = workspaceRootKey(folder);
+      this.#folderModes.set(key, this.modeFor(folder));
       if (!this.#folderStates.has(key)) {
         this.setFolderState(key, folder.name, { kind: 'starting' });
       }
     }
     this.publishStatus();
-    coordinator.handleWorkspaceFoldersChanged(event, folders);
+    coordinator.handleWorkspaceFoldersChanged(event, folders, forceReplace);
   }
 
   private setFolderState(
@@ -294,6 +310,7 @@ class RslintController implements StackController {
     }
     await this.closeCoordinator();
     this.#folderStates.clear();
+    this.#folderModes.clear();
     this.#logger = undefined;
     this.#context = undefined;
     this.#snapshot = undefined;

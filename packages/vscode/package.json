@@ -139,7 +139,7 @@
             "order": 1,
             "type": "string",
             "scope": "resource",
-            "markdownDescription": "Overrides the `node` binary used to spawn processes that load your project — the Rstest test worker and the `rs fmt` language server. Provide an absolute path to a Node.js executable (for example, a version-manager or custom build). An explicit choice is always honoured — the escape hatch when no suitable Node.js can be found automatically — but the version check still runs as an advisory: pointing at a Node.js below the supported floor shows a status-bar warning while runs proceed with it. When empty, the extension picks one: the `node` on `PATH` if it is new enough, otherwise the one your interactive shell resolves. Supports the `${workspaceFolder}` placeholder."
+            "markdownDescription": "Overrides the `node` binary used to spawn processes that load your project — the Rslint worker, the Rstest test worker and the `rs fmt` language server. Provide an absolute path to a Node.js executable (for example, a version-manager or custom build). An explicit choice is always honoured — the escape hatch when no suitable Node.js can be found automatically — but the version check still runs as an advisory: pointing at a Node.js below the supported floor shows a status-bar warning while runs proceed with it. When empty, the extension picks one: the `node` on `PATH` if it is new enough, otherwise the one your interactive shell resolves. Supports the `${workspaceFolder}` placeholder."
           }
         }
       },
@@ -154,29 +154,15 @@
             "scope": "window",
             "markdownDescription": "Enable the Rslint language server for detected workspace folders. Requires `#rstack.enable#`. This is a window-level kill switch; which folders run Rslint is decided by detection."
           },
-          "rstack.rslint.binPath": {
+          "rstack.rslint.corePath": {
             "order": 1,
             "type": "string",
-            "enum": [
-              "local",
-              "custom"
-            ],
-            "default": "local",
+            "default": "",
             "scope": "resource",
-            "markdownEnumDescriptions": [
-              "Resolve the Rslint binary from the workspace `node_modules` (Yarn PnP is supported). This extension ships no binary.",
-              "Use the binary at `#rstack.rslint.customBinPath#`, e.g. a global installation or a specific version of Rslint."
-            ],
-            "description": "How to locate the Rslint executable binary"
-          },
-          "rstack.rslint.customBinPath": {
-            "order": 2,
-            "type": "string",
-            "scope": "resource",
-            "markdownDescription": "Custom path to the Rslint executable. Only used when `#rstack.rslint.binPath#` is set to `custom`. Requires reloading VS Code to take effect."
+            "markdownDescription": "Path to an `@rslint/core` package directory. Relative paths are resolved from the workspace folder. When empty, the extension resolves the core from the folder's selected lint config source."
           },
           "rstack.rslint.trace.server": {
-            "order": 3,
+            "order": 2,
             "type": "string",
             "enum": [
               "off",
@@ -444,7 +430,7 @@
   "devDependencies": {
     "@rsbuild/core": "~2.1.9",
     "@rslib/core": "^1.0.0-beta.1",
-    "@rslint/core": "^0.7.2",
+    "@rslint/core": "^0.8.0",
     "@rstackjs/load-config": "^0.1.2",
     "@rstest/core": "^0.11.5",
     "@types/istanbul-lib-report": "^3.0.3",
@@ -466,6 +452,7 @@
     "tinyglobby": "^0.2.17",
     "typescript": "^5.9.3",
     "valibot": "^1.4.2",
+    "vscode-jsonrpc": "^8.2.0",
     "vscode-languageclient": "^9.0.1",
     "yuku-parser": "^0.8.3"
   },

@@ -14,12 +14,10 @@ import { eventually } from './helpers';
  * | ------- | --------------------- | ------ | ------ | --- |
  * | rslint  | `rslint.config.mjs`   | yes    | no     | no  |
  * | rstest  | `rstest.config.ts`    | no     | yes    | no  |
- * | rstack  | `rstack.config.ts`    | no     | yes    | yes |
+ * | rstack  | `rstack.config.ts`    | yes    | yes    | yes |
  *
  * The rstack row is the interesting one: a single `rstack.config.*` lights
- * Rstest and rs fmt even though no tool-native config exists (Rslint is
- * deliberately NOT lit — TODO(rstack-bridge), the earlier lint bridge was
- * removed pending upstream support), and `rs fmt`
+ * all three stacks even though no tool-native config exists, and `rs fmt`
  * is additionally confirmed by the bin probe (`rstack`'s two bins are `rs` and
  * `rstack`).
  *
@@ -49,7 +47,7 @@ const EXPECTED: Readonly<Record<string, Expectation>> = {
     rstackConfigFiles: [],
   },
   rstack: {
-    detected: { rslint: false, rstest: true, fmt: true },
+    detected: { rslint: true, rstest: true, fmt: true },
     configFiles: { rslint: [], rstest: [], fmt: [] },
     rstackConfigFiles: ['rstack.config.ts'],
     fmtBin: 'rs',

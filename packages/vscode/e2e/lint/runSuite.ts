@@ -106,7 +106,21 @@ async function activateAndRun(
     }
     const mocha = new Mocha({ ui: 'tdd' });
     files.forEach((file) => mocha.addFile(file));
-    mocha.run((failures) => callback(null, failures));
+    const failed: string[] = [];
+    const runner = mocha.run((failures) => {
+      if (failures === 0) {
+        callback(null, 0);
+        return;
+      }
+      callback(
+        new Error(`${failures} E2E test(s) failed:\n${failed.join('\n')}`),
+      );
+    });
+    runner.on('fail', (test, error) => {
+      failed.push(
+        `- ${test.fullTitle()}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
   } catch (error) {
     callback(error);
   }

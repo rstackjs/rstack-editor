@@ -52,9 +52,9 @@ type ValueMapping =
   | { readonly kind: 'skip'; readonly reason: SkipReason };
 
 export interface LegacyMapping {
-  /** Fully qualified legacy key, e.g. `rslint.binPath`. */
+  /** Fully qualified legacy key, e.g. `rslint.enable`. */
   readonly from: string;
-  /** Fully qualified new key, e.g. `rstack.rslint.binPath`. */
+  /** Fully qualified new key, e.g. `rstack.rslint.enable`. */
   readonly to: string;
   /**
    * Scope of the *new* key in this extension's manifest. A window-scoped
@@ -69,23 +69,6 @@ export interface LegacyMapping {
    */
   readonly mapValue?: (value: unknown) => ValueMapping;
 }
-
-/**
- * `rslint.binPath` is the one non-mechanical mapping: the old
- * default `built-in` no longer exists because the extension ships no Rslint
- * binary. The new default is `local`; an explicitly set `built-in` becomes
- * `local`, `custom` carries over together with `customBinPath`, and anything
- * else is not in the new enum and would poison the setting.
- */
-const mapBinPath = (value: unknown): ValueMapping => {
-  if (value === 'built-in') {
-    return { kind: 'value', value: 'local' };
-  }
-  if (value === 'local' || value === 'custom') {
-    return { kind: 'value', value };
-  }
-  return { kind: 'skip', reason: 'unsupported-value' };
-};
 
 /**
  * Legacy Rstest keys, in manifest order. Every one of them is a mechanical
@@ -115,8 +98,10 @@ const RSTEST_KEYS: readonly (readonly [string, 'resource' | 'window'])[] = [
 ];
 
 /**
- * The complete legacy inventory: 4 Rslint keys + 14 Rstest keys. Kept in one
- * table so the preview, the writer and the tests cannot disagree.
+ * The migratable legacy inventory: 2 Rslint keys + 14 Rstest keys. The old
+ * Rslint binary settings are intentionally absent: a binary path cannot be
+ * translated into the `@rslint/core` package directory the worker requires.
+ * Kept in one table so the preview, writer and tests cannot disagree.
  */
 export const LEGACY_MAPPINGS: readonly LegacyMapping[] = [
   {
@@ -126,17 +111,6 @@ export const LEGACY_MAPPINGS: readonly LegacyMapping[] = [
     // cannot be preserved and must be skipped as `not-folder-scoped`.
     to: 'rstack.rslint.enable',
     targetScope: 'window',
-  },
-  {
-    from: 'rslint.binPath',
-    to: 'rstack.rslint.binPath',
-    targetScope: 'resource',
-    mapValue: mapBinPath,
-  },
-  {
-    from: 'rslint.customBinPath',
-    to: 'rstack.rslint.customBinPath',
-    targetScope: 'resource',
   },
   {
     from: 'rslint.trace.server',

@@ -8,7 +8,7 @@ import {
 
 /**
  * Choosing the User Node runtime a stack's project-loading child process runs
- * on (the rstest worker, the `rs fmt --lsp` server).
+ * on (the lint worker, the rstest worker and the `rs fmt --lsp` server).
  *
  * The bare `node` a GUI extension host inherits is a *login-shell* snapshot
  * taken at startup — typically a version manager's global default rather than

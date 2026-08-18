@@ -6,18 +6,12 @@ import {
   type StackId,
   STACK_IDS,
 } from './types';
+import { decideRslintMode } from './stacks/lint/resolution';
 
 /**
- * `rstack.config.*` is a config source for Rstest and rs fmt:
- * an rstack-cli user may only have `rstack.config.ts` with `define.test()` /
- * `define.fmt()`.
- *
- * TODO(rstack-bridge): Rslint is deliberately NOT lit by `rstack.config.*` for
- * now — the earlier lint bridge had no complete final data path and was
- * removed. Rebuilding it needs upstream work: rstack publishing an
- * explicit-path config loader plus adapter exports, rslint accepting per-root
- * fallback config candidates on `rslint/configRefresh`, and a generic
- * evaluator-module seam shared by the config host and plugin workers.
+ * `rstack.config.*` is a config source for all three tool stacks. Lint only
+ * bridges a config at the workspace-folder root; test and fmt retain their own
+ * project/config-root rules.
  */
 export const RSTACK_CONFIG_NAMES = [
   'rstack.config.ts',
@@ -187,13 +181,23 @@ export const detectFolder = async (
       ),
     ] as const);
 
+  const rootRstackConfigPath = rstackConfigFiles.find((uri) =>
+    RSTACK_CONFIG_NAMES.some(
+      (name) =>
+        vscode.Uri.joinPath(folder.uri, name).toString() === uri.toString(),
+    ),
+  )?.fsPath;
+  const rslintMode = decideRslintMode({
+    nativeConfigPaths: rslintConfigFiles.map((uri) => uri.fsPath),
+    rootRstackConfigPath,
+  });
+
   const stacks: Record<StackId, StackDetection> = {
     rslint: {
-      // TODO(rstack-bridge): `rstack.config.*` deliberately does not light
-      // Rslint (see the RSTACK_CONFIG_NAMES doc comment).
-      detected: rslintConfigFiles.length > 0,
+      detected: rslintMode !== undefined,
       configFiles: rslintConfigFiles,
       rstackConfigFiles,
+      mode: rslintMode,
     },
     rstest: {
       detected: rstestConfigFiles.length > 0 || rstackConfigFiles.length > 0,
@@ -220,7 +224,7 @@ const signatureOf = (snapshot: DetectionSnapshot): string =>
           .map((uri) => uri.toString())
           .sort()
           .join(',');
-        return `${stack}:${detection.detected ? 1 : 0}:${detection.binPath ?? ''}:${files}`;
+        return `${stack}:${detection.detected ? 1 : 0}:${detection.mode ?? ''}:${detection.binPath ?? ''}:${files}`;
       }).join('|');
       return `${entry.folder.uri.toString()}=>${stacks}`;
     })

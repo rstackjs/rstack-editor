@@ -1,44 +1,18 @@
 // Copied from web-infra-dev/rslint `packages/vscode-extension/src/Rslint.ts`
-// (origin/main). This is the most heavily adapted file of the port;
-// every divergence from upstream is one of:
-//
-// 1. the shell-activation adaptation — nothing here creates a status bar item,
-//    registers a command or activates the extension; the shell owns the
-//    lifecycle and this class is a per-workspace-folder runtime driven by
-//    `WorkspaceRslintCoordinator`.
-// 2. the namespace adaptation — every setting is read from `rstack.rslint.*`.
-// 3. the resolve-from-project adaptation — the `built-in` binary mode is gone,
-//    the binary/config-loader/eslint-plugin all come from one project
-//    resolution root (`resolution.ts`), and `@rslint/core/config-loader`
-//    contributes types only at compile time; `CONFIG_DISCOVERY_PROTOCOL_VERSION`
-//    and `ConfigModuleHost` are injected from the project-resolved module.
-// 4. the status-aggregation adaptation — `reportStatus` instead of an own
-//    status bar.
-// 5. watch glob — `CONFIG_REFRESH_WATCH_GLOB` kept verbatim.
-//
-// Plus the two compatibility diagnostics: the config-discovery protocol
-// handshake and the jiti preflight.
-//
-// TODO(rstack-bridge): Rslint deliberately does NOT consume `rstack.config.*`
-// (`define.lint()`) for now. The earlier bridge was removed because it had no
-// complete final data path — the LSP has no explicit-config channel, the shim
-// resolves its config from a meaningless extension-host cwd, and plugin
-// workers would re-import the wrong source shape. Rebuilding it needs upstream
-// work: rstack publishing an explicit-path config loader plus adapter exports,
-// rslint accepting per-root fallback config candidates on
-// `rslint/configRefresh`, and a generic evaluator-module seam shared by the
-// config host and plugin workers.
+// and adapted so the extension host is only the language-client half. Project
+// config evaluation and plugin rules run in the editor-shipped lint worker.
 
+import path from 'node:path';
 import {
-  workspace,
-  Uri,
   Disposable,
-  FileSystemWatcher,
+  type FileSystemWatcher,
+  type OutputChannel,
   RelativePattern,
-  WorkspaceFolder,
-  OutputChannel,
-  TextDocument,
-  type CancellationToken,
+  type TextDocument,
+  Uri,
+  workspace,
+  type WorkspaceFolder,
+  env,
 } from 'vscode';
 import {
   CloseAction,
@@ -46,74 +20,43 @@ import {
   DidOpenTextDocumentNotification,
   ErrorAction,
   LanguageClient,
-  LanguageClientOptions,
+  type LanguageClientOptions,
   type ErrorHandler,
   type Middleware,
-  ServerOptions,
+  type ServerOptions,
   State,
   Trace,
 } from 'vscode-languageclient/node';
-import type { Logger } from './logger';
-import path from 'node:path';
-import fs from 'node:fs';
-import type {
-  ActivateConfigsRequest,
-  ConfigModuleActivationPlan,
-  LoadConfigsRequest,
-} from '@rslint/core/config-loader';
-import { PluginLintPool } from './PluginLintPool';
-import type {
-  ConfigDescriptor,
-  EslintPluginLintRequest,
-  PluginLintHost,
-} from '@rslint/core/eslint-plugin';
 import {
-  ConfigTransactionProtocolMismatchError,
-  LspConfigTransactionAdapter,
-  type ConfigTransactionControlRequest,
-} from './ConfigTransactionAdapter';
-import {
-  createWorkspaceDocumentSelector,
-  type WorkspaceDocumentRouter,
-} from './WorkspaceDocumentRouter';
-import { LanguageServerProcessOwner } from './LanguageServerProcessOwner';
-import type { StackState } from '../../types';
+  configuredNodeBelowFloor,
+  NodePreflightError,
+  resolveUserNodeOnce,
+} from '../../shared/nodeResolution';
+import { getConfiguredNodeExecutable } from '../../shared/nodeExecutableSetting';
 import {
   checkPackageVersion,
   formatVersionMismatch,
 } from '../../shared/versionCheck';
+import type { StackState } from '../../types';
+import { LanguageServerProcessOwner } from './LanguageServerProcessOwner';
+import type { Logger } from './logger';
+import { resolveRslint, type RslintMode } from './resolution';
 import {
-  ConfigDiscoveryProtocolMismatchError,
-  loadConfigLoaderModule,
-  loadEslintPluginModule,
-  type ConfigLoaderModule,
-} from './configLoader';
+  RslintVersionMismatchError,
+  runningRslintStatus,
+  statusForRslintStartFailure,
+} from './status';
 import {
-  RslintResolutionError,
-  resolveRslint,
-  type RslintResolution,
-} from './resolution';
-import {
-  describeJitiPreflight,
-  isJitiMissingError,
-  JITI_INSTALL_HINT,
-} from './jitiPreflight';
-/**
- * Workspace-relative lockfiles whose individual metadata feeds the
- * plugin-host fingerprint. A dependency install can swap a plugin's
- * implementation without touching the config file, so the host must rebuild.
- */
+  createWorkspaceDocumentSelector,
+  type WorkspaceDocumentRouter,
+} from './WorkspaceDocumentRouter';
+
 const LOCKFILE_NAMES = [
   'package-lock.json',
   'pnpm-lock.yaml',
   'yarn.lock',
 ] as const;
 
-/**
- * Kept verbatim from upstream, JSON names included: they are not detection
- * signals but watching them is harmless, and the Go server does
- * load `rslint.json` from its cwd as a no-JS-config fallback.
- */
 const RSLINT_CONFIG_WATCH_NAMES = [
   'rslint.config.js',
   'rslint.config.mjs',
@@ -123,58 +66,27 @@ const RSLINT_CONFIG_WATCH_NAMES = [
   'rslint.jsonc',
 ] as const;
 
-// Upstream's glob kept verbatim. `rstack.config.*` is
-// deliberately absent: see the TODO(rstack-bridge) note in the file header.
 export const CONFIG_REFRESH_WATCH_GLOB = `**/{${[
   ...RSLINT_CONFIG_WATCH_NAMES,
   ...LOCKFILE_NAMES,
 ].join(',')}}`;
 
-/**
- * The project's `@rslint/core` is outside the support matrix.
- * Distinct from a crash so the status bar can show `version mismatch` with the
- * actual and the required version.
- */
-export class RslintVersionMismatchError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'RslintVersionMismatchError';
-  }
-}
+/** Kept separate to avoid the nested-brace glob shape VS Code cannot parse. */
+export const RSTACK_CONFIG_REFRESH_WATCH_GLOB = 'rstack.config.{ts,js,mts,mjs}';
 
 export type ConfigRefreshReason =
   'initial' | 'config-change' | 'dependency-change';
 
-interface ConfigRefreshRequest {
-  /**
-   * The protocol version is no longer a compile-time constant of
-   * a bundled loader — it is read from the project-resolved
-   * `@rslint/core/config-loader`, so the value the Go server sees is always the
-   * one the JS side actually implements.
-   */
-  protocolVersion: number;
-  reason: ConfigRefreshReason;
-}
-
 export type ConfigRefreshRequester = (
   reason: ConfigRefreshReason,
-  beforeRequest?: (adapter: LspConfigTransactionAdapter) => Promise<void>,
 ) => Promise<void>;
 
-/**
- * Recover the extension-side transaction host when LanguageClient restarts its
- * native server. The listener using this helper is installed only after the
- * initial Running transition, so a later Running state unambiguously means the
- * replacement process needs a new initial catalog.
- */
 export function recoverConfigDiscoveryOnServerState(
   newState: State,
   requestConfigRefresh: ConfigRefreshRequester,
 ): Promise<void> | undefined {
   if (newState !== State.Running) return undefined;
-  return requestConfigRefresh('initial', async (adapter) =>
-    adapter.resetForServerRestart(),
-  );
+  return requestConfigRefresh('initial');
 }
 
 export function shouldResetDocumentSessionOnServerState(
@@ -184,7 +96,6 @@ export function shouldResetDocumentSessionOnServerState(
   return oldState === State.Running && newState !== State.Running;
 }
 
-/** Bind each language client to the workspace whose Go process owns discovery. */
 export function createLanguageClientOptions(
   workspaceFolder: WorkspaceFolder,
   outputChannel: OutputChannel | undefined,
@@ -193,10 +104,6 @@ export function createLanguageClientOptions(
   const documentSelector = createWorkspaceDocumentSelector(workspaceFolder);
   return {
     workspaceFolder,
-    // languageclient v9 types this client-only selector as the LSP shape,
-    // whose pattern is string-only. Its converter forwards the pattern to
-    // VS Code's DocumentFilter, which supports RelativePattern and preserves
-    // an unambiguous workspace base even when the path contains glob syntax.
     documentSelector:
       // rslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
       documentSelector as unknown as LanguageClientOptions['documentSelector'],
@@ -208,11 +115,13 @@ export function createLanguageClientOptions(
 export function configRefreshReasonForPath(
   filePath: string,
 ): Exclude<ConfigRefreshReason, 'initial'> {
-  const basename = path.basename(filePath);
-  if ((LOCKFILE_NAMES as readonly string[]).includes(basename)) {
-    return 'dependency-change';
-  }
-  return 'config-change';
+  return (LOCKFILE_NAMES as readonly string[]).includes(path.basename(filePath))
+    ? 'dependency-change'
+    : 'config-change';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 export function isConfigSourceChangeDuringTransaction(error: unknown): boolean {
@@ -222,10 +131,6 @@ export function isConfigSourceChangeDuringTransaction(error: unknown): boolean {
     (typeof error.message === 'string' &&
       error.message.includes('config changed while'))
   );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 export async function retryConfigRefreshOnSourceChange(
@@ -239,22 +144,6 @@ export async function retryConfigRefreshOnSourceChange(
     if (!isConfigSourceChangeDuringTransaction(error)) throw error;
     await retry();
     return true;
-  }
-}
-
-async function withCancellationSignal<T>(
-  token: CancellationToken,
-  operation: (signal: AbortSignal) => Promise<T>,
-): Promise<T> {
-  const controller = new AbortController();
-  if (token.isCancellationRequested) controller.abort();
-  const subscription = token.onCancellationRequested(() => {
-    controller.abort();
-  });
-  try {
-    return await operation(controller.signal);
-  } finally {
-    subscription.dispose();
   }
 }
 
@@ -275,9 +164,7 @@ async function raceWithAbort<T>(
 ): Promise<T> {
   throwIfAborted(signal);
   return new Promise<T>((resolve, reject) => {
-    const onAbort = () => {
-      reject(abortError(signal));
-    };
+    const onAbort = () => reject(abortError(signal));
     signal.addEventListener('abort', onAbort, { once: true });
     operation.then(
       (value) => {
@@ -298,12 +185,6 @@ export interface LanguageClientCloseTarget {
   dispose(): Promise<void>;
 }
 
-/**
- * vscode-languageclient calls stop() without observing its promise when an
- * initialize request fails. Its base stop rejects for non-Running states; the
- * process owner handles those states, so normalize only that inactive case and
- * preserve actionable failures from a Running shutdown.
- */
 export class ManagedLanguageClient extends LanguageClient {
   public override async stop(timeout?: number): Promise<void> {
     const stateBeforeStop = this.state;
@@ -315,12 +196,6 @@ export class ManagedLanguageClient extends LanguageClient {
   }
 }
 
-/**
- * Disposes a LanguageClient without waiting for a possibly hung initialize
- * request. Its outer LanguageServerProcessOwner blocks restarts and terminates
- * the callback-owned child after an inactive-state rejection; failures from a
- * Running client remain independently actionable.
- */
 export async function disposeLanguageClient(
   client: LanguageClientCloseTarget,
 ): Promise<void> {
@@ -356,9 +231,7 @@ export async function waitForPromiseSettlement(
         () => true,
       ),
       new Promise<false>((resolve) => {
-        timer = setTimeout(() => {
-          resolve(false);
-        }, timeoutMs);
+        timer = setTimeout(() => resolve(false), timeoutMs);
       }),
     ]);
     if (!settled) {
@@ -395,36 +268,17 @@ function observeClientStopped(
   };
 }
 
-/** Config files detection found for this folder, read at every start. */
-export interface RslintFolderConfigPaths {
-  /** Native `rslint.config.{js,mjs,ts,mts}` files. */
-  readonly rslintConfigPaths: readonly string[];
-}
-
-/**
- * The status-aggregation adaptation: this runtime owns no status bar item. It pushes
- * its folder-level state to the stack controller, which aggregates every folder
- * into the one shared status bar entry.
- */
 export type RslintStatusSink = (state: StackState) => void;
 
 export interface RslintOptions {
   readonly rootKey: string;
   readonly workspaceFolder: WorkspaceFolder;
-  /** The shell-owned `Rstack: Rslint` channel. */
   readonly outputChannel: OutputChannel;
-  /**
-   * Trace sink for `rstack.rslint.trace.server`. The extension deliberately
-   * caps itself at four channels, so this is the same channel as `outputChannel`
-   * unless a caller wants them split.
-   */
   readonly lspOutputChannel: OutputChannel;
   readonly router: WorkspaceDocumentRouter;
-  /** Folder-scoped view of the shell's shared output channel. */
   readonly logger: Logger;
   readonly reportStatus: RslintStatusSink;
-  /** Read lazily so a re-start after a detection change sees current paths. */
-  readonly getConfigPaths: () => RslintFolderConfigPaths;
+  readonly getMode: () => RslintMode;
 }
 
 export class Rslint implements Disposable {
@@ -434,94 +288,40 @@ export class Rslint implements Disposable {
   public readonly workspaceFolder: WorkspaceFolder;
   private readonly router: WorkspaceDocumentRouter;
   private readonly reportStatus: RslintStatusSink;
-  private readonly getConfigPaths: () => RslintFolderConfigPaths;
-  /** Set by `startImpl` before anything can use a project-resolved module. */
-  private resolution: RslintResolution | undefined;
-  private configLoader: ConfigLoaderModule | undefined;
-  /** Non-fatal notes appended to the folder's status detail. */
-  private statusNotes: string[] = [];
-  private readonly lspOutputChannel: OutputChannel | undefined;
-  private readonly outputChannel: OutputChannel | undefined;
-  private configWatcher: FileSystemWatcher | undefined;
+  private readonly getMode: () => RslintMode;
+  private readonly lspOutputChannel: OutputChannel;
+  private readonly outputChannel: OutputChannel;
+  private readonly configWatchers: FileSystemWatcher[] = [];
   private configReloadTimer: ReturnType<typeof setTimeout> | undefined;
   private configReloadChain: Promise<void> = Promise.resolve();
   private serverRestartWatcher: Disposable | undefined;
   private serverProcessOwner: LanguageServerProcessOwner | undefined;
   private stateWatcher: Disposable | undefined;
-  private readonly requestHandlers: Disposable[] = [];
   private lifecycleEpoch = 0;
-  private pluginDependencyRevision = 0;
-  private pluginLintPoolDisposed = false;
-  private configTransactionAdapter: LspConfigTransactionAdapter | undefined;
+  private advisory: string | undefined;
   private startPromise: Promise<void> | undefined;
   private startOperation: Promise<void> | undefined;
   private clientStartPromise: Promise<void> | undefined;
   private closePromise: Promise<void> | undefined;
   private closing = false;
-  /**
-   * Hosts the in-process WorkerPool that answers Go's reverse
-   * `rslint/pluginLint` requests for rules mounted via a config's
-   * object-form `plugins`. It stays uninitialized until a config actually
-   * mounts plugins.
-   */
-  private readonly pluginLintPool: PluginLintPool;
 
   constructor(options: RslintOptions) {
     this.rootKey = options.rootKey;
     this.workspaceFolder = options.workspaceFolder;
     this.router = options.router;
     this.reportStatus = options.reportStatus;
-    this.getConfigPaths = options.getConfigPaths;
-    const logger = options.logger;
-    this.logger = logger;
+    this.getMode = options.getMode;
+    this.logger = options.logger;
     this.lspOutputChannel = options.lspOutputChannel;
     this.outputChannel = options.outputChannel;
-    try {
-      // The resolve-from-project adaptation: the ESLint-plugin host is loaded from the project,
-      // out of the same `@rslint/core` install as the Go binary. The factory is
-      // only invoked once a config actually mounts plugins, which is always
-      // after `startImpl` published `this.resolution`.
-      this.pluginLintPool = new PluginLintPool(logger, async (configs, onLog) =>
-        this.createPluginHost(configs, onLog),
-      );
-    } catch (error) {
-      logger.dispose();
-      throw error;
-    }
   }
 
-  private async createPluginHost(
-    configs: ConfigDescriptor[],
-    onLog: (rec: { level: string; source: string; text: string }) => void,
-  ): Promise<PluginLintHost> {
-    const resolution = this.resolution;
-    if (!resolution) {
-      throw new Error(
-        'the ESLint-plugin host was requested before @rslint/core was resolved from the project',
-      );
-    }
-    const module = await loadEslintPluginModule(resolution);
-    return module.createPluginLintHost(configs, onLog);
-  }
-
-  /** Folder-level status, aggregated by the stack controller (the status-aggregation adaptation). */
   private report(state: StackState): void {
     this.reportStatus(state);
   }
 
-  private runningDetail(): string | undefined {
-    return this.statusNotes.length > 0
-      ? this.statusNotes.join('; ')
-      : undefined;
-  }
-
-  private addStatusNote(note: string): void {
-    if (!this.statusNotes.includes(note)) {
-      this.statusNotes.push(note);
-    }
-    if (this.isRunning()) {
-      this.report({ kind: 'running', detail: this.runningDetail() });
-    }
+  private reportRunning(): void {
+    this.report(runningRslintStatus(this.advisory));
   }
 
   public async start(signal: AbortSignal): Promise<void> {
@@ -529,26 +329,16 @@ export class Rslint implements Disposable {
       await this.startPromise;
       return;
     }
-    if (this.closing || signal.aborted) {
-      throw abortError(signal);
-    }
+    if (this.closing || signal.aborted) throw abortError(signal);
     this.startOperation = this.startImpl(signal).catch((error: unknown) => {
       this.reportStartFailure(error);
       throw error;
     });
-    // The abort facade releases the per-URI coordinator even when JavaScript
-    // module evaluation itself cannot be interrupted. startImpl retains its
-    // own rejection handler and epoch checks so a late completion is harmless.
     this.startPromise = raceWithAbort(this.startOperation, signal);
     void this.startOperation.catch(() => undefined);
     await this.startPromise;
   }
 
-  /**
-   * Resolution failure surfaces in the status bar; no silent fallback.
-   * The two version seams (the support matrix and the config-discovery
-   * protocol) are additionally separated from an ordinary crash.
-   */
   private reportStartFailure(error: unknown): void {
     if (
       this.closing ||
@@ -556,97 +346,71 @@ export class Rslint implements Disposable {
     ) {
       return;
     }
-    if (
-      error instanceof RslintVersionMismatchError ||
-      error instanceof ConfigDiscoveryProtocolMismatchError
-    ) {
-      this.report({ kind: 'version-mismatch', detail: error.message });
-      return;
-    }
-    const detail =
-      error instanceof RslintResolutionError || error instanceof Error
-        ? error.message
-        : String(error);
-    this.report({ kind: 'crashed', detail });
+    this.report(statusForRslintStartFailure(error));
   }
 
   private async startImpl(signal: AbortSignal): Promise<void> {
     this.configReloadChain = Promise.resolve();
     this.lifecycleEpoch++;
     const epoch = this.lifecycleEpoch;
-    const pluginLintPool = this.pluginLintPool;
-    this.pluginDependencyRevision = 0;
-    this.statusNotes = [];
+    this.advisory = undefined;
     this.report({ kind: 'starting' });
 
-    // One resolution root for the binary, the config-loader and
-    // the ESLint-plugin host — asserted inside `resolveRslint`. A failure here
-    // is terminal and user-visible; there is no built-in binary to fall back to.
-    const resolution = await resolveRslint(this.workspaceFolder, this.logger);
+    const folderRoot = this.workspaceFolder.uri.fsPath;
+    const mode = this.getMode();
+    const corePath = workspace
+      .getConfiguration('rstack.rslint', this.workspaceFolder.uri)
+      .get<string>('corePath');
+    const resolution = resolveRslint({ folderRoot, mode, corePath });
     this.assertStartCurrent(epoch, signal);
-    this.resolution = resolution;
-    this.logger.info(
-      `Rslint resolved from the project (${resolution.kind}): ${resolution.coreDir}` +
-        ` (version ${resolution.coreVersion ?? 'unknown'})`,
-    );
 
-    // Compatibility seam (1): the support matrix. `@rslint/core` older than the
-    // launch floor has no `./config-loader` / `./eslint-plugin` export at all,
-    // so this check must precede the module load to produce the better message.
-    const versionCheck = checkPackageVersion(
+    if (resolution.rstackDir !== undefined) {
+      const rstackCheck = checkPackageVersion(
+        'rstack',
+        resolution.rstackVersion,
+      );
+      if (rstackCheck.kind === 'mismatch') {
+        throw new RslintVersionMismatchError(
+          formatVersionMismatch('rstack', rstackCheck),
+        );
+      }
+    }
+    const coreCheck = checkPackageVersion(
       '@rslint/core',
       resolution.coreVersion,
     );
-    if (versionCheck.kind === 'mismatch') {
+    if (coreCheck.kind === 'mismatch') {
       throw new RslintVersionMismatchError(
-        formatVersionMismatch('@rslint/core', versionCheck),
+        formatVersionMismatch('@rslint/core', coreCheck),
       );
     }
 
-    // Compatibility seam (2): the config-discovery protocol handshake. The value
-    // this yields is what every `rslint/configRefresh` request carries and what
-    // every server-initiated transaction is validated against, so the Go
-    // binary and the JS loader can never silently disagree.
-    const configLoader = await loadConfigLoaderModule(resolution);
-    this.assertStartCurrent(epoch, signal);
-    this.configLoader = configLoader;
-    this.logger.debug(
-      `Config-discovery protocol version ${configLoader.CONFIG_DISCOVERY_PROTOCOL_VERSION} (project loader: ${resolution.configLoaderPath})`,
+    this.logger.info(
+      `Rslint ${mode} mode: @rslint/core ${resolution.coreVersion ?? 'unknown'} at ${resolution.coreDir}`,
     );
-
-    // Compatibility seam (3): the jiti preflight. `@rslint/core`'s config-file-loader
-    // falls back to jiti when the host's Node cannot strip types, and the host
-    // Node version is fixed by VS Code rather than by the user.
-    const jitiNote = describeJitiPreflight({
-      folder: this.workspaceFolder,
-      coreDir: resolution.coreDir,
-      rslintConfigPaths: this.getConfigPaths().rslintConfigPaths,
-    });
-    if (jitiNote) {
-      this.logger.warn(jitiNote);
-      this.statusNotes.push(jitiNote);
+    if (resolution.shimPath !== undefined) {
+      this.logger.info(`Rstack lint shim: ${resolution.shimPath}`);
     }
 
-    const binPath = resolution.binPath;
-    this.logger.info('Rslint binary path:', binPath);
-
+    const nodeExecutable = await this.resolveNodeExecutable();
+    this.assertStartCurrent(epoch, signal);
+    const workerPath = path.resolve(__dirname, 'lint-worker.js');
+    const workerArgs = [workerPath, '--lsp', '--core', resolution.coreDir];
+    if (resolution.shimPath !== undefined) {
+      workerArgs.push('--config', resolution.shimPath);
+    }
     const serverProcessOwner = new LanguageServerProcessOwner(
-      binPath,
-      ['--lsp'],
-      this.workspaceFolder.uri.fsPath,
+      nodeExecutable,
+      workerArgs,
+      folderRoot,
     );
     this.serverProcessOwner = serverProcessOwner;
-    const serverOptions: ServerOptions = async () => {
-      const process = await serverProcessOwner.start();
-      return process;
-    };
+    const serverOptions: ServerOptions = async () => serverProcessOwner.start();
 
-    // Check if LSP tracing is enabled
     const traceServer = workspace
       .getConfiguration('rstack.rslint', this.workspaceFolder.uri)
       .get<string>('trace.server', 'off');
     const traceEnabled = traceServer !== 'off';
-
     const clientOptions = createLanguageClientOptions(
       this.workspaceFolder,
       this.outputChannel,
@@ -654,34 +418,25 @@ export class Rslint implements Disposable {
     );
     const errorHandlerHolder: { current?: ErrorHandler } = {};
     clientOptions.errorHandler = {
-      error: async (error, message, count) => {
-        const result = await Promise.resolve(
+      error: async (error, message, count) =>
+        Promise.resolve(
           errorHandlerHolder.current?.error(error, message, count) ?? {
             action: ErrorAction.Shutdown,
           },
-        );
-        return result;
-      },
+        ),
       closed: async () => {
         if (this.closing) {
           return { action: CloseAction.DoNotRestart, handled: true };
         }
-        const result = await Promise.resolve(
+        return Promise.resolve(
           errorHandlerHolder.current?.closed() ?? {
             action: CloseAction.DoNotRestart,
           },
         );
-        return result;
       },
     };
-
     if (traceEnabled) {
       clientOptions.traceOutputChannel = this.lspOutputChannel;
-      this.logger.info(
-        'LSP tracing enabled, the trace is written to the "Rstack: Rslint" output channel',
-      );
-    } else {
-      this.logger.debug('LSP tracing disabled by configuration');
     }
 
     const client = new ManagedLanguageClient(
@@ -696,19 +451,14 @@ export class Rslint implements Disposable {
       this.logger.debug(
         `Language client state ${event.oldState} -> ${event.newState}`,
       );
-      if (this.closing || client !== this.client) {
-        return;
-      }
+      if (this.closing || client !== this.client) return;
       if (event.newState === State.Stopped) {
-        // The process owner and languageclient's error handler decide whether
-        // a restart happens; either way the user must see that this folder is
-        // currently not linting.
         this.report({
           kind: 'crashed',
           detail: 'the Rslint language server stopped',
         });
       } else if (event.newState === State.Running) {
-        this.report({ kind: 'running', detail: this.runningDetail() });
+        this.reportRunning();
       }
     });
 
@@ -718,74 +468,6 @@ export class Rslint implements Disposable {
       await clientStartPromise;
       this.assertStartCurrent(epoch, signal, client);
 
-      const adapter = new LspConfigTransactionAdapter(
-        new configLoader.ConfigModuleHost(),
-        pluginLintPool,
-        (activation) => this.computeActivationFingerprint(activation),
-        configLoader.CONFIG_DISCOVERY_PROTOCOL_VERSION,
-        (error) => {
-          this.report({ kind: 'version-mismatch', detail: error.message });
-        },
-      );
-      this.configTransactionAdapter = adapter;
-
-      this.requestHandlers.push(
-        client.onRequest(
-          'rslint/loadConfigs',
-          async (params: LoadConfigsRequest, token: CancellationToken) =>
-            this.observeConfigTransaction(async () =>
-              withCancellationSignal(token, async (requestSignal) =>
-                adapter.loadConfigs(params, requestSignal),
-              ),
-            ),
-        ),
-      );
-      this.requestHandlers.push(
-        client.onRequest(
-          'rslint/activateConfigs',
-          async (params: ActivateConfigsRequest, token: CancellationToken) =>
-            this.observeConfigTransaction(async () =>
-              withCancellationSignal(token, async (requestSignal) =>
-                adapter.activateConfigs(params, requestSignal),
-              ),
-            ),
-        ),
-      );
-      this.requestHandlers.push(
-        client.onRequest(
-          'rslint/commitConfigs',
-          async (params: ConfigTransactionControlRequest) =>
-            adapter.commitConfigs(params),
-        ),
-      );
-      this.requestHandlers.push(
-        client.onRequest(
-          'rslint/abortConfigs',
-          async (params: ConfigTransactionControlRequest) =>
-            adapter.abortConfigs(params),
-        ),
-      );
-
-      // Answer Go's reverse `rslint/pluginLint` requests: Go lints
-      // natively but dispatches rules mounted via a config's object-form
-      // `plugins` back to us, where the JS WorkerPool runs them. The generic
-      // string-method overload of `onRequest` handles server-initiated custom
-      // requests. The handler's CancellationToken — fired when Go sends
-      // $/cancelRequest for a superseded keystroke / closed document — is
-      // threaded through to the pool, which bridges it to an AbortSignal and
-      // cancels the in-flight worker tasks.
-      this.requestHandlers.push(
-        client.onRequest(
-          'rslint/pluginLint',
-          async (params: EslintPluginLintRequest, token: CancellationToken) =>
-            pluginLintPool.lint(params, token),
-        ),
-      );
-
-      // client.start() has already emitted the initial Running transition. Any
-      // later Running event belongs to an automatic native-server restart.
-      // Reset router-side server-open state before LanguageClient replays open
-      // documents, then rebuild the replacement Go process's config catalog.
       this.serverRestartWatcher = client.onDidChangeState((event) => {
         if (
           shouldResetDocumentSessionOnServerState(
@@ -793,7 +475,7 @@ export class Rslint implements Disposable {
             event.newState,
           )
         ) {
-          this.router.resetServerSession(this).catch((error: unknown) => {
+          void this.router.resetServerSession(this).catch((error: unknown) => {
             this.logger.error(
               'Failed to reset documents after server exit',
               error,
@@ -802,9 +484,9 @@ export class Rslint implements Disposable {
         }
         const recovery = recoverConfigDiscoveryOnServerState(
           event.newState,
-          async (reason, beforeRequest) => {
+          async (reason) => {
             await this.router.resetServerSession(this);
-            await this.requestConfigRefresh(reason, beforeRequest);
+            await this.requestConfigRefresh(reason);
           },
         );
         recovery?.then(
@@ -820,27 +502,16 @@ export class Rslint implements Disposable {
       });
 
       if (traceEnabled) {
-        const traceLevel =
-          traceServer === 'verbose' ? Trace.Verbose : Trace.Messages;
-        await client.setTrace(traceLevel);
+        await client.setTrace(
+          traceServer === 'verbose' ? Trace.Verbose : Trace.Messages,
+        );
         this.assertStartCurrent(epoch, signal, client);
-        this.logger.info(`LSP trace level set to: ${traceServer}`);
       }
 
-      this.installConfigRefreshWatcher();
-      // The watcher is live before initial discovery, so a mutation during a
-      // slow module evaluation schedules a second serialized transaction.
-      // A plugin worker is prepared between two config fingerprints. If the
-      // initial source changes in that window, Go correctly aborts the
-      // generation. Retry once from the now-current bytes instead of tearing
-      // down the language client before the already-live watcher can recover.
+      this.installConfigRefreshWatchers(mode);
       const retried = await retryConfigRefreshOnSourceChange(
-        async () => {
-          await this.requestConfigRefresh('initial');
-        },
-        async () => {
-          await this.requestConfigRefresh('config-change');
-        },
+        async () => this.requestConfigRefresh('initial'),
+        async () => this.requestConfigRefresh('config-change'),
       );
       this.assertStartCurrent(epoch, signal, client);
       if (retried) {
@@ -848,36 +519,36 @@ export class Rslint implements Disposable {
           'Config changed during initial activation; discovery recovered on retry',
         );
       }
-
       this.logger.info('Rslint language client started successfully');
-      // Any bridge note was already collected before the client started, so it
-      // is part of the very first `running` detail.
-      this.report({ kind: 'running', detail: this.runningDetail() });
-    } catch (err: unknown) {
-      this.logger.error('Failed to start Rslint language client', err);
-      throw err;
+      this.reportRunning();
+    } catch (error: unknown) {
+      this.logger.error('Failed to start Rslint language client', error);
+      throw error;
     }
   }
 
-  /**
-   * Surfaces the two failure classes that must stay actionable
-   * instead of generic: a config-discovery protocol disagreement and the
-   * config-file-loader's "Install jiti as a dependency" error.
-   */
-  private async observeConfigTransaction<T>(
-    operation: () => Promise<T>,
-  ): Promise<T> {
+  private async resolveNodeExecutable(): Promise<string> {
+    const configured = getConfiguredNodeExecutable(this.workspaceFolder);
+    if (configured !== undefined) {
+      void configuredNodeBelowFloor(configured).then((message) => {
+        if (message !== undefined && !this.closing) {
+          this.advisory = message;
+          if (this.isRunning()) this.reportRunning();
+        }
+      });
+      return configured;
+    }
     try {
-      return await operation();
+      const resolution = await resolveUserNodeOnce({
+        shell: env.shell || undefined,
+        cwd: this.workspaceFolder.uri.fsPath,
+        notify: (message) => this.logger.info(message),
+      });
+      return resolution.executable;
     } catch (error) {
-      if (error instanceof ConfigTransactionProtocolMismatchError) {
-        // Already reported through the adapter's `onProtocolMismatch`.
-        throw error;
-      }
-      if (isJitiMissingError(error)) {
-        this.addStatusNote(
-          'a TypeScript Rslint config could not be loaded: ' +
-            JITI_INSTALL_HINT,
+      if (error instanceof NodePreflightError) {
+        throw new RslintVersionMismatchError(
+          error.messageWith('Rslint will not lint'),
         );
       }
       throw error;
@@ -899,136 +570,51 @@ export class Rslint implements Disposable {
     }
   }
 
-  private installConfigRefreshWatcher(): void {
-    this.configWatcher = workspace.createFileSystemWatcher(
-      // Go owns the config-scoped .gitignore watcher and refresh transaction.
-      // Keeping it out of this direct watcher prevents one mutation from
-      // starting both a didChangeWatchedFiles and a configRefresh transaction.
-      new RelativePattern(this.workspaceFolder, CONFIG_REFRESH_WATCH_GLOB),
-    );
+  private installConfigRefreshWatchers(mode: RslintMode): void {
+    const patterns = [
+      CONFIG_REFRESH_WATCH_GLOB,
+      ...(mode === 'bridged' ? [RSTACK_CONFIG_REFRESH_WATCH_GLOB] : []),
+    ];
     const refreshConfig = (uri: Uri) => {
       const reason = configRefreshReasonForPath(uri.fsPath);
-      if (reason === 'dependency-change') {
-        // The actual package contents can change while config source bytes stay
-        // identical. Feed a monotonic dependency revision into the staged host
-        // fingerprint so any lockfile mutation forces a worker rebuild.
-        this.pluginDependencyRevision++;
-      }
       this.logger.debug(`${reason}: ${uri.fsPath}`);
       clearTimeout(this.configReloadTimer);
       this.configReloadTimer = setTimeout(() => {
         this.configReloadTimer = undefined;
-        this.requestConfigRefresh(reason).catch((err: unknown) => {
-          this.logger.error('Failed to refresh config discovery', err);
+        void this.requestConfigRefresh(reason).catch((error: unknown) => {
+          this.logger.error('Failed to refresh config discovery', error);
         });
       }, 300);
     };
-    this.configWatcher.onDidChange(refreshConfig);
-    this.configWatcher.onDidCreate(refreshConfig);
-    this.configWatcher.onDidDelete(refreshConfig);
+    for (const pattern of patterns) {
+      const watcher = workspace.createFileSystemWatcher(
+        new RelativePattern(this.workspaceFolder, pattern),
+      );
+      this.configWatchers.push(watcher);
+      watcher.onDidChange(refreshConfig);
+      watcher.onDidCreate(refreshConfig);
+      watcher.onDidDelete(refreshConfig);
+    }
   }
 
   private async requestConfigRefresh(
     reason: ConfigRefreshReason,
-    beforeRequest?: (adapter: LspConfigTransactionAdapter) => Promise<void>,
   ): Promise<void> {
     const epoch = this.lifecycleEpoch;
     const client = this.client;
-    const pluginLintPool = this.pluginLintPool;
-    const adapter = this.configTransactionAdapter;
-    const configLoader = this.configLoader;
-    if (!client || !adapter || !configLoader || this.pluginLintPoolDisposed) {
-      return;
-    }
+    if (!client) return;
     const refresh = this.configReloadChain.then(async () => {
-      if (
-        !this.isLifecycleCurrent(epoch, client, pluginLintPool) ||
-        adapter !== this.configTransactionAdapter
-      ) {
-        return;
-      }
-      await beforeRequest?.(adapter);
-      if (
-        !this.isLifecycleCurrent(epoch, client, pluginLintPool) ||
-        adapter !== this.configTransactionAdapter
-      ) {
-        return;
-      }
-      const request: ConfigRefreshRequest = {
-        protocolVersion: configLoader.CONFIG_DISCOVERY_PROTOCOL_VERSION,
-        reason,
-      };
-      await client.sendRequest('rslint/configRefresh', request);
+      if (!this.isLifecycleCurrent(epoch, client)) return;
+      await client.sendRequest('rslint/configRefresh', { reason });
     });
     this.configReloadChain = refresh.catch(() => undefined);
     await refresh;
   }
 
-  private isLifecycleCurrent(
-    epoch: number,
-    client: LanguageClient,
-    pluginLintPool: PluginLintPool,
-  ): boolean {
+  private isLifecycleCurrent(epoch: number, client: LanguageClient): boolean {
     return (
-      epoch === this.lifecycleEpoch &&
-      client === this.client &&
-      pluginLintPool === this.pluginLintPool &&
-      !this.pluginLintPoolDisposed &&
-      !this.closing
+      epoch === this.lifecycleEpoch && client === this.client && !this.closing
     );
-  }
-
-  /**
-   * Fingerprint the inputs that decide whether the plugin host must rebuild:
-   * Go's selected config snapshots plus each workspace-root lockfile's
-   * existence, mtime, and size. A dependency install can replace plugin code
-   * without changing config, so the lockfile also feeds the key.
-   */
-  private computeMetadataFingerprint(filePath: string): string {
-    try {
-      const stat = fs.statSync(filePath);
-      return `${stat.mtimeMs}:${stat.size}`;
-    } catch {
-      return 'absent';
-    }
-  }
-
-  private computeActivationFingerprint(
-    activation: ConfigModuleActivationPlan,
-  ): string {
-    const sourceFingerprint = this.computeFingerprint(
-      activation.pluginConfigs.map((config) => config.configPath),
-      activation.configs,
-    );
-    return `${sourceFingerprint}|dependency-revision:${this.pluginDependencyRevision}`;
-  }
-
-  private computeFingerprint(
-    configPaths: string[],
-    configs: ReadonlyArray<{
-      configPath: string;
-      sourceFingerprint: string;
-    }>,
-  ): string {
-    const parts: string[] = [];
-    const sourceFingerprintByPath = new Map(
-      configs.map((config) => [
-        path.normalize(config.configPath),
-        config.sourceFingerprint,
-      ]),
-    );
-    for (const p of [...configPaths].sort()) {
-      const sourceFingerprint = sourceFingerprintByPath.get(path.normalize(p));
-      if (sourceFingerprint === undefined) {
-        throw new Error(`missing source fingerprint for plugin config ${p}`);
-      }
-      parts.push(`${p}:${sourceFingerprint}`);
-    }
-    for (const name of LOCKFILE_NAMES) {
-      const lockPath = path.join(this.workspaceFolder.uri.fsPath, name);
-      parts.push(`lock:${name}:${this.computeMetadataFingerprint(lockPath)}`);
-    }
-    return parts.join('|');
   }
 
   public async close(): Promise<void> {
@@ -1052,20 +638,12 @@ export class Rslint implements Disposable {
     this.configReloadTimer = undefined;
     disposeSafely(this.serverRestartWatcher);
     this.serverRestartWatcher = undefined;
-    disposeSafely(this.configWatcher);
-    this.configWatcher = undefined;
-    disposeSafely(this.configTransactionAdapter);
-    this.configTransactionAdapter = undefined;
-    for (const handler of this.requestHandlers.splice(0)) {
-      disposeSafely(handler);
+    for (const watcher of this.configWatchers.splice(0)) {
+      disposeSafely(watcher);
     }
     disposeSafely(this.stateWatcher);
     this.stateWatcher = undefined;
-    // Do not await startOperation/configReloadChain: user module evaluation can
-    // contain a non-settling top-level await. Epoch/closing checks fence every
-    // late continuation from publishing resources or state.
     this.configReloadChain = Promise.resolve();
-    this.pluginLintPoolDisposed = true;
 
     const client = this.client;
     this.client = undefined;
@@ -1077,15 +655,9 @@ export class Rslint implements Disposable {
         : undefined;
     const serverProcessOwner = this.serverProcessOwner;
     this.serverProcessOwner = undefined;
-    // Block vscode-languageclient's automatic restart callback before its
-    // graceful client shutdown begins. The owner force-terminates and awaits
-    // any surviving child after the bounded protocol shutdown finishes.
     serverProcessOwner?.beginClose();
-    const asynchronousCleanups: Promise<void>[] = [
-      (async () => {
-        await this.pluginLintPool.dispose();
-      })(),
-    ];
+
+    const asynchronousCleanups: Promise<void>[] = [];
     if (client) {
       asynchronousCleanups.push(
         (async () => {
@@ -1133,36 +705,19 @@ export class Rslint implements Disposable {
         })(),
       );
     } else if (serverProcessOwner) {
-      asynchronousCleanups.push(
-        (async () => {
-          await serverProcessOwner.close();
-        })(),
-      );
+      asynchronousCleanups.push(serverProcessOwner.close());
     }
     const results = await Promise.allSettled(asynchronousCleanups);
-    this.pluginDependencyRevision = 0;
-
     for (const result of results) {
-      if (result.status === 'rejected') {
-        const reason: unknown = result.reason;
-        errors.push(reason);
-      }
+      if (result.status === 'rejected') errors.push(result.reason);
     }
-    try {
-      for (const error of errors) {
-        this.logger.error('Failed to close Rslint workspace resource', error);
-      }
-      if (errors.length === 0) {
-        this.logger.info('Rslint language client closed');
-      }
-    } catch (error) {
-      errors.push(error);
+    for (const error of errors) {
+      this.logger.error('Failed to close Rslint workspace resource', error);
     }
-    try {
-      this.logger.dispose();
-    } catch (error) {
-      errors.push(error);
+    if (errors.length === 0) {
+      this.logger.info('Rslint language client closed');
     }
+    this.logger.dispose();
     if (errors.length > 0) {
       throw new AggregateError(errors, 'failed to close Rslint workspace');
     }
