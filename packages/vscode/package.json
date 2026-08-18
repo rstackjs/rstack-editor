@@ -30,6 +30,7 @@
   "scripts": {
     "build": "rslib build",
     "build:local": "cross-env SOURCEMAP=true rslib build",
+    "bump": "bumpp",
     "package": "pnpm run build && vsce package",
     "package:targets": "node scripts/packageTargets.mjs",
     "test": "pnpm run test:unit && pnpm run test:e2e",
@@ -439,6 +440,7 @@
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.9.2",
     "birpc": "^4.0.0",
+    "bumpp": "^12.2.1",
     "core-js-pure": "^3.49.0",
     "cross-env": "^7.0.3",
     "mocha": "^11.7.6",
