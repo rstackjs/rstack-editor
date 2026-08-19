@@ -20,7 +20,7 @@ jobs:
   # of silently skipping the publish steps) makes the mistake visible.
   preflight:
     name: Preflight
-    if: github.repository == 'rstackjs/rstack-editor' && github.event_name == 'workflow_dispatch'
+    if: github.repository == 'rstackjs/rstack-editor'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -29,8 +29,6 @@ jobs:
         run: |
           echo "::error::A real release must be dispatched from main (got ${GITHUB_REF}). Re-run with dry run enabled, or dispatch from main."
           exit 1
-      - name: Report
-        run: echo "ref=${GITHUB_REF} sha=${GITHUB_SHA} dry_run=${{ inputs.dry_run }}"
 
   release_vscode_extension:
     name: Release VS Code Extension (${{ matrix.vsce-target }})
@@ -120,12 +118,11 @@ jobs:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
         run: pnpm exec ovsx publish --target ${{ matrix.vsce-target }} --skip-duplicate
 
-  # ======== tag + GitHub Release, once, after every target published ========
   # Runs only for a real release: a dry run must leave no tag behind. The tag
   # points at the commit that was actually published (github.sha), the release
   # notes come from the conventional commits since the previous tag, and the
-  # six VSIX files are attached as assets so a release can be installed by hand
-  # (`code --install-extension`) without either marketplace.
+  # VSIX of every matrix target is attached as an asset so a release can be
+  # installed by hand (`code --install-extension`) without either marketplace.
   github_release:
     name: Tag and GitHub Release
     needs: release_vscode_extension
@@ -142,7 +139,6 @@ jobs:
           # release and list the commits since it; the tag step compares an
           # existing tag's target against this commit.
           fetch-depth: 0
-          fetch-tags: true
 
       - name: Setup Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
@@ -185,5 +181,4 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
         run: |
-          ls -la vsix
           npx changelogithub@15.0.4 --to "$TAG" --assets 'vsix/*.vsix'

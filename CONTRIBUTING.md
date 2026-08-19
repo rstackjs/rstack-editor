@@ -31,10 +31,10 @@ To try the extension: press F5 in VS Code at the repo root — the playground la
 
 ## Releasing
 
-All packages share one version and are bumped in lockstep; the root `package.json` carries no version. Today the VS Code extension (`packages/vscode`) is the only published artifact.
+All packages share one version and are bumped in lockstep. Today the VS Code extension (`packages/vscode`) is the only published artifact.
 
 1. On a branch, run `pnpm bump` (interactive; or `pnpm bump --release minor`) — [bumpp](https://github.com/antfu-collective/bumpp) bumps every `packages/*/package.json` and commits `vX.Y.Z`. It does not tag or push.
 2. Open a PR with that commit and merge it into `main`.
-3. Run the **Release** workflow (`Actions → Release → Run workflow`, branch `main`; `gh workflow run release.yml`). Tick **dry run** to only build the six VSIX artifacts. A real run publishes every platform target to the VS Code Marketplace and Open VSX, then tags `main` as `vX.Y.Z` and creates the GitHub Release with notes generated from the conventional commits since the previous tag and the VSIX files attached.
+3. Run the **Release** workflow (`Actions → Release → Run workflow`, branch `main`; `gh workflow run release.yml`). Tick **dry run** to only build the VSIX artifacts (one per platform target). A real run publishes every platform target to the VS Code Marketplace and Open VSX, then tags `main` as `vX.Y.Z` and creates the GitHub Release with notes generated from the conventional commits since the previous tag and the VSIX files attached.
 
 Re-running a release for the same commit is safe: both marketplaces skip an already-published version and the tag step leaves a tag that already points at that commit alone. A real (non-dry) run is rejected unless dispatched from `main`, and fails if the version's tag already exists on a different commit — bump first.
