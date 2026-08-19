@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as vscode from 'vscode';
+import { findPackageJsonUncached } from '../../../src/shared/packageResolve';
 import {
   getRslintDiagnostics,
   waitForRslintDiagnostics,
@@ -60,12 +61,38 @@ suite('Rstack lint bridge', function () {
   const root = workspaceRoot();
   const rstackConfigPath = path.join(root, 'rstack.config.ts');
   const nativeConfigPath = path.join(root, nativeConfigName);
+  const nativeNodeModulesPath = path.join(root, 'node_modules');
   const markerPath = path.join(root, '.lint-worker-config.json');
   const originalConfig = fs.readFileSync(rstackConfigPath, 'utf8');
+
+  function installNativeCore(): void {
+    // The fixture intentionally depends only on rstack, so the first two tests
+    // prove bridged resolution against pnpm's isolated transitive dependency.
+    // A native config, however, needs its own project-visible @rslint/core.
+    // Stage that install only for the ownership-transition test, inside the
+    // sandbox workspace copy (torn down below): link the core rstack itself
+    // resolves — the same walk the extension performs — so no store layout is
+    // assumed here.
+    const rstackPackageJson = findPackageJsonUncached('rstack', root);
+    assert.ok(rstackPackageJson, 'the fixture install should provide rstack');
+    const corePackageJson = findPackageJsonUncached(
+      '@rslint/core',
+      path.dirname(rstackPackageJson),
+    );
+    assert.ok(corePackageJson, 'rstack should resolve its @rslint/core');
+    const scopeDir = path.join(nativeNodeModulesPath, '@rslint');
+    fs.mkdirSync(scopeDir, { recursive: true });
+    fs.symlinkSync(
+      path.dirname(corePackageJson),
+      path.join(scopeDir, 'core'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+  }
 
   teardown(async () => {
     fs.writeFileSync(rstackConfigPath, originalConfig, 'utf8');
     fs.rmSync(nativeConfigPath, { force: true });
+    fs.rmSync(nativeNodeModulesPath, { recursive: true, force: true });
     fs.rmSync(markerPath, { force: true });
     const document = vscode.workspace.textDocuments.find(
       (candidate) =>
@@ -142,6 +169,7 @@ suite('Rstack lint bridge', function () {
     const document = await openLintTarget();
     await waitForRslintDiagnostics(document, hasNoDebugger);
 
+    installNativeCore();
     fs.writeFileSync(
       nativeConfigPath,
       `export default [{ rules: { 'no-debugger': 'off' } }];\n`,

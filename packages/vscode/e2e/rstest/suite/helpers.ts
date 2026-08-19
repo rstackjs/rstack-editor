@@ -14,6 +14,7 @@ import type { RstackExtensionExports } from '../../../src/types';
 export interface RstestExports {
   testController: vscode.TestController;
   runProfile: vscode.TestRunProfile;
+  getResolvedRstestPath: (sourceUri: string) => string | undefined;
   startTestRun: (
     request: vscode.TestRunRequest,
     token: vscode.CancellationToken,

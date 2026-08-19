@@ -108,6 +108,9 @@ describe('resolveRstackShim', () => {
     expect(shim?.configFilePath).toBe(
       path.join(configDir, 'node_modules', 'rstack', 'dist', 'rstestConfig.js'),
     );
+    expect(shim?.packageDirectory).toBe(
+      path.join(configDir, 'node_modules', 'rstack'),
+    );
     expect(fs.existsSync(shim!.configFilePath)).toBe(true);
   });
 

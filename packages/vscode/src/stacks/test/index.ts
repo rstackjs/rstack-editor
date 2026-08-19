@@ -73,16 +73,24 @@ class Rstest implements vscode.Disposable {
   /**
    * What upstream's `activate()` effectively exported (the `Rstest` instance):
    * the E2E suites (`e2e/rstest/`) consume `testController`, `runProfile`
-   * and `startTestRun`. The shell republishes this object through the
-   * extension's public exports (`RstackExtensionExports.whenStackActive`).
-   * All three values are stable for the lifetime of one registration; a
-   * re-registration publishes a fresh object.
+   * and `startTestRun`, plus the repo-only resolved-path probe used by bridge
+   * coverage. The shell republishes this object through the extension's public
+   * exports (`RstackExtensionExports.whenStackActive`). These values are stable
+   * for the lifetime of one registration; a re-registration publishes a fresh
+   * object.
    */
   buildExports(): Record<string, unknown> {
     return {
       testController: this.ctrl,
       runProfile: this.runProfile,
       startTestRun: this.startTestRun,
+      getResolvedRstestPath: (sourceUri: string) => {
+        for (const workspace of this.workspaces.values()) {
+          const project = workspace.projects.get(sourceUri);
+          if (project) return project.api.resolvedRstestPath;
+        }
+        return undefined;
+      },
     };
   }
 

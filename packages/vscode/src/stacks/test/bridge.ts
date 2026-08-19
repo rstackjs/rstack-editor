@@ -31,8 +31,9 @@ import { status } from './status';
  * the worker's spawn cwd is the only anchor it has. That is why the synthesized
  * `Project` must carry an explicit cwd (adaptation #5): pointing a `Project` at
  * the shim without it would cwd the worker into `node_modules/rstack/dist/`,
- * where the probe finds nothing and `@rstest/core` would resolve from the wrong
- * root.
+ * where the probe finds nothing. Package resolution is anchored separately at
+ * the resolved `rstack` directory, where package managers such as pnpm install
+ * rstack's `@rstest/core` dependency.
  */
 
 /** Relative to the `rstack` package root. Same file `rs test` injects. */
@@ -41,6 +42,8 @@ const SHIM_RELATIVE_PATH = path.join('dist', 'rstestConfig.js');
 export type RstackShim = {
   /** Absolute path of `<rstack>/dist/rstestConfig.js`. */
   readonly configFilePath: string;
+  /** Absolute path of the resolved `rstack` package root. */
+  readonly packageDirectory: string;
   /** The installed `rstack` version, when it could be read. */
   readonly version?: string;
 };
@@ -76,10 +79,8 @@ export function resolveRstackShim(
     return undefined;
   }
 
-  const configFilePath = path.join(
-    path.dirname(packageJsonPath),
-    SHIM_RELATIVE_PATH,
-  );
+  const packageDirectory = path.dirname(packageJsonPath);
+  const configFilePath = path.join(packageDirectory, SHIM_RELATIVE_PATH);
   if (!existsSync(configFilePath)) {
     if (!silent) {
       logger.error(
@@ -106,8 +107,9 @@ export function resolveRstackShim(
 
   logger.debug('Resolved the rstack Rstest config shim', {
     configFilePath,
+    packageDirectory,
     version,
   });
   status.versionOk(configDir);
-  return { configFilePath, version };
+  return { configFilePath, packageDirectory, version };
 }

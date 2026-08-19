@@ -44,6 +44,10 @@ const install = (name) => {
     throw new Error(`E2E fixture ${name} has no package.json at ${cwd}`);
   }
   console.log(`[e2e] installing fixture: ${name}`);
+  // Keep pnpm's default isolated layout. In the rstack fixture the tool cores
+  // are transitive dependencies beside rstack in the virtual store, matching
+  // the layout users get rather than masking resolution bugs with public
+  // hoisting.
   const result = spawnSync(
     pnpmCommand,
     [
@@ -55,9 +59,9 @@ const install = (name) => {
       // the moment a patch release lands.
       '--no-frozen-lockfile',
       '--prefer-offline',
-      // Changing a fixture's install config (its hoist patterns, say) makes
-      // pnpm want to purge `node_modules`, which it refuses to do without a
-      // TTY. The directory is disposable.
+      // Changing a fixture's install config makes pnpm want to purge
+      // `node_modules`, which it refuses to do without a TTY. The directory is
+      // disposable.
       '--config.confirmModulesPurge=false',
       // Fixtures deliberately install pinned published versions of the Rstack
       // toolchain, which are often hours old — disable pnpm's
@@ -71,20 +75,6 @@ const install = (name) => {
       // published packages exactly like a user project would, so run their
       // build scripts as-is.
       '--config.dangerouslyAllowAllBuilds=true',
-      // `@rslint/core` / `@rstest/core` may reach a fixture only as transitive
-      // dependencies of `rstack` (the rstack fixture depends on `rstack`
-      // alone), yet the extension resolves them with a node_modules walk-up
-      // from the project dir — which pnpm's isolated store defeats: the
-      // walk-up would climb out of the fixture and silently find THIS REPO's
-      // dev copies instead of the published ones. Public-hoisting the two
-      // reproduces the npm/Yarn layout the extension is designed against, and
-      // is inert for fixtures that already depend on them directly. It must
-      // be a CLI flag: pnpm 11 no longer reads `public-hoist-pattern` from a
-      // fixture-local `.npmrc` (verified — it lands as an empty
-      // `publicHoistPattern` in `.modules.yaml`), and `--ignore-workspace`
-      // also ignores a local pnpm-workspace.yaml.
-      '--config.publicHoistPattern=@rslint/core',
-      '--config.publicHoistPattern=@rstest/core',
     ],
     {
       cwd,
