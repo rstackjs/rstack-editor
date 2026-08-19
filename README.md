@@ -22,6 +22,11 @@ Rstack Editor provides unified editor support for [Rstack](https://rstack.rs), t
 
 Or search for `rstack.rstack` in the editor's Extensions view.
 
+## Documentation
+
+- [VS Code extension](./packages/vscode/README.md) — installation, features, detection and settings
+- [Rstack](https://rstack.rs) · [Rslint](https://rslint.rs) · [Rstest](https://rstest.rs) — the tools the extension integrates
+
 ## Packages
 
 | Name | Description |
