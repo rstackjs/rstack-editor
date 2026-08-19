@@ -28,6 +28,10 @@ Or search for `rstack.rstack` in the editor's Extensions view.
 | --- | --- |
 | [`packages/vscode`](./packages/vscode) | The VS Code extension (`rstack.rstack`) |
 
+## Contributing
+
+Contributions are welcome! Please read the [Contributing Guide](./CONTRIBUTING.md) for setup, workflow and release details.
+
 ## License
 
 Rstack Editor is licensed under the [MIT License](./LICENSE).
