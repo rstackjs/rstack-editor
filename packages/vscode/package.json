@@ -319,6 +319,18 @@
             "default": true,
             "scope": "window",
             "markdownDescription": "Enable the `rs fmt` document formatter for detected workspace folders. Requires `#rstack.enable#`. This is a window-level kill switch; which folders are formatted is decided by detection."
+          },
+          "rstack.fmt.trace.server": {
+            "order": 1,
+            "type": "string",
+            "enum": [
+              "off",
+              "messages",
+              "verbose"
+            ],
+            "default": "off",
+            "scope": "window",
+            "description": "Traces the communication between VS Code and the rs fmt language server (`messages` also shows how long each formatting request took)"
           }
         }
       }

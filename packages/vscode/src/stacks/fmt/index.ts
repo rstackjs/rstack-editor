@@ -338,8 +338,12 @@ class FmtFolderRuntime {
     );
     this.#owner = owner;
     const serverOptions: ServerOptions = async () => owner.start();
+    // The id doubles as the configuration section vscode-languageclient reads
+    // `trace.server` from (and hot-reloads on change), so it must equal the
+    // declared `rstack.fmt.trace.server` prefix — the same pairing Biome
+    // (`biome.lsp`) and Oxc (`oxc`) rely on.
     const client = new FmtLanguageClient(
-      'rstack-fmt',
+      'rstack.fmt',
       `rs fmt Language Server (${this.folder.name})`,
       serverOptions,
       this.createClientOptions(),
@@ -481,6 +485,9 @@ class FmtFolderRuntime {
         // rslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
         documentSelector as unknown as LanguageClientOptions['documentSelector'],
       outputChannel: this.context.output,
+      // Trace lines land in the stack's own channel next to its other logs
+      // instead of a separate "... Trace" channel per folder.
+      traceOutputChannel: this.context.output,
       errorHandler,
     };
   }

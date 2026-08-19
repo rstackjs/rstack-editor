@@ -98,6 +98,7 @@ All settings live under the unified `rstack.*` namespace. There are no `rslint.*
 | `rstack.rstest.terminalShellPath` | — | Shell used by **Run in Terminal**. |
 | `rstack.rstest.terminalShellArgs` | `[]` | Shell args for **Run in Terminal**. |
 | `rstack.fmt.enable` | `true` | Enable/disable the formatter integration. |
+| `rstack.fmt.trace.server` | `off` | LSP trace level (`off` / `messages` / `verbose`); `messages` logs each formatting request's duration. |
 
 To use `rs fmt` as the formatter for supported documents, opt in through your VS Code settings: `"editor.defaultFormatter": "rstack.rstack"`. The extension never changes `editor.defaultFormatter` itself.
 
