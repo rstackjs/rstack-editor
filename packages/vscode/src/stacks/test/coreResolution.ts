@@ -10,6 +10,18 @@
  * does not resolve is a setting the user has to fix, so it is notified.
  */
 
+/**
+ * Resolution failed after the actionable error was already logged or shown.
+ * Callers still reject so project initialization stops, but must not report the
+ * same failure again.
+ */
+export class ReportedRstestResolutionError extends Error {
+  constructor() {
+    super('Failed to resolve rstest path');
+    this.name = 'ReportedRstestResolutionError';
+  }
+}
+
 // Whether `specifier` itself is what could not be found. `MODULE_NOT_FOUND`
 // alone is too broad: a package that is installed but whose entry file is gone
 // (an interrupted install, or a workspace link that has not been built) throws

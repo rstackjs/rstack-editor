@@ -6,6 +6,7 @@ import vscode from 'vscode';
 import { RSTACK_CONFIG_NAMES } from '../../detection';
 import { resolveRstackShim } from './bridge';
 import { watchConfigValue } from './config';
+import { ReportedRstestResolutionError } from './coreResolution';
 import { logger } from './logger';
 import { RstestApi } from './master';
 import { type ChildProjectRef, computeCoveredConfigs } from './projectCoverage';
@@ -42,14 +43,18 @@ export type ProjectSource = {
    */
   readonly configFileUri?: vscode.Uri;
   /**
-   * The worker spawn cwd and package-resolution root. Defaults to
-   * `dirname(configFileUri)` — byte-identical to upstream for a native config.
-   * The bridge sets it to the `rstack.config.*` directory so the shim's
-   * single-directory, no-parent-walk `loadRstackConfig()` probe finds the
-   * config and `@rstest/core` resolves from the project rather than from
-   * `node_modules/rstack/dist/`.
+   * The worker spawn cwd. Defaults to `dirname(configFileUri)` — byte-identical
+   * to upstream for a native config. The bridge sets it to the
+   * `rstack.config.*` directory so the shim's single-directory, no-parent-walk
+   * `loadRstackConfig()` probe finds the config.
    */
   readonly cwd?: string;
+  /**
+   * The default `@rstest/core` and CLI package-resolution anchor. Defaults to
+   * `cwd`; the bridge sets it to the already-resolved `rstack` package root so
+   * rstack's dependency is visible in isolated `node_modules` layouts.
+   */
+  readonly rstestResolutionDir?: string;
   /** True for a `Project` synthesized by the rstack bridge. */
   readonly isBridge?: boolean;
 };
@@ -232,15 +237,7 @@ export class WorkspaceManager implements vscode.Disposable {
     for (const [key, project] of [...this.projects]) {
       if (!project.configLoadFailed) continue;
       project.dispose();
-      this.projects.set(
-        key,
-        this.createProject({
-          sourceUri: project.sourceUri,
-          configFileUri: project.configFileUri,
-          cwd: project.cwd,
-          isBridge: project.isBridge,
-        }),
-      );
+      this.projects.set(key, this.createProject(project.source));
     }
   }
 
@@ -276,7 +273,8 @@ export class WorkspaceManager implements vscode.Disposable {
    * The rstack bridge: when a folder is governed by
    * `rstack.config.*` and has **no** tool-native config, synthesize a `Project`
    * per `rstack.config.*` whose config file is rstack's shipped Rstest shim and
-   * whose cwd is the config's own directory.
+   * whose cwd is the config's own directory. Its package-resolution anchor is
+   * the resolved `rstack` directory, where rstack's Rstest dependency lives.
    *
    * A native `rstest.config.*` wins **at its own root**: rstack's own
    * `rs test` would load the shim, which reads `define.test()`, but a
@@ -337,6 +335,8 @@ export class WorkspaceManager implements vscode.Disposable {
       this.reportedShimFailures.delete(cwd);
       const configFileUri = vscode.Uri.file(shim.configFilePath);
       const existing = this.projects.get(key);
+      // `configFileUri` is derived from the shim's package directory, so a
+      // matching shim path also means an unchanged resolution anchor.
       if (
         existing?.isBridge &&
         existing.configFileUri.toString() === configFileUri.toString()
@@ -354,6 +354,7 @@ export class WorkspaceManager implements vscode.Disposable {
         sourceUri: rstackConfig,
         configFileUri,
         cwd,
+        rstestResolutionDir: shim.packageDirectory,
         isBridge: true,
       });
       logger.info(
@@ -550,10 +551,13 @@ export class Project implements vscode.Disposable {
   // dependencies not installed yet). `retryFailedProjects` recreates such
   // projects on the next detection pass.
   configLoadFailed = false;
+  /** What this project was built from; `retryFailedProjects` rebuilds from it. */
+  readonly source: ProjectSource;
   // See `ProjectSource`.
   readonly sourceUri: vscode.Uri;
   readonly configFileUri: vscode.Uri;
   readonly cwd: string;
+  readonly rstestResolutionDir: string;
   readonly isBridge: boolean;
   #watch?: vscode.Disposable;
   constructor(
@@ -564,10 +568,12 @@ export class Project implements vscode.Disposable {
     private onDidChangeTestFiles?: () => void,
     private onConfigResolved?: () => void,
   ) {
+    this.source = source;
     this.sourceUri = source.sourceUri;
     this.configFileUri = source.configFileUri ?? source.sourceUri;
     // use dirname of config file as default root
     this.cwd = source.cwd ?? path.dirname(this.configFileUri.fsPath);
+    this.rstestResolutionDir = source.rstestResolutionDir ?? this.cwd;
     this.isBridge = source.isBridge ?? false;
     this.root = vscode.Uri.file(this.cwd);
     this.api = new RstestApi(
@@ -575,6 +581,7 @@ export class Project implements vscode.Disposable {
       this.cwd,
       this.configFileUri.fsPath,
       this,
+      this.rstestResolutionDir,
     );
     this.cancellationSource = new vscode.CancellationTokenSource();
 
@@ -592,7 +599,9 @@ export class Project implements vscode.Disposable {
       .catch((error) => {
         if (this.cancellationSource.token.isCancellationRequested) return;
         this.configLoadFailed = true;
-        logger.error('Failed to initialize project config', error);
+        if (!(error instanceof ReportedRstestResolutionError)) {
+          logger.error('Failed to initialize project config', error);
+        }
         // Let the manager settle its tree even when a config fails to load.
         this.onConfigResolved?.();
       });

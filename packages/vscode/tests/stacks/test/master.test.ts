@@ -121,7 +121,7 @@ afterEach(() => {
   for (const key of Object.keys(settings)) delete settings[key];
 });
 
-const createApi = (cwd = noCoreDir) => {
+const createApi = (cwd = noCoreDir, rstestResolutionDir = cwd) => {
   const workspace = { uri: { fsPath: cwd } };
   // `sourceUri` backs the per-project status latch key, which the version
   // check on the spawn path reads before anything can fail.
@@ -131,8 +131,89 @@ const createApi = (cwd = noCoreDir) => {
     cwd,
     `${cwd}/rstest.config.ts`,
     project as any,
+    rstestResolutionDir,
   );
 };
+
+const writeCoreInstall = (root: string) => {
+  const packageDir = path.join(root, 'node_modules', '@rstest', 'core');
+  const entry = path.join(packageDir, 'index.js');
+  const bin = path.join(packageDir, 'bin', 'rstest.js');
+  fs.mkdirSync(path.dirname(bin), { recursive: true });
+  fs.writeFileSync(
+    path.join(packageDir, 'package.json'),
+    JSON.stringify({
+      name: '@rstest/core',
+      version: '0.11.8',
+      main: 'index.js',
+      bin: { rstest: 'bin/rstest.js' },
+    }),
+  );
+  fs.writeFileSync(entry, 'module.exports = {};\n');
+  fs.writeFileSync(bin, '#!/usr/bin/env node\n');
+  return { packageDir, entry, bin };
+};
+
+const resolveRstestPaths = (api: RstestApi) => ({
+  entry: (api as any).resolveRstestPath() as string,
+  bin: (api as any).resolveRstestBin() as string,
+});
+
+describe('RstestApi package-resolution anchor', () => {
+  let root: string;
+  let cwd: string;
+  /** pnpm's virtual-store entry: `rstack` and its `@rstest/core` are siblings here. */
+  let storeEntry: string;
+  let rstackDir: string;
+
+  beforeEach(() => {
+    root = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), 'rstest-resolution-')),
+    );
+    cwd = path.join(root, 'app');
+    storeEntry = path.join(cwd, 'node_modules', '.pnpm', 'rstack@0.6.1');
+    rstackDir = path.join(storeEntry, 'node_modules', 'rstack');
+    fs.mkdirSync(rstackDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('keeps native projects anchored at their cwd', () => {
+    const native = writeCoreInstall(cwd);
+    writeCoreInstall(storeEntry);
+
+    expect(resolveRstestPaths(createApi(cwd))).toEqual({
+      entry: native.entry,
+      bin: native.bin,
+    });
+  });
+
+  it('anchors bridged projects at the resolved rstack directory', () => {
+    writeCoreInstall(cwd);
+    const bridged = writeCoreInstall(storeEntry);
+
+    expect(resolveRstestPaths(createApi(cwd, rstackDir))).toEqual({
+      entry: bridged.entry,
+      bin: bridged.bin,
+    });
+  });
+
+  it('lets rstestPackagePath override the bridge anchor', () => {
+    writeCoreInstall(storeEntry);
+    const configured = writeCoreInstall(path.join(root, 'configured'));
+    settings.rstestPackagePath = path.join(
+      configured.packageDir,
+      'package.json',
+    );
+
+    expect(resolveRstestPaths(createApi(cwd, rstackDir))).toEqual({
+      entry: configured.entry,
+      bin: configured.bin,
+    });
+  });
+});
 
 describe('RstestApi with a missing @rstest/core', () => {
   beforeEach(() => {

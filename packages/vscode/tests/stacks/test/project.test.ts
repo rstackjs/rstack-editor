@@ -1,14 +1,21 @@
 import path from 'node:path';
-import { describe, expect, it, rs } from '@rstest/core';
+import { afterEach, beforeEach, describe, expect, it, rs } from '@rstest/core';
+import { ReportedRstestResolutionError } from '../../../src/stacks/test/coreResolution';
+import { logger } from '../../../src/stacks/test/logger';
 
 // The worker-cwd decoupling adaptation pinned at its only site: upstream derived the
 // worker spawn cwd inside `Project` as `dirname(configFileUri)`, so a `Project`
 // pointing at rstack's shim would have cwd'd into `node_modules/rstack/dist/`.
-// The three values `RstestApi` is constructed with are therefore what this test
-// asserts — they are the spawn cwd, the `@rstest/core` resolution root and the
-// config file Rstest is asked to load.
+// The values `RstestApi` is constructed with are therefore what this test
+// asserts: the spawn cwd, the independently selected `@rstest/core` resolution
+// root and the config file Rstest is asked to load.
 
-const apiCalls: { cwd: string; configFilePath: string }[] = [];
+const apiCalls: {
+  cwd: string;
+  configFilePath: string;
+  rstestResolutionDir: string;
+}[] = [];
+let normalizedConfigFailure: unknown;
 
 rs.mock('../../../src/stacks/test/master', () => {
   class RstestApi {
@@ -17,18 +24,34 @@ rs.mock('../../../src/stacks/test/master', () => {
       cwd: string,
       configFilePath: string,
       _project: unknown,
+      rstestResolutionDir: string,
     ) {
-      apiCalls.push({ cwd, configFilePath });
+      apiCalls.push({ cwd, configFilePath, rstestResolutionDir });
     }
     // Never settles: the constructor's config-resolution continuation would
     // otherwise start watchers this test has no filesystem for.
     getNormalizedConfig() {
+      if (normalizedConfigFailure) {
+        return Promise.reject(normalizedConfigFailure);
+      }
       return new Promise<never>(() => {});
     }
     dispose() {}
   }
   return { RstestApi, runningWorkers: new Set() };
 });
+
+// One log-channel double for both the vscode mock and `logger.bind`, so the
+// assertions below observe every stack log line.
+const loggedErrors: string[] = [];
+const channel = {
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: (message: string) => loggedErrors.push(message),
+  show: () => {},
+  dispose: () => {},
+};
 
 rs.mock('vscode', () => {
   const vscode = {
@@ -54,14 +77,7 @@ rs.mock('vscode', () => {
       ) {}
     },
     window: {
-      createOutputChannel: () => ({
-        debug: () => {},
-        info: () => {},
-        warn: () => {},
-        error: () => {},
-        show: () => {},
-        dispose: () => {},
-      }),
+      createOutputChannel: () => channel,
     },
     workspace: {
       fs: {},
@@ -106,6 +122,16 @@ const collection = {
   forEach: () => {},
 } as any;
 
+beforeEach(() => {
+  normalizedConfigFailure = undefined;
+  loggedErrors.length = 0;
+  logger.bind(channel as never);
+});
+
+afterEach(() => {
+  logger.unbind();
+});
+
 const createProject = async (source: any) => {
   apiCalls.length = 0;
   const { Project } = await import('../../../src/stacks/test/project');
@@ -113,7 +139,7 @@ const createProject = async (source: any) => {
   return { project, api: apiCalls[0]! };
 };
 
-describe('Project config/cwd decoupling', () => {
+describe('Project config/cwd/package-resolution decoupling', () => {
   it('keeps the upstream derivation for a native rstest config', async () => {
     const configFile = uri(path.join('/repo', 'pkg', 'rstest.config.ts'));
 
@@ -121,6 +147,7 @@ describe('Project config/cwd decoupling', () => {
 
     // Byte-identical to upstream: cwd is the config file's directory.
     expect(api.cwd).toBe(path.join('/repo', 'pkg'));
+    expect(api.rstestResolutionDir).toBe(path.join('/repo', 'pkg'));
     expect(api.configFilePath).toBe(configFile.fsPath);
     expect(project.configFilePath).toBe(configFile.fsPath);
     expect(project.sourceUri.toString()).toBe(configFile.toString());
@@ -140,20 +167,22 @@ describe('Project config/cwd decoupling', () => {
         'rstestConfig.js',
       ),
     );
+    const rstackDir = path.dirname(path.dirname(shim.fsPath));
 
     const { project, api } = await createProject({
       sourceUri: rstackConfig,
       configFileUri: shim,
       cwd: path.join('/repo', 'pkg'),
+      rstestResolutionDir: rstackDir,
       isBridge: true,
     });
 
     // The whole point: `dirname(configFile)` would be
     // `<pkg>/node_modules/rstack/dist`, where the shim's single-directory,
-    // no-parent-walk `loadRstackConfig()` probe finds nothing and
-    // `@rstest/core` would resolve from rstack's own dependency tree.
+    // no-parent-walk `loadRstackConfig()` probe finds nothing.
     expect(api.cwd).toBe(path.join('/repo', 'pkg'));
     expect(api.cwd).not.toBe(path.dirname(shim.fsPath));
+    expect(api.rstestResolutionDir).toBe(rstackDir);
     // Rstest is still handed the shim as an ordinary JS config file.
     expect(api.configFilePath).toBe(shim.fsPath);
     expect(project.configFilePath).toBe(shim.fsPath);
@@ -162,5 +191,17 @@ describe('Project config/cwd decoupling', () => {
     expect(project.sourceUri.toString()).toBe(rstackConfig.toString());
     expect(project.isBridge).toBe(true);
     expect(project.root.fsPath).toBe(path.join('/repo', 'pkg'));
+  });
+
+  it('does not re-log a package-resolution failure that was already reported', async () => {
+    normalizedConfigFailure = new ReportedRstestResolutionError();
+
+    const { project } = await createProject({
+      sourceUri: uri(path.join('/repo', 'pkg', 'rstest.config.ts')),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(project.configLoadFailed).toBe(true);
+    expect(loggedErrors).toEqual([]);
   });
 });

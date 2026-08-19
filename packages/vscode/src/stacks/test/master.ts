@@ -21,6 +21,7 @@ import {
   formatConfiguredCoreNotFoundMessage,
   formatCoreNotFoundMessage,
   isModuleNotFoundError,
+  ReportedRstestResolutionError,
 } from './coreResolution';
 import type { RstestDiagnostics } from './diagnostics';
 import type { TestErrorStore } from './errorStore';
@@ -117,12 +118,13 @@ export class RstestApi {
   // restart — see `reportNodeRuntimeIssue` and the spawn abort in
   // `createChildProcess`.
   private disposed = false;
+  private lastResolvedRstestPath?: string;
 
   constructor(
     private workspace: vscode.WorkspaceFolder,
     /**
-     * The worker spawn cwd, the `@rstest/core` resolution root, the terminal
-     * cwd and the base the terminal's `-c` path is relativized against.
+     * The worker spawn cwd, the terminal cwd and the base the terminal's `-c`
+     * path is relativized against.
      *
      * The worker-cwd decoupling adaptation: upstream derives this from
      * `dirname(configFilePath)` inside `Project`. It is now passed in, so the
@@ -134,7 +136,18 @@ export class RstestApi {
     private cwd: string,
     private configFilePath: string,
     private project: Project,
+    /**
+     * Where the default `@rstest/core` (and CLI bin) walk-up starts. Chosen
+     * by `Project` — see `ProjectSource.rstestResolutionDir`; an explicit
+     * `rstestPackagePath` bypasses it.
+     */
+    private rstestResolutionDir: string,
   ) {}
+
+  /** E2E-only probe (`buildExports`): the last successfully resolved `@rstest/core` entry. */
+  get resolvedRstestPath(): string | undefined {
+    return this.lastResolvedRstestPath;
+  }
 
   /**
    * The failure-latch key for this master's status reports. The project's
@@ -300,7 +313,7 @@ export class RstestApi {
           formatConfiguredCoreNotFoundMessage(configuredPackagePath),
         );
       }
-      logger.error(formatCoreNotFoundMessage(this.cwd));
+      logger.error(formatCoreNotFoundMessage(fromDir));
       return undefined;
     }
   }
@@ -340,12 +353,12 @@ export class RstestApi {
         // answer, while the bare specifier keeps the exports map honored.
         const found = findPackageJsonUncached(
           dirname(CORE_PACKAGE_JSON),
-          this.cwd,
+          this.rstestResolutionDir,
         );
         if (!found) {
           // The normal state of a repository whose dependencies are not
           // installed yet: output channel only, never a notification.
-          logger.error(formatCoreNotFoundMessage(this.cwd));
+          logger.error(formatCoreNotFoundMessage(this.rstestResolutionDir));
           return '';
         }
         corePackageJsonPath = found;
@@ -387,6 +400,7 @@ export class RstestApi {
         }
       }
 
+      this.lastResolvedRstestPath = nodeExport;
       return nodeExport;
     } catch (e) {
       vscode.window.showErrorMessage(toErrorMessage(e));
@@ -406,9 +420,11 @@ export class RstestApi {
       // Same uncached lookup as the worker resolution above.
       pkgJsonPath = findPackageJsonUncached(
         dirname(CORE_PACKAGE_JSON),
-        this.cwd,
+        this.rstestResolutionDir,
       );
-      if (!pkgJsonPath) logger.error(formatCoreNotFoundMessage(this.cwd));
+      if (!pkgJsonPath) {
+        logger.error(formatCoreNotFoundMessage(this.rstestResolutionDir));
+      }
     }
     if (!pkgJsonPath) return undefined;
     const pkg = (readPackageJson(pkgJsonPath) ?? {}) as {
@@ -613,7 +629,7 @@ export class RstestApi {
     }
     const rstestPath = this.resolveRstestPath();
     if (!rstestPath) {
-      throw new Error('Failed to resolve rstest path');
+      throw new ReportedRstestResolutionError();
     }
     const debuggerPort = getConfigValue('debuggerPort', this.workspace);
     const debuggerAddress = getConfigValue('debuggerAddress', this.workspace);

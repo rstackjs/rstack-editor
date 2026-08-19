@@ -15,6 +15,7 @@
 // detection change can deregister and re-register the stack, which publishes a
 // fresh `TestController` (same reason as `workspace.test.ts`).
 import assert from 'node:assert';
+import fs from 'node:fs';
 import path from 'node:path';
 import vscode from 'vscode';
 import {
@@ -116,6 +117,19 @@ suite('Rstack bridge suite', () => {
         { label: 'trims a string' },
       ]);
     });
+
+    const sourceUri = vscode.Uri.file(
+      path.join(RSTACK_FIXTURE, 'rstack.config.ts'),
+    ).toString();
+    const rstestPath = currentRstestExports().getResolvedRstestPath(sourceUri);
+    assert.ok(rstestPath, 'the bridged project should resolve @rstest/core');
+    // The resolved path is realpath'd; compare against the physical fixture.
+    assert.ok(
+      rstestPath.startsWith(
+        path.join(fs.realpathSync(RSTACK_FIXTURE), 'node_modules'),
+      ),
+      `expected the fixture's own @rstest/core, got: ${rstestPath}`,
+    );
   });
 
   test('runs bridged tests through the rstack config shim', async () => {
