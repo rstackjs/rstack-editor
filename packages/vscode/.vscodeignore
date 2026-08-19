@@ -1,5 +1,8 @@
+# Allowlist: only the built bundles and the staged native binding ship from
+# dist/ — never source maps.
 **
-!dist
+!dist/**/*.js
+!dist/**/*.node
 !icon.png
 !LICENSE
 !README.md

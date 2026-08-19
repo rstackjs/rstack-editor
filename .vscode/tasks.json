@@ -2,7 +2,7 @@
   "version": "2.0.0",
   "tasks": [
     {
-      // Background watch build the F5 launch depends on. SOURCEMAP=true
+      // Background watch build the F5 launch depends on. `--env-mode dev`
       // (`watch:local`) so breakpoints in src/ bind inside the dev host.
       "label": "extension watch",
       "type": "shell",
