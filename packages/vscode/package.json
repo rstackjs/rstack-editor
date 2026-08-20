@@ -29,7 +29,7 @@
   "main": "./dist/extension.js",
   "scripts": {
     "build": "rslib build",
-    "build:local": "cross-env SOURCEMAP=true rslib build",
+    "build:local": "rslib build --env-mode dev",
     "package": "pnpm run build && vsce package",
     "package:targets": "node scripts/packageTargets.mjs",
     "test": "pnpm run test:unit && pnpm run test:e2e",
@@ -41,7 +41,7 @@
     "test:e2e:vscode": "node ./e2e/run.mjs vscode",
     "test:unit": "rstest",
     "watch": "rslib build --watch",
-    "watch:local": "cross-env SOURCEMAP=true rslib build --watch"
+    "watch:local": "rslib build --watch --env-mode dev"
   },
   "contributes": {
     "commands": [
@@ -452,7 +452,6 @@
     "@vscode/vsce": "^3.9.2",
     "birpc": "^4.0.0",
     "core-js-pure": "^3.49.0",
-    "cross-env": "^7.0.3",
     "mocha": "^11.7.6",
     "ovsx": "^1.0.2",
     "picomatch": "^4.0.5",
