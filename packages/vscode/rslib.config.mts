@@ -39,8 +39,6 @@ const externals: NonNullable<NonNullable<LibConfig['output']>['externals']> = [
   },
 ];
 
-const sourceMap = process.env.SOURCEMAP === 'true';
-
 // The Rstest worker entry is owned by the Rstest stack and may not exist yet
 // while the stacks are still being copied in.
 const workerEntry = './src/stacks/test/worker/index.ts';
@@ -55,11 +53,6 @@ const libs: LibConfig[] = [
       entry: {
         extension: './src/extension.ts',
       },
-    },
-    output: {
-      target: 'node',
-      externals,
-      sourceMap,
     },
     tools: {
       rspack: {
@@ -99,11 +92,6 @@ if (hasWorkerEntry) {
         worker: workerEntry,
       },
     },
-    output: {
-      target: 'node',
-      externals,
-      sourceMap,
-    },
     tools: {
       rspack: {
         output: {
@@ -122,11 +110,6 @@ libs.push({
       'lint-worker': lintWorkerEntry,
     },
   },
-  output: {
-    target: 'node',
-    externals,
-    sourceMap,
-  },
   tools: {
     rspack: {
       output: {
@@ -136,4 +119,19 @@ libs.push({
   },
 });
 
-export default defineConfig({ lib: libs });
+/**
+ * Output shared by every bundle. `rslib build --env-mode dev` (`build:local`
+ * / `watch:local`) keeps readable output with source maps so breakpoints in
+ * `src/` bind in the dev host; the release build (`build`, used by CI and the
+ * Release workflow) minifies and emits no source maps.
+ */
+export default defineConfig(({ envMode }) => {
+  const devBuild = envMode === 'dev';
+  const output: LibConfig['output'] = {
+    target: 'node',
+    externals,
+    sourceMap: devBuild,
+    minify: !devBuild,
+  };
+  return { lib: libs.map((lib) => ({ ...lib, output })) };
+});
