@@ -1,9 +1,11 @@
-// Ported verbatim from web-infra-dev/rslint
+// Ported from web-infra-dev/rslint (deviation: setup waits go through
+// waitForDiagnosticsWithMessages -- see fixall-helpers.ts for why).
 // `packages/vscode-extension/__tests__/suite/fixall.test.ts` (origin/main).
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import {
   waitForDiagnostics,
+  waitForDiagnosticsWithMessages,
   waitForDiagnosticsToChange,
   waitForDiagnosticsCount,
   openFixture,
@@ -127,7 +129,10 @@ suite('rslint fixAll - code actions', function () {
     const fixableContent =
       "const frVal: string = 'hello';\nconst frRes = (frVal as string).toUpperCase();\n";
     await withTmpFile(fixableContent, async (doc) => {
-      const initialDiags = await waitForDiagnostics(doc);
+      const initialDiags = await waitForDiagnosticsWithMessages(
+        doc,
+        'no-unnecessary-type-assertion',
+      );
       assert.ok(initialDiags.length > 0, 'Should have initial diagnostics');
 
       const fixableDiags = initialDiags.filter((d) =>
@@ -166,7 +171,11 @@ suite('rslint fixAll - code actions', function () {
       '',
     ].join('\n');
     await withTmpFile(mixedContent, async (doc) => {
-      const initialDiags = await waitForDiagnostics(doc);
+      const initialDiags = await waitForDiagnosticsWithMessages(
+        doc,
+        'no-unnecessary-type-assertion',
+        'no-unsafe',
+      );
       assert.ok(initialDiags.length > 0, 'Should have diagnostics');
 
       const fixableBefore = initialDiags.filter((d) =>
@@ -248,7 +257,10 @@ suite('rslint fixAll - code actions', function () {
     const fixableContent =
       "const sfVal: string = 'x';\nconst sfRes = (sfVal as string).trim();\n";
     await withTmpFile(fixableContent, async (doc) => {
-      const initialDiags = await waitForDiagnostics(doc);
+      const initialDiags = await waitForDiagnosticsWithMessages(
+        doc,
+        'no-unnecessary-type-assertion',
+      );
       const fixableCount = initialDiags.filter((d) =>
         d.message.includes('no-unnecessary-type-assertion'),
       ).length;

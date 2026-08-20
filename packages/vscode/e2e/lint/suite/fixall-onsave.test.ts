@@ -1,4 +1,5 @@
-// Ported verbatim from web-infra-dev/rslint
+// Ported from web-infra-dev/rslint (deviation: setup waits go through
+// waitForDiagnosticsWithMessages -- see fixall-helpers.ts for why).
 // `packages/vscode-extension/__tests__/suite/fixall-onsave.test.ts` (origin/main).
 import * as assert from 'assert';
 import * as vscode from 'vscode';
@@ -6,6 +7,7 @@ import { getRslintDiagnostics } from '../utils/diagnostics';
 import { waitForCodeActionRegistryQuiescence } from '../utils/codeActionRegistry';
 import {
   waitForDiagnostics,
+  waitForDiagnosticsWithMessages,
   waitForDiagnosticsCount,
   waitForContentChange,
   withOnSaveFixAll,
@@ -38,7 +40,10 @@ suite('rslint fixAll - on-save', function () {
           "const gfVal: string = 'x';\nconst gfRes = (gfVal as string).trim();\n",
         );
 
-        const diags = await waitForDiagnostics(doc);
+        const diags = await waitForDiagnosticsWithMessages(
+          doc,
+          'no-unnecessary-type-assertion',
+        );
         assertHasFixableDiagnostic(diags, 'generic source.fixAll setup');
 
         await saveDocumentOnce(
@@ -69,7 +74,10 @@ suite('rslint fixAll - on-save', function () {
       ].join('\n');
       await replaceAll(editor, fixableContent);
 
-      const diags = await waitForDiagnostics(doc);
+      const diags = await waitForDiagnosticsWithMessages(
+        doc,
+        'no-unnecessary-type-assertion',
+      );
       assertHasFixableDiagnostic(diags, 'fixable on-save setup');
 
       await saveDocumentOnce(doc, 'Fixable document should save');
@@ -93,7 +101,10 @@ suite('rslint fixAll - on-save', function () {
         editor,
         "const probeVal: string = 'x';\nconst probeRes = (probeVal as string).trim();\n",
       );
-      const probeDiags = await waitForDiagnostics(doc);
+      const probeDiags = await waitForDiagnosticsWithMessages(
+        doc,
+        'no-unnecessary-type-assertion',
+      );
       assertHasFixableDiagnostic(probeDiags, 'clean-file probe setup');
       await saveDocumentOnce(doc, 'Clean-file probe should save');
       await waitForContentChange(
@@ -130,7 +141,10 @@ suite('rslint fixAll - on-save', function () {
         editor,
         "const probeVal2: string = 'x';\nconst probeRes2 = (probeVal2 as string).trim();\n",
       );
-      const probeDiags = await waitForDiagnostics(doc);
+      const probeDiags = await waitForDiagnosticsWithMessages(
+        doc,
+        'no-unnecessary-type-assertion',
+      );
       assertHasFixableDiagnostic(probeDiags, 'non-fixable probe setup');
       await saveDocumentOnce(doc, 'Non-fixable probe should save');
       await waitForContentChange(
