@@ -1,9 +1,10 @@
-// Ported verbatim from web-infra-dev/rslint
+// Ported from web-infra-dev/rslint (deviation: setup waits go through
+// waitForDiagnosticsWithMessages -- see fixall-helpers.ts for why).
 // `packages/vscode-extension/__tests__/suite/fixall-error.test.ts` (origin/main).
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import {
-  waitForDiagnostics,
+  waitForDiagnosticsWithMessages,
   waitForContentChange,
   findFixAllAction,
   requestFixAll,
@@ -57,7 +58,10 @@ suite('rslint fixAll - error flows', function () {
         editor,
         "const pVal: string = 'x';\nconst pRes = (pVal as string).trim();\n",
       );
-      const probeDiags = await waitForDiagnostics(doc);
+      const probeDiags = await waitForDiagnosticsWithMessages(
+        doc,
+        'no-unnecessary-type-assertion',
+      );
       assert.ok(
         probeDiags.some((d) =>
           d.message.includes('no-unnecessary-type-assertion'),

@@ -4,7 +4,7 @@
   "private": true,
   "description": "Shared install root for the Rslint E2E fixture workspaces. The extension ships no binary: every fixture resolves @rslint/core - including its native Go binary, config-loader and eslint-plugin host - from this one published-npm install. jiti backs the config-file-loader's TypeScript-config fallback.",
   "dependencies": {
-    "@rslint/core": "^0.8.0",
+    "@rslint/core": "^0.8.1",
     "jiti": "^2.7.0"
   }
 }

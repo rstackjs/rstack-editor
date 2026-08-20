@@ -19,6 +19,29 @@ import { waitForCodeActionRegistryQuiescence } from '../utils/codeActionRegistry
 export { saveDocumentOnce } from '../utils/codeActionRegistry';
 
 export const waitForDiagnostics = waitForRslintDiagnostics;
+
+/**
+ * Wait until the rslint diagnostics for `doc` include every given message
+ * substring.
+ *
+ * Deviation from the upstream suites, which assert on the first non-empty
+ * publish: since @rslint/core 0.8.1 (web-infra-dev/rslint#1790), a file
+ * created after its project was loaded is served by a type-info-less fallback
+ * Program until a watcher event admits it into the configured project, so the
+ * first non-empty publish may carry only non-type-aware rules on platforms
+ * with slow file watchers (macOS). Waiting for the expected diagnostics keeps
+ * the terminal assertion identical without depending on publish batching.
+ */
+export function waitForDiagnosticsWithMessages(
+  doc: vscode.TextDocument,
+  ...messages: string[]
+): Promise<vscode.Diagnostic[]> {
+  return waitForRslintDiagnostics(doc, (diagnostics) =>
+    messages.every((message) =>
+      diagnostics.some((diagnostic) => diagnostic.message.includes(message)),
+    ),
+  );
+}
 export const waitForDiagnosticsCount = waitForRslintDiagnosticsCount;
 export const waitForDiagnosticsToChange = waitForRslintDiagnosticsToChange;
 
