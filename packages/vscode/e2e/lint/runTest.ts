@@ -280,6 +280,16 @@ async function main(): Promise<void> {
       tests: suiteDir('suite-eslint-plugins'),
     },
     {
+      name: 'Generated rule-option-types tests',
+      workspace: fixture('rule-option-types'),
+      tests: suiteDir('suite-rule-option-types'),
+    },
+    {
+      name: 'import/no-cycle tests',
+      workspace: fixture('import-cycle'),
+      tests: suiteDir('suite-import-cycle'),
+    },
+    {
       name: 'Rstack lint bridge tests',
       workspace: sharedFixture('rstack'),
       tests: suiteDir('suite-bridge'),
