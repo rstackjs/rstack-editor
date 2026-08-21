@@ -5,6 +5,7 @@ import path from 'node:path';
 import * as vscode from 'vscode';
 import { findPackageJsonUncached } from '../../../src/shared/packageResolve';
 import {
+  diagnosticRuleIdIncludes,
   getRslintDiagnostics,
   waitForRslintDiagnostics,
   waitForRslintDiagnosticsCount,
@@ -51,7 +52,7 @@ async function openLintTarget(): Promise<vscode.TextDocument> {
 
 function hasNoDebugger(diagnostics: readonly vscode.Diagnostic[]): boolean {
   return diagnostics.some((diagnostic) =>
-    diagnostic.message.includes('no-debugger'),
+    diagnosticRuleIdIncludes(diagnostic, 'no-debugger'),
   );
 }
 

@@ -299,6 +299,7 @@ export interface RslintOptions {
   readonly router: WorkspaceDocumentRouter;
   readonly logger: Logger;
   readonly reportStatus: RslintStatusSink;
+  readonly onClosed?: () => void;
 }
 
 export class Rslint implements Disposable {
@@ -311,6 +312,7 @@ export class Rslint implements Disposable {
   private readonly installation: CoreInstallation;
   private readonly lspOutputChannel: OutputChannel;
   private readonly outputChannel: OutputChannel;
+  private readonly onClosed: (() => void) | undefined;
   private readonly configWatchers: FileSystemWatcher[] = [];
   private configReloadTimer: ReturnType<typeof setTimeout> | undefined;
   private configReloadChain: Promise<void> = Promise.resolve();
@@ -334,6 +336,7 @@ export class Rslint implements Disposable {
     this.logger = options.logger;
     this.lspOutputChannel = options.lspOutputChannel;
     this.outputChannel = options.outputChannel;
+    this.onClosed = options.onClosed;
   }
 
   private report(state: StackState): void {
@@ -616,6 +619,14 @@ export class Rslint implements Disposable {
   }
 
   private async closeImpl(): Promise<void> {
+    try {
+      await this.closeResources();
+    } finally {
+      this.onClosed?.();
+    }
+  }
+
+  private async closeResources(): Promise<void> {
     const errors: unknown[] = [];
     const disposeSafely = (resource: Disposable | undefined): void => {
       if (!resource) return;
@@ -719,6 +730,10 @@ export class Rslint implements Disposable {
 
   public isRunning(): boolean {
     return this.client?.state === State.Running;
+  }
+
+  public serverAdvertisesHover(): boolean {
+    return Boolean(this.client?.initializeResult?.capabilities.hoverProvider);
   }
 
   public async sendDocumentOpen(document: TextDocument): Promise<void> {

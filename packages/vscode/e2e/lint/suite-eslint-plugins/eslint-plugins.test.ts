@@ -7,7 +7,10 @@ import path from 'node:path';
 import { waitForContentChange } from '../suite/fixall-helpers';
 import { saveDocumentOnce } from '../utils/codeActionRegistry';
 import { withCodeActionsOnSave } from '../utils/configuration';
-import { waitForRslintDiagnostics } from '../utils/diagnostics';
+import {
+  diagnosticRuleIdIncludes,
+  waitForRslintDiagnostics,
+} from '../utils/diagnostics';
 import {
   closeAndDeleteTemporaryDocument,
   temporaryFilePath,
@@ -31,8 +34,6 @@ suite('rslint object-form plugins integration', function () {
     return workspaceFolder.uri.fsPath;
   }
 
-  // LSP diagnostic messages are formatted as `[<ruleName>] <description>`
-  // (see internal/lsp/service.go), so ruleName is matchable on `.message`.
   function messages(diags: vscode.Diagnostic[]): string {
     return diags.map((d) => d.message).join(' | ');
   }
@@ -69,11 +70,13 @@ suite('rslint object-form plugins integration', function () {
           const diagnostics = await waitForRslintDiagnostics(
             openedDocument,
             (diags) =>
-              diags.some((d) => d.message.includes('local/prefer-array-some')),
+              diags.some((d) =>
+                diagnosticRuleIdIncludes(d, 'local/prefer-array-some'),
+              ),
           );
           assert.ok(
             diagnostics.some((d) =>
-              d.message.includes('local/prefer-array-some'),
+              diagnosticRuleIdIncludes(d, 'local/prefer-array-some'),
             ),
             `prefer-array-some did not appear; cannot exercise fixAll. Got: ${messages(diagnostics)}`,
           );
@@ -124,22 +127,24 @@ suite('rslint object-form plugins integration', function () {
     await vscode.window.showTextDocument(doc);
 
     const diagnostics = await waitForRslintDiagnostics(doc, (diags) =>
-      diags.some((d) => d.message.includes('local/no-null')),
+      diags.some((d) => diagnosticRuleIdIncludes(d, 'local/no-null')),
     );
     const msgs = messages(diagnostics);
 
     // Both plugin rules must come back from the worker...
     assert.ok(
-      diagnostics.some((d) => d.message.includes('local/no-null')),
+      diagnostics.some((d) => diagnosticRuleIdIncludes(d, 'local/no-null')),
       `Expected local/no-null. Got: ${msgs}`,
     );
     assert.ok(
-      diagnostics.some((d) => d.message.includes('local/prefer-array-some')),
+      diagnostics.some((d) =>
+        diagnosticRuleIdIncludes(d, 'local/prefer-array-some'),
+      ),
       `Expected local/prefer-array-some. Got: ${msgs}`,
     );
     // ...alongside the natively-linted rule, proving the merge.
     assert.ok(
-      diagnostics.some((d) => d.message.includes('no-console')),
+      diagnostics.some((d) => diagnosticRuleIdIncludes(d, 'no-console')),
       `Expected native no-console merged with plugin diagnostics. Got: ${msgs}`,
     );
   });

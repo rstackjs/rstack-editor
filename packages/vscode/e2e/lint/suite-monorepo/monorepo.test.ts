@@ -6,7 +6,10 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import path from 'node:path';
 import fs from 'node:fs';
-import { waitForRslintDiagnostics as waitForDiagnostics } from '../utils/diagnostics';
+import {
+  diagnosticRuleIdIncludes,
+  waitForRslintDiagnostics as waitForDiagnostics,
+} from '../utils/diagnostics';
 import { revertTextDocument } from '../utils/documents';
 import { CoreResolver } from '../../../src/stacks/lint/CoreResolver';
 import type { StackState } from '../../../src/types';
@@ -140,24 +143,24 @@ suite('rslint monorepo multi-config support', function () {
     const [rootDiagnostics, fooDiagnostics] = await Promise.all([
       waitForDiagnostics(rootDoc, (diagnostics) =>
         diagnostics.some((diagnostic) =>
-          diagnostic.message.includes('no-explicit-any'),
+          diagnosticRuleIdIncludes(diagnostic, 'no-explicit-any'),
         ),
       ),
       waitForDiagnostics(fooDoc, (diagnostics) =>
         diagnostics.some((diagnostic) =>
-          diagnostic.message.includes('no-unsafe-member-access'),
+          diagnosticRuleIdIncludes(diagnostic, 'no-unsafe-member-access'),
         ),
       ),
     ]);
 
     assert.ok(
       rootDiagnostics.some((diagnostic) =>
-        diagnostic.message.includes('no-explicit-any'),
+        diagnosticRuleIdIncludes(diagnostic, 'no-explicit-any'),
       ),
     );
     assert.ok(
       fooDiagnostics.some((diagnostic) =>
-        diagnostic.message.includes('no-unsafe-member-access'),
+        diagnosticRuleIdIncludes(diagnostic, 'no-unsafe-member-access'),
       ),
     );
 
@@ -178,15 +181,17 @@ suite('rslint monorepo multi-config support', function () {
     await vscode.window.showTextDocument(doc);
 
     const diagnostics = await waitForDiagnostics(doc, (diags) =>
-      diags.some((d) => d.message.includes('no-explicit-any')),
+      diags.some((d) => diagnosticRuleIdIncludes(d, 'no-explicit-any')),
     );
 
     assert.ok(
-      diagnostics.some((d) => d.message.includes('no-explicit-any')),
+      diagnostics.some((d) => diagnosticRuleIdIncludes(d, 'no-explicit-any')),
       'Root file should see no-explicit-any from root config',
     );
     assert.ok(
-      !diagnostics.some((d) => d.message.includes('no-unsafe-member-access')),
+      !diagnostics.some((d) =>
+        diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+      ),
       'Root file should NOT see no-unsafe-member-access (off in root config)',
     );
   });
@@ -196,15 +201,17 @@ suite('rslint monorepo multi-config support', function () {
     await vscode.window.showTextDocument(doc);
 
     const diagnostics = await waitForDiagnostics(doc, (diags) =>
-      diags.some((d) => d.message.includes('no-unsafe-member-access')),
+      diags.some((d) => diagnosticRuleIdIncludes(d, 'no-unsafe-member-access')),
     );
 
     assert.ok(
-      diagnostics.some((d) => d.message.includes('no-unsafe-member-access')),
+      diagnostics.some((d) =>
+        diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+      ),
       'Foo file should see no-unsafe-member-access from foo config',
     );
     assert.ok(
-      !diagnostics.some((d) => d.message.includes('no-explicit-any')),
+      !diagnostics.some((d) => diagnosticRuleIdIncludes(d, 'no-explicit-any')),
       'Foo file should NOT see no-explicit-any (off in foo config)',
     );
   });
@@ -214,15 +221,17 @@ suite('rslint monorepo multi-config support', function () {
     await vscode.window.showTextDocument(doc);
 
     const diagnostics = await waitForDiagnostics(doc, (diags) =>
-      diags.some((d) => d.message.includes('no-explicit-any')),
+      diags.some((d) => diagnosticRuleIdIncludes(d, 'no-explicit-any')),
     );
 
     assert.ok(
-      diagnostics.some((d) => d.message.includes('no-explicit-any')),
+      diagnostics.some((d) => diagnosticRuleIdIncludes(d, 'no-explicit-any')),
       'Bar file should see no-explicit-any from root config (fallback)',
     );
     assert.ok(
-      !diagnostics.some((d) => d.message.includes('no-unsafe-member-access')),
+      !diagnostics.some((d) =>
+        diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+      ),
       'Bar file should NOT see no-unsafe-member-access (off in root config)',
     );
   });
@@ -236,11 +245,13 @@ suite('rslint monorepo multi-config support', function () {
     await vscode.window.showTextDocument(doc);
 
     const diagnostics = await waitForDiagnostics(doc, (diags) =>
-      diags.some((d) => d.message.includes('no-unsafe-member-access')),
+      diags.some((d) => diagnosticRuleIdIncludes(d, 'no-unsafe-member-access')),
     );
 
     assert.ok(
-      diagnostics.some((d) => d.message.includes('no-unsafe-member-access')),
+      diagnostics.some((d) =>
+        diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+      ),
       'Foo file should still use foo config despite broken sibling config',
     );
   });
@@ -252,11 +263,11 @@ suite('rslint monorepo multi-config support', function () {
     await vscode.window.showTextDocument(doc);
 
     const diagnostics = await waitForDiagnostics(doc, (diags) =>
-      diags.some((d) => d.message.includes('no-explicit-any')),
+      diags.some((d) => diagnosticRuleIdIncludes(d, 'no-explicit-any')),
     );
 
     assert.ok(
-      diagnostics.some((d) => d.message.includes('no-explicit-any')),
+      diagnostics.some((d) => diagnosticRuleIdIncludes(d, 'no-explicit-any')),
       'Broken package file should fall back to the root config',
     );
   });
@@ -269,10 +280,12 @@ suite('rslint monorepo multi-config support', function () {
 
     // 1. Verify initial: foo config has no-unsafe-member-access: error
     const initialDiags = await waitForDiagnostics(doc, (diags) =>
-      diags.some((d) => d.message.includes('no-unsafe-member-access')),
+      diags.some((d) => diagnosticRuleIdIncludes(d, 'no-unsafe-member-access')),
     );
     assert.ok(
-      initialDiags.some((d) => d.message.includes('no-unsafe-member-access')),
+      initialDiags.some((d) =>
+        diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+      ),
       'Initial: foo file should have no-unsafe-member-access',
     );
 
@@ -307,16 +320,18 @@ suite('rslint monorepo multi-config support', function () {
       await triggerRelint(editor);
 
       const updatedDiags = await waitForDiagnostics(doc, (diags) =>
-        diags.some((d) => d.message.includes('no-explicit-any')),
+        diags.some((d) => diagnosticRuleIdIncludes(d, 'no-explicit-any')),
       );
 
       assert.ok(
-        updatedDiags.some((d) => d.message.includes('no-explicit-any')),
+        updatedDiags.some((d) =>
+          diagnosticRuleIdIncludes(d, 'no-explicit-any'),
+        ),
         'After change: foo file should see no-explicit-any',
       );
       assert.ok(
         !updatedDiags.some((d) =>
-          d.message.includes('no-unsafe-member-access'),
+          diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
         ),
         'After change: foo file should NOT see no-unsafe-member-access',
       );
@@ -332,10 +347,12 @@ suite('rslint monorepo multi-config support', function () {
 
     // 1. Verify initial: foo config has no-unsafe-member-access: error
     const initialDiags = await waitForDiagnostics(doc, (diags) =>
-      diags.some((d) => d.message.includes('no-unsafe-member-access')),
+      diags.some((d) => diagnosticRuleIdIncludes(d, 'no-unsafe-member-access')),
     );
     assert.ok(
-      initialDiags.some((d) => d.message.includes('no-unsafe-member-access')),
+      initialDiags.some((d) =>
+        diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+      ),
       'Initial: foo file should have no-unsafe-member-access',
     );
 
@@ -353,16 +370,18 @@ suite('rslint monorepo multi-config support', function () {
 
       // 3. Foo file should now fall back to root config (no-explicit-any: error)
       const afterDeleteDiags = await waitForDiagnostics(doc, (diags) =>
-        diags.some((d) => d.message.includes('no-explicit-any')),
+        diags.some((d) => diagnosticRuleIdIncludes(d, 'no-explicit-any')),
       );
 
       assert.ok(
-        afterDeleteDiags.some((d) => d.message.includes('no-explicit-any')),
+        afterDeleteDiags.some((d) =>
+          diagnosticRuleIdIncludes(d, 'no-explicit-any'),
+        ),
         'After delete: foo file should fall back to root config (no-explicit-any)',
       );
       assert.ok(
         !afterDeleteDiags.some((d) =>
-          d.message.includes('no-unsafe-member-access'),
+          diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
         ),
         'After delete: foo file should NOT see no-unsafe-member-access (off in root)',
       );
@@ -378,10 +397,12 @@ suite('rslint monorepo multi-config support', function () {
 
     // 1. Verify initial: foo config works
     const initialDiags = await waitForDiagnostics(fooDoc, (diags) =>
-      diags.some((d) => d.message.includes('no-unsafe-member-access')),
+      diags.some((d) => diagnosticRuleIdIncludes(d, 'no-unsafe-member-access')),
     );
     assert.ok(
-      initialDiags.some((d) => d.message.includes('no-unsafe-member-access')),
+      initialDiags.some((d) =>
+        diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+      ),
       'Initial: foo file should have no-unsafe-member-access',
     );
 
@@ -401,10 +422,10 @@ suite('rslint monorepo multi-config support', function () {
       await vscode.window.showTextDocument(barDoc);
 
       const barDiags = await waitForDiagnostics(barDoc, (diags) =>
-        diags.some((d) => d.message.includes('no-explicit-any')),
+        diags.some((d) => diagnosticRuleIdIncludes(d, 'no-explicit-any')),
       );
       assert.ok(
-        barDiags.some((d) => d.message.includes('no-explicit-any')),
+        barDiags.some((d) => diagnosticRuleIdIncludes(d, 'no-explicit-any')),
         'Bar file should still use root config after foo config is corrupted',
       );
     } finally {
@@ -419,10 +440,10 @@ suite('rslint monorepo multi-config support', function () {
 
     // 1. Verify initial: bar uses root config (no-explicit-any: error)
     const initialDiags = await waitForDiagnostics(doc, (diags) =>
-      diags.some((d) => d.message.includes('no-explicit-any')),
+      diags.some((d) => diagnosticRuleIdIncludes(d, 'no-explicit-any')),
     );
     assert.ok(
-      initialDiags.some((d) => d.message.includes('no-explicit-any')),
+      initialDiags.some((d) => diagnosticRuleIdIncludes(d, 'no-explicit-any')),
       'Initial: bar file should have no-explicit-any from root config',
     );
 
@@ -456,16 +477,20 @@ suite('rslint monorepo multi-config support', function () {
 
       // 3. Bar should now use its own config
       const afterCreateDiags = await waitForDiagnostics(doc, (diags) =>
-        diags.some((d) => d.message.includes('no-unsafe-member-access')),
+        diags.some((d) =>
+          diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+        ),
       );
       assert.ok(
         afterCreateDiags.some((d) =>
-          d.message.includes('no-unsafe-member-access'),
+          diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
         ),
         'After create: bar file should see no-unsafe-member-access from new bar config',
       );
       assert.ok(
-        !afterCreateDiags.some((d) => d.message.includes('no-explicit-any')),
+        !afterCreateDiags.some((d) =>
+          diagnosticRuleIdIncludes(d, 'no-explicit-any'),
+        ),
         'After create: bar file should NOT see no-explicit-any (off in bar config)',
       );
 
@@ -475,15 +500,17 @@ suite('rslint monorepo multi-config support', function () {
       await triggerRelint(editor);
 
       const afterDeleteDiags = await waitForDiagnostics(doc, (diags) =>
-        diags.some((d) => d.message.includes('no-explicit-any')),
+        diags.some((d) => diagnosticRuleIdIncludes(d, 'no-explicit-any')),
       );
       assert.ok(
-        afterDeleteDiags.some((d) => d.message.includes('no-explicit-any')),
+        afterDeleteDiags.some((d) =>
+          diagnosticRuleIdIncludes(d, 'no-explicit-any'),
+        ),
         'After delete: bar file should fall back to root config (no-explicit-any)',
       );
       assert.ok(
         !afterDeleteDiags.some((d) =>
-          d.message.includes('no-unsafe-member-access'),
+          diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
         ),
         'After delete: bar file should NOT see no-unsafe-member-access (off in root)',
       );
@@ -509,16 +536,16 @@ suite('rslint monorepo multi-config support', function () {
     // 1. Establish positive publications for both configs. Any later empty bar
     // snapshot is therefore a real transition, not a not-yet-linted default.
     const initialFooDiags = await waitForDiagnostics(fooDoc, (diags) =>
-      diags.some((d) => d.message.includes('no-unsafe-member-access')),
+      diags.some((d) => diagnosticRuleIdIncludes(d, 'no-unsafe-member-access')),
     );
     assert.ok(
       initialFooDiags.some((d) =>
-        d.message.includes('no-unsafe-member-access'),
+        diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
       ),
       'Initial: foo file should have no-unsafe-member-access from foo config',
     );
     await waitForDiagnostics(barDoc, (diags) =>
-      diags.some((d) => d.message.includes('no-explicit-any')),
+      diags.some((d) => diagnosticRuleIdIncludes(d, 'no-explicit-any')),
     );
 
     let testError: unknown;
@@ -565,7 +592,7 @@ suite('rslint monorepo multi-config support', function () {
 
       const fooRestored = waitForDiagnostics(fooDoc, (diagnostics) =>
         diagnostics.some((diagnostic) =>
-          diagnostic.message.includes('no-unsafe-member-access'),
+          diagnosticRuleIdIncludes(diagnostic, 'no-unsafe-member-access'),
         ),
       );
       assert.ok(
@@ -590,7 +617,7 @@ suite('rslint monorepo multi-config support', function () {
       await revertTextDocument(fooDoc);
       const rootRestored = waitForDiagnostics(barDoc, (diagnostics) =>
         diagnostics.some((diagnostic) =>
-          diagnostic.message.includes('no-explicit-any'),
+          diagnosticRuleIdIncludes(diagnostic, 'no-explicit-any'),
         ),
       );
       fs.writeFileSync(rootConfigPath, originalRootConfig, 'utf8');
@@ -616,10 +643,10 @@ suite('rslint monorepo multi-config support', function () {
 
     // 1. Verify initial: bar uses root config (no-explicit-any: error)
     const initialDiags = await waitForDiagnostics(doc, (diags) =>
-      diags.some((d) => d.message.includes('no-explicit-any')),
+      diags.some((d) => diagnosticRuleIdIncludes(d, 'no-explicit-any')),
     );
     assert.ok(
-      initialDiags.some((d) => d.message.includes('no-explicit-any')),
+      initialDiags.some((d) => diagnosticRuleIdIncludes(d, 'no-explicit-any')),
       'Initial: bar file should have no-explicit-any from root config',
     );
 
@@ -651,15 +678,21 @@ suite('rslint monorepo multi-config support', function () {
       await triggerRelint(editor);
 
       const updatedDiags = await waitForDiagnostics(doc, (diags) =>
-        diags.some((d) => d.message.includes('no-unsafe-member-access')),
+        diags.some((d) =>
+          diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+        ),
       );
 
       assert.ok(
-        updatedDiags.some((d) => d.message.includes('no-unsafe-member-access')),
+        updatedDiags.some((d) =>
+          diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+        ),
         'After change: bar file should see no-unsafe-member-access from updated root',
       );
       assert.ok(
-        !updatedDiags.some((d) => d.message.includes('no-explicit-any')),
+        !updatedDiags.some((d) =>
+          diagnosticRuleIdIncludes(d, 'no-explicit-any'),
+        ),
         'After change: bar file should NOT see no-explicit-any (off in updated root)',
       );
     } finally {

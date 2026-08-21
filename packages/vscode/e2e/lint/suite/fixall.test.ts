@@ -1,13 +1,14 @@
 // Ported from web-infra-dev/rslint (deviation: setup waits go through
-// waitForDiagnosticsWithMessages -- see fixall-helpers.ts for why).
+// waitForDiagnosticsWithRuleIds -- see fixall-helpers.ts for why).
 // `packages/vscode-extension/__tests__/suite/fixall.test.ts` (origin/main).
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import {
   waitForDiagnostics,
-  waitForDiagnosticsWithMessages,
+  waitForDiagnosticsWithRuleIds,
   waitForDiagnosticsToChange,
   waitForDiagnosticsCount,
+  diagnosticRuleIdIncludes,
   openFixture,
   findFixAllAction,
   requestFixAll,
@@ -82,12 +83,12 @@ suite('rslint fixAll - code actions', function () {
     await withTmpFile(fixableContent, async (doc, editor) => {
       const initialDiagnostics = await waitForDiagnostics(doc, (diagnostics) =>
         diagnostics.some((diagnostic) =>
-          diagnostic.message.includes('no-unnecessary-type-assertion'),
+          diagnosticRuleIdIncludes(diagnostic, 'no-unnecessary-type-assertion'),
         ),
       );
       assert.ok(
         initialDiagnostics.some((diagnostic) =>
-          diagnostic.message.includes('no-unnecessary-type-assertion'),
+          diagnosticRuleIdIncludes(diagnostic, 'no-unnecessary-type-assertion'),
         ),
         `Expected a fixable control diagnostic. Got: ${initialDiagnostics
           .map((diagnostic) => diagnostic.message)
@@ -129,14 +130,14 @@ suite('rslint fixAll - code actions', function () {
     const fixableContent =
       "const frVal: string = 'hello';\nconst frRes = (frVal as string).toUpperCase();\n";
     await withTmpFile(fixableContent, async (doc) => {
-      const initialDiags = await waitForDiagnosticsWithMessages(
+      const initialDiags = await waitForDiagnosticsWithRuleIds(
         doc,
         'no-unnecessary-type-assertion',
       );
       assert.ok(initialDiags.length > 0, 'Should have initial diagnostics');
 
       const fixableDiags = initialDiags.filter((d) =>
-        d.message.includes('no-unnecessary-type-assertion'),
+        diagnosticRuleIdIncludes(d, 'no-unnecessary-type-assertion'),
       );
       assert.ok(
         fixableDiags.length > 0,
@@ -171,7 +172,7 @@ suite('rslint fixAll - code actions', function () {
       '',
     ].join('\n');
     await withTmpFile(mixedContent, async (doc) => {
-      const initialDiags = await waitForDiagnosticsWithMessages(
+      const initialDiags = await waitForDiagnosticsWithRuleIds(
         doc,
         'no-unnecessary-type-assertion',
         'no-unsafe',
@@ -179,10 +180,10 @@ suite('rslint fixAll - code actions', function () {
       assert.ok(initialDiags.length > 0, 'Should have diagnostics');
 
       const fixableBefore = initialDiags.filter((d) =>
-        d.message.includes('no-unnecessary-type-assertion'),
+        diagnosticRuleIdIncludes(d, 'no-unnecessary-type-assertion'),
       );
       const nonFixableBefore = initialDiags.filter((d) =>
-        d.message.includes('no-unsafe'),
+        diagnosticRuleIdIncludes(d, 'no-unsafe'),
       );
       assert.ok(
         fixableBefore.length > 0,
@@ -210,7 +211,7 @@ suite('rslint fixAll - code actions', function () {
       );
 
       const fixableAfter = updatedDiags.filter((d) =>
-        d.message.includes('no-unnecessary-type-assertion'),
+        diagnosticRuleIdIncludes(d, 'no-unnecessary-type-assertion'),
       );
       assert.ok(
         fixableAfter.length < fixableBefore.length,
@@ -218,7 +219,7 @@ suite('rslint fixAll - code actions', function () {
       );
 
       const nonFixableAfter = updatedDiags.filter((d) =>
-        d.message.includes('no-unsafe'),
+        diagnosticRuleIdIncludes(d, 'no-unsafe'),
       );
       assert.ok(
         nonFixableAfter.length > 0,
@@ -257,12 +258,12 @@ suite('rslint fixAll - code actions', function () {
     const fixableContent =
       "const sfVal: string = 'x';\nconst sfRes = (sfVal as string).trim();\n";
     await withTmpFile(fixableContent, async (doc) => {
-      const initialDiags = await waitForDiagnosticsWithMessages(
+      const initialDiags = await waitForDiagnosticsWithRuleIds(
         doc,
         'no-unnecessary-type-assertion',
       );
       const fixableCount = initialDiags.filter((d) =>
-        d.message.includes('no-unnecessary-type-assertion'),
+        diagnosticRuleIdIncludes(d, 'no-unnecessary-type-assertion'),
       ).length;
       assert.ok(
         fixableCount > 0,

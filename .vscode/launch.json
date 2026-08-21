@@ -33,8 +33,20 @@
         "--disable-updates",
         "${workspaceFolder}/packages/vscode/${input:playgroundTarget}"
       ],
+      // The "playground node" task materialized a floor-satisfying Node here;
+      // prepending it makes the extension's PATH probe find it, regardless of
+      // what node the desktop session carries (GUI launches never run the
+      // shell hooks that honor .nvmrc).
+      "env": {
+        "PATH": "${workspaceFolder}/packages/vscode/.playground/node-bin:${env:PATH}"
+      },
+      "windows": {
+        "env": {
+          "PATH": "${workspaceFolder}\\packages\\vscode\\.playground\\node-bin;${env:PATH}"
+        }
+      },
       "outFiles": ["${workspaceFolder}/packages/vscode/dist/**/*.js"],
-      "preLaunchTask": "extension watch",
+      "preLaunchTask": "playground",
       // Off by default: attaching to every spawned worker slows runs down and
       // child-process sourcemaps are unreliable (same setting upstream).
       "autoAttachChildProcesses": false

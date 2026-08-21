@@ -10,6 +10,7 @@ import { CoreResolver, type ResolvedCoreRuntime } from './CoreResolver';
 import { Logger } from './logger';
 import { Rslint } from './Rslint';
 import type { RslintMode } from './resolution';
+import { registerRuleDocumentationProviders } from './ruleDocumentationProviders';
 import { RuntimeManager } from './RuntimeManager';
 import {
   aggregateFolderStates,
@@ -74,10 +75,17 @@ class RslintController implements StackController {
   #context: StackContext | undefined;
   #logger: Logger | undefined;
   #runtimeManager: RuntimeManager | undefined;
+  #router: WorkspaceDocumentRouter | undefined;
   /** The detection gate: a folder lints only while the snapshot lights it. */
   #snapshot: DetectionSnapshot | undefined;
   readonly #subscriptions: vscode.Disposable[] = [];
   readonly #folderStates = new Map<string, FolderStates>();
+  // Mirror of the live runtimes, kept here (not on the router) so answering
+  // "does this document's server advertise hover?" needs no new surface on the
+  // upstream-copied WorkspaceDocumentRouter. Reachability is still gated by
+  // router ownership; each runtime removes itself only when it is still the
+  // entry for its key, so an overlapping replacement survives the old close.
+  readonly #runtimes = new Map<string, Rslint>();
   #disposed = false;
 
   async register(context: StackContext): Promise<Record<string, unknown>> {
@@ -86,6 +94,14 @@ class RslintController implements StackController {
     this.#logger = new Logger(context.output);
 
     this.startRuntimeManager();
+    this.#subscriptions.push(
+      ...registerRuleDocumentationProviders({
+        servesDocument: (document) => this.servesDocument(document),
+        serverAdvertisesHover: (document) =>
+          this.serverAdvertisesHover(document),
+        refreshOn: context.onDidChangeDetection,
+      }),
+    );
 
     this.#subscriptions.push(
       context.onDidChangeDetection((snapshot) => {
@@ -174,6 +190,7 @@ class RslintController implements StackController {
       return;
     }
     const router = new WorkspaceDocumentRouter();
+    this.#router = router;
     this.#runtimeManager = new RuntimeManager(
       router,
       new CoreResolver(),
@@ -215,7 +232,7 @@ class RslintController implements StackController {
     const { workspaceFolder, installation } = resolved;
     const folderKey = folderKeyOf(workspaceFolder);
     this.setState(folderKey, 'runtimes', resolved.key, { kind: 'starting' });
-    return new Rslint({
+    const runtime: Rslint = new Rslint({
       rootKey: resolved.key,
       workspaceFolder,
       installation,
@@ -235,7 +252,14 @@ class RslintController implements StackController {
           attributeToCore(state, installation.packageDirectory),
         );
       },
+      onClosed: () => {
+        if (this.#runtimes.get(resolved.key) === runtime) {
+          this.#runtimes.delete(resolved.key);
+        }
+      },
     });
+    this.#runtimes.set(resolved.key, runtime);
+    return runtime;
   }
 
   private detectedFolders() {
@@ -246,6 +270,19 @@ class RslintController implements StackController {
 
   private folderMode(folder: vscode.WorkspaceFolder): RslintMode | undefined {
     return this.#snapshot?.forFolder(folder)?.stacks.rslint.mode;
+  }
+
+  private servesDocument(document: vscode.TextDocument): boolean {
+    const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+    return folder !== undefined && this.folderMode(folder) !== undefined;
+  }
+
+  private serverAdvertisesHover(document: vscode.TextDocument): boolean {
+    const owner = this.#router?.ownerKeyForDocument(document);
+    return (
+      owner !== undefined &&
+      this.#runtimes.get(owner)?.serverAdvertisesHover() === true
+    );
   }
 
   /** Drops the states of folders detection no longer lights. */
@@ -340,6 +377,8 @@ class RslintController implements StackController {
     }
     await this.closeRuntimeManager();
     this.#folderStates.clear();
+    this.#runtimes.clear();
+    this.#router = undefined;
     this.#logger = undefined;
     this.#context = undefined;
     this.#snapshot = undefined;

@@ -4,7 +4,10 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import path from 'node:path';
 import { findFixAllAction, requestFixAll } from '../suite/fixall-helpers';
-import { waitForRslintDiagnostics as waitForDiagnostics } from '../utils/diagnostics';
+import {
+  diagnosticRuleIdIncludes,
+  waitForRslintDiagnostics as waitForDiagnostics,
+} from '../utils/diagnostics';
 
 // Type-aware rule scope when parserOptions uses `projectService: true`
 // (the shape `ts.configs.recommended` exports) without an explicit
@@ -48,13 +51,13 @@ suite('rslint projectService type-aware scope', function () {
 
     const diagnostics = await waitForDiagnostics(doc, (diags) =>
       rslintDiagnostics(diags).some((d) =>
-        d.message.includes('no-unused-vars'),
+        diagnosticRuleIdIncludes(d, 'no-unused-vars'),
       ),
     );
 
     const rslintDiags = rslintDiagnostics(diagnostics);
     assert.ok(
-      rslintDiags.some((d) => d.message.includes('no-unused-vars')),
+      rslintDiags.some((d) => diagnosticRuleIdIncludes(d, 'no-unused-vars')),
       `Expected no-unused-vars on src/covered.ts. Got: ${rslintDiags.map((d) => d.message).join(' | ')}`,
     );
   });
@@ -70,16 +73,18 @@ suite('rslint projectService type-aware scope', function () {
     // diagnostics, so the negative assertion below can run synchronously
     // instead of waiting on a fixed-duration sleep.
     const diagnostics = await waitForDiagnostics(doc, (diags) =>
-      rslintDiagnostics(diags).some((d) => d.message.includes('no-console')),
+      rslintDiagnostics(diags).some((d) =>
+        diagnosticRuleIdIncludes(d, 'no-console'),
+      ),
     );
 
     const rslintDiags = rslintDiagnostics(diagnostics);
     assert.ok(
-      rslintDiags.some((d) => d.message.includes('no-console')),
+      rslintDiags.some((d) => diagnosticRuleIdIncludes(d, 'no-console')),
       `Expected no-console marker to appear on test/skills.test.ts. Got: ${rslintDiags.map((d) => d.message).join(' | ')}`,
     );
     assert.ok(
-      !rslintDiags.some((d) => d.message.includes('no-unused-vars')),
+      !rslintDiags.some((d) => diagnosticRuleIdIncludes(d, 'no-unused-vars')),
       `no-unused-vars should NOT fire on a file outside tsconfig.include. Got: ${rslintDiags.map((d) => d.message).join(' | ')}`,
     );
   });
@@ -91,16 +96,18 @@ suite('rslint projectService type-aware scope', function () {
     await vscode.window.showTextDocument(doc);
 
     const diagnostics = await waitForDiagnostics(doc, (diags) =>
-      rslintDiagnostics(diags).some((d) => d.message.includes('no-var')),
+      rslintDiagnostics(diags).some((d) =>
+        diagnosticRuleIdIncludes(d, 'no-var'),
+      ),
     );
 
     const rslintDiags = rslintDiagnostics(diagnostics);
     assert.ok(
-      rslintDiags.some((d) => d.message.includes('no-var')),
+      rslintDiags.some((d) => diagnosticRuleIdIncludes(d, 'no-var')),
       `Expected native no-var marker. Got: ${rslintDiags.map((d) => d.message).join(' | ')}`,
     );
     assert.ok(
-      !rslintDiags.some((d) => d.message.includes('no-unused-vars')),
+      !rslintDiags.some((d) => diagnosticRuleIdIncludes(d, 'no-unused-vars')),
       `no-unused-vars should not run without a resolved tsconfig. Got: ${rslintDiags.map((d) => d.message).join(' | ')}`,
     );
   });
@@ -111,7 +118,9 @@ suite('rslint projectService type-aware scope', function () {
     );
     await vscode.window.showTextDocument(doc);
     await waitForDiagnostics(doc, (diags) =>
-      rslintDiagnostics(diags).some((d) => d.message.includes('no-var')),
+      rslintDiagnostics(diags).some((d) =>
+        diagnosticRuleIdIncludes(d, 'no-var'),
+      ),
     );
 
     const fixAll = findFixAllAction(await requestFixAll(doc));

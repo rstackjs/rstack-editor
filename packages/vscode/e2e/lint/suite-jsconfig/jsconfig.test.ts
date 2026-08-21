@@ -13,7 +13,10 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import path from 'node:path';
 import fs from 'node:fs';
-import { waitForRslintDiagnostics as waitForDiagnostics } from '../utils/diagnostics';
+import {
+  diagnosticRuleIdIncludes,
+  waitForRslintDiagnostics as waitForDiagnostics,
+} from '../utils/diagnostics';
 import { closeTextEditor, revertTextDocument } from '../utils/documents';
 import { waitForLintStackRegistration } from '../utils/extension';
 
@@ -74,14 +77,16 @@ suite('rslint JS config support', function () {
     // Wait specifically for JS config diagnostics. The startup snapshot may
     // publish JSON fallback results before JS config activation commits.
     const diagnostics = await waitForDiagnostics(doc, (diags) =>
-      diags.some((d) => d.message.includes('no-unsafe-member-access')),
+      diags.some((d) => diagnosticRuleIdIncludes(d, 'no-unsafe-member-access')),
     );
     assert.ok(
       diagnostics.length > 0,
       `Expected diagnostics but got ${diagnostics.length}`,
     );
     assert.ok(
-      diagnostics.some((d) => d.message.includes('no-unsafe-member-access')),
+      diagnostics.some((d) =>
+        diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+      ),
       'Expected no-unsafe-member-access diagnostic from JS config',
     );
   });
@@ -94,15 +99,17 @@ suite('rslint JS config support', function () {
     // JSON config may load first with no-explicit-any, but the committed JS
     // config catalog should override it.
     const diagnostics = await waitForDiagnostics(doc, (diags) =>
-      diags.some((d) => d.message.includes('no-unsafe-member-access')),
+      diags.some((d) => diagnosticRuleIdIncludes(d, 'no-unsafe-member-access')),
     );
 
     assert.ok(
-      diagnostics.some((d) => d.message.includes('no-unsafe-member-access')),
+      diagnostics.some((d) =>
+        diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+      ),
       'Expected no-unsafe-member-access from JS config',
     );
     assert.ok(
-      !diagnostics.some((d) => d.message.includes('no-explicit-any')),
+      !diagnostics.some((d) => diagnosticRuleIdIncludes(d, 'no-explicit-any')),
       'Should NOT see no-explicit-any because JS config takes priority over JSON',
     );
   });
@@ -113,7 +120,7 @@ suite('rslint JS config support', function () {
 
     // 1. Verify initial diagnostics have no-unsafe-member-access.
     await waitForDiagnostics(doc, (diags) =>
-      diags.some((d) => d.message.includes('no-unsafe-member-access')),
+      diags.some((d) => diagnosticRuleIdIncludes(d, 'no-unsafe-member-access')),
     );
 
     // 2. Subscribe BEFORE writing the new config — eliminates the
@@ -143,25 +150,31 @@ suite('rslint JS config support', function () {
         const reloaded = waitForDiagnostics(
           doc,
           (diags) =>
-            diags.some((d) => d.message.includes('no-explicit-any')) &&
-            !diags.some((d) => d.message.includes('no-unsafe-member-access')),
+            diags.some((d) => diagnosticRuleIdIncludes(d, 'no-explicit-any')) &&
+            !diags.some((d) =>
+              diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+            ),
         );
         fs.writeFileSync(configPath, newConfig, 'utf8');
         const updatedDiags = await reloaded;
         assert.ok(
-          updatedDiags.some((d) => d.message.includes('no-explicit-any')),
+          updatedDiags.some((d) =>
+            diagnosticRuleIdIncludes(d, 'no-explicit-any'),
+          ),
           'After hot reload, diagnostics should include no-explicit-any',
         );
         assert.ok(
           !updatedDiags.some((d) =>
-            d.message.includes('no-unsafe-member-access'),
+            diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
           ),
           'After hot reload, no-unsafe-member-access should be gone',
         );
       },
       async () => {
         const restored = waitForDiagnostics(doc, (diags) =>
-          diags.some((d) => d.message.includes('no-unsafe-member-access')),
+          diags.some((d) =>
+            diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+          ),
         );
         fs.writeFileSync(configPath, originalConfig, 'utf8');
         await restored;
@@ -178,7 +191,7 @@ suite('rslint JS config support', function () {
     const doc = await openFixture('index.ts');
     await vscode.window.showTextDocument(doc);
     await waitForDiagnostics(doc, (diags) =>
-      diags.some((d) => d.message.includes('no-unsafe-member-access')),
+      diags.some((d) => diagnosticRuleIdIncludes(d, 'no-unsafe-member-access')),
     );
 
     const countedConfig = `import fs from 'node:fs';
@@ -201,8 +214,10 @@ export default [{
         const reloaded = waitForDiagnostics(
           doc,
           (diags) =>
-            diags.some((d) => d.message.includes('no-explicit-any')) &&
-            !diags.some((d) => d.message.includes('no-unsafe-member-access')),
+            diags.some((d) => diagnosticRuleIdIncludes(d, 'no-explicit-any')) &&
+            !diags.some((d) =>
+              diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+            ),
         );
         fs.rmSync(markerPath, { force: true });
         fs.writeFileSync(configPath, countedConfig, 'utf8');
@@ -222,7 +237,9 @@ export default [{
         await withFailClosedCleanup(
           async () => {
             const restored = waitForDiagnostics(doc, (diags) =>
-              diags.some((d) => d.message.includes('no-unsafe-member-access')),
+              diags.some((d) =>
+                diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+              ),
             );
             fs.writeFileSync(configPath, originalConfig, 'utf8');
             await restored;
@@ -240,7 +257,7 @@ export default [{
     await vscode.window.showTextDocument(doc);
 
     await waitForDiagnostics(doc, (diags) =>
-      diags.some((d) => d.message.includes('no-unsafe-member-access')),
+      diags.some((d) => diagnosticRuleIdIncludes(d, 'no-unsafe-member-access')),
     );
 
     const configPath = path.join(getWorkspaceRoot(), 'rslint.config.js');
@@ -271,7 +288,9 @@ export default [{
         fs.writeFileSync(configPath, originalConfig, 'utf8');
         await waitForLintStackRegistration(true);
         await waitForDiagnostics(doc, (diags) =>
-          diags.some((d) => d.message.includes('no-unsafe-member-access')),
+          diags.some((d) =>
+            diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+          ),
         );
       },
       'JS-config deletion test',
@@ -287,14 +306,16 @@ export default [{
     // Establish a positive publication first, so clearing cannot pass on the
     // document's not-yet-linted initial empty snapshot.
     await waitForDiagnostics(doc, (diags) =>
-      diags.some((d) => d.message.includes('no-unsafe-member-access')),
+      diags.some((d) => diagnosticRuleIdIncludes(d, 'no-unsafe-member-access')),
     );
 
     await withFailClosedCleanup(
       async () => {
         // Step 1: delete existing config and observe its diagnostics drop.
         const cleared = waitForDiagnostics(doc, (diags) =>
-          diags.every((d) => !d.message.includes('no-unsafe-member-access')),
+          diags.every(
+            (d) => !diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+          ),
         );
         fs.unlinkSync(configPath);
         await cleared;
@@ -317,18 +338,22 @@ export default [{
 ];
 `;
         const created = waitForDiagnostics(doc, (diags) =>
-          diags.some((d) => d.message.includes('no-explicit-any')),
+          diags.some((d) => diagnosticRuleIdIncludes(d, 'no-explicit-any')),
         );
         fs.writeFileSync(configPath, newConfig, 'utf8');
         const afterCreateDiags = await created;
         assert.ok(
-          afterCreateDiags.some((d) => d.message.includes('no-explicit-any')),
+          afterCreateDiags.some((d) =>
+            diagnosticRuleIdIncludes(d, 'no-explicit-any'),
+          ),
           'After creating new JS config, should see no-explicit-any diagnostic',
         );
       },
       async () => {
         const restored = waitForDiagnostics(doc, (diags) =>
-          diags.some((d) => d.message.includes('no-unsafe-member-access')),
+          diags.some((d) =>
+            diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+          ),
         );
         fs.writeFileSync(configPath, originalConfig, 'utf8');
         await restored;
@@ -373,7 +398,7 @@ export default [{
         await waitForDiagnostics(rootDoc, (diags) =>
           diags.some(
             (diagnostic) =>
-              diagnostic.message.includes('no-unsafe-member-access') &&
+              diagnosticRuleIdIncludes(diagnostic, 'no-unsafe-member-access') &&
               diagnostic.severity === vscode.DiagnosticSeverity.Warning,
           ),
         );
@@ -382,7 +407,7 @@ export default [{
         await waitForDiagnostics(nestedDoc, (diags) =>
           diags.some(
             (diagnostic) =>
-              diagnostic.message.includes('no-debugger') &&
+              diagnosticRuleIdIncludes(diagnostic, 'no-debugger') &&
               diagnostic.severity === vscode.DiagnosticSeverity.Error,
           ),
         );
@@ -418,13 +443,15 @@ export default [];
           (diags) =>
             diags.some(
               (diagnostic) =>
-                diagnostic.message.includes('no-debugger') &&
+                diagnosticRuleIdIncludes(diagnostic, 'no-debugger') &&
                 diagnostic.severity === vscode.DiagnosticSeverity.Error,
             ),
         );
         assert.deepStrictEqual(
           postFailureDiagnostics
-            .filter((diagnostic) => diagnostic.message.includes('no-debugger'))
+            .filter((diagnostic) =>
+              diagnosticRuleIdIncludes(diagnostic, 'no-debugger'),
+            )
             .map((diagnostic) => diagnostic.severity),
           [vscode.DiagnosticSeverity.Error],
           'The valid ancestor must lint a file opened after the broken child was evaluated',
@@ -447,8 +474,10 @@ export default [];
             const rootRestored = waitForDiagnostics(rootDoc, (diags) =>
               diags.some(
                 (diagnostic) =>
-                  diagnostic.message.includes('no-unsafe-member-access') &&
-                  diagnostic.severity === vscode.DiagnosticSeverity.Error,
+                  diagnosticRuleIdIncludes(
+                    diagnostic,
+                    'no-unsafe-member-access',
+                  ) && diagnostic.severity === vscode.DiagnosticSeverity.Error,
               ),
             );
             fs.writeFileSync(rootConfigPath, originalRootConfig, 'utf8');
@@ -537,7 +566,7 @@ export default [{ files: ['**/*.ts'], rules: { 'no-console': 'error' } }];
         await vscode.window.showTextDocument(rootDoc);
         const parentApplied = waitForDiagnostics(rootDoc, (diagnostics) =>
           diagnostics.some((diagnostic) =>
-            diagnostic.message.includes('no-explicit-any'),
+            diagnosticRuleIdIncludes(diagnostic, 'no-explicit-any'),
           ),
         );
         const nestedCleared = waitForDiagnostics(
@@ -570,10 +599,10 @@ export default [{ files: ['**/*.ts'], rules: { 'no-console': 'error' } }];
           rootDoc,
           (diagnostics) =>
             diagnostics.some((diagnostic) =>
-              diagnostic.message.includes('no-unsafe-member-access'),
+              diagnosticRuleIdIncludes(diagnostic, 'no-unsafe-member-access'),
             ) &&
             !diagnostics.some((diagnostic) =>
-              diagnostic.message.includes('no-explicit-any'),
+              diagnosticRuleIdIncludes(diagnostic, 'no-explicit-any'),
             ),
         );
         fs.writeFileSync(rootConfigPath, originalRootConfig, 'utf8');
@@ -620,7 +649,7 @@ export default [{ files: ['**/*.ts'], rules: { 'no-console': 'error' } }];
         await vscode.window.showTextDocument(rootDoc);
         const reloaded = waitForDiagnostics(rootDoc, (diagnostics) =>
           diagnostics.some((diagnostic) =>
-            diagnostic.message.includes('no-explicit-any'),
+            diagnosticRuleIdIncludes(diagnostic, 'no-explicit-any'),
           ),
         );
         fs.writeFileSync(rootConfigPath, changedRootConfig, 'utf8');
@@ -638,10 +667,10 @@ export default [{ files: ['**/*.ts'], rules: { 'no-console': 'error' } }];
           rootDoc,
           (diagnostics) =>
             diagnostics.some((diagnostic) =>
-              diagnostic.message.includes('no-unsafe-member-access'),
+              diagnosticRuleIdIncludes(diagnostic, 'no-unsafe-member-access'),
             ) &&
             !diagnostics.some((diagnostic) =>
-              diagnostic.message.includes('no-explicit-any'),
+              diagnosticRuleIdIncludes(diagnostic, 'no-explicit-any'),
             ),
         );
         for (const probe of probes) {
@@ -705,13 +734,15 @@ export default [{ files: ['**/*.ts'], rules: { 'no-console': 'error' } }];
       const result = waitForDiagnostics(doc, (diags) =>
         diags.some(
           (d) =>
-            d.message.includes(ruleName) &&
+            diagnosticRuleIdIncludes(d, ruleName) &&
             d.severity === vscode.DiagnosticSeverity.Warning,
         ),
       );
       mutate();
       const diagnostics = await result;
-      const diagnostic = diagnostics.find((d) => d.message.includes(ruleName));
+      const diagnostic = diagnostics.find((d) =>
+        diagnosticRuleIdIncludes(d, ruleName),
+      );
       assert.strictEqual(
         diagnostic?.severity,
         vscode.DiagnosticSeverity.Warning,
@@ -722,7 +753,7 @@ export default [{ files: ['**/*.ts'], rules: { 'no-console': 'error' } }];
     await waitForDiagnostics(doc, (diags) =>
       diags.some(
         (diagnostic) =>
-          diagnostic.message.includes('no-unsafe-member-access') &&
+          diagnosticRuleIdIncludes(diagnostic, 'no-unsafe-member-access') &&
           diagnostic.severity === vscode.DiagnosticSeverity.Error,
       ),
     );
@@ -759,7 +790,7 @@ export default [{ files: ['**/*.ts'], rules: { 'no-console': 'error' } }];
         const restored = waitForDiagnostics(doc, (diags) =>
           diags.some(
             (d) =>
-              d.message.includes('no-unsafe-member-access') &&
+              diagnosticRuleIdIncludes(d, 'no-unsafe-member-access') &&
               d.severity === vscode.DiagnosticSeverity.Error,
           ),
         );
@@ -782,7 +813,7 @@ export default [{ files: ['**/*.ts'], rules: { 'no-console': 'error' } }];
     const doc = await openFixture('index.ts');
     await vscode.window.showTextDocument(doc);
     await waitForDiagnostics(doc, (diags) =>
-      diags.some((d) => d.message.includes('no-unsafe-member-access')),
+      diags.some((d) => diagnosticRuleIdIncludes(d, 'no-unsafe-member-access')),
     );
 
     const lowerPriorityConfig = `export default [{
@@ -834,7 +865,7 @@ export default [];
 
         const lastGoodApplied = waitForDiagnostics(doc, (diagnostics) =>
           diagnostics.some((diagnostic) =>
-            diagnostic.message.includes('no-unsafe-member-access'),
+            diagnosticRuleIdIncludes(diagnostic, 'no-unsafe-member-access'),
           ),
         );
         assert.ok(
@@ -851,14 +882,18 @@ export default [];
         );
         const diagnostics = await lastGoodApplied;
         assert.ok(
-          !diagnostics.some((d) => d.message.includes('no-explicit-any')),
+          !diagnostics.some((d) =>
+            diagnosticRuleIdIncludes(d, 'no-explicit-any'),
+          ),
           'A broken .js must not fall through to .mjs or JSON',
         );
       },
       async () => {
         await revertTextDocument(doc);
         const restored = waitForDiagnostics(doc, (diags) =>
-          diags.some((d) => d.message.includes('no-unsafe-member-access')),
+          diags.some((d) =>
+            diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+          ),
         );
         fs.writeFileSync(jsPath, originalJS, 'utf8');
         fs.rmSync(mjsPath, { force: true });

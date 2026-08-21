@@ -147,6 +147,9 @@ vite.config.ts.timestamp-*
 tests-dist/
 .rsdoctor/
 
+# F5 playground's materialized Node (see .vscode/tasks.json "playground node")
+packages/vscode/.playground/
+
 # E2E fixtures install published npm versions on demand; only
 # their manifests and configs are tracked.
 packages/vscode/e2e/fixtures/*/node_modules/

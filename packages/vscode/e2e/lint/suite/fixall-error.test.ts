@@ -1,11 +1,12 @@
 // Ported from web-infra-dev/rslint (deviation: setup waits go through
-// waitForDiagnosticsWithMessages -- see fixall-helpers.ts for why).
+// waitForDiagnosticsWithRuleIds -- see fixall-helpers.ts for why).
 // `packages/vscode-extension/__tests__/suite/fixall-error.test.ts` (origin/main).
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import {
-  waitForDiagnosticsWithMessages,
+  waitForDiagnosticsWithRuleIds,
   waitForContentChange,
+  diagnosticRuleIdIncludes,
   findFixAllAction,
   requestFixAll,
   withTmpFile,
@@ -58,13 +59,13 @@ suite('rslint fixAll - error flows', function () {
         editor,
         "const pVal: string = 'x';\nconst pRes = (pVal as string).trim();\n",
       );
-      const probeDiags = await waitForDiagnosticsWithMessages(
+      const probeDiags = await waitForDiagnosticsWithRuleIds(
         doc,
         'no-unnecessary-type-assertion',
       );
       assert.ok(
         probeDiags.some((d) =>
-          d.message.includes('no-unnecessary-type-assertion'),
+          diagnosticRuleIdIncludes(d, 'no-unnecessary-type-assertion'),
         ),
         `Expected fixable diagnostic before syntax-error save. Got: ${probeDiags
           .map((d) => d.message)

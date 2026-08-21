@@ -9,6 +9,7 @@ import {
   type WorkspaceFolder,
 } from 'vscode';
 import type { Middleware } from 'vscode-languageclient/node';
+import { enrichRslintDiagnostic } from './diagnosticEnrichment';
 
 const SUPPORTED_LANGUAGE_IDS = new Set([
   'typescript',
@@ -168,6 +169,9 @@ export class WorkspaceDocumentRouter {
           (candidate) => candidate.uri.toString() === uri.toString(),
         );
         if (!document || !this.isServerOpenOwner(runtime, document)) return;
+        for (const diagnostic of diagnostics) {
+          enrichRslintDiagnostic(diagnostic);
+        }
         next(uri, diagnostics);
       },
     };

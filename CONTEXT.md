@@ -34,6 +34,8 @@ Glossary of terms used across rstack-editor. Code, docs, commit messages and rev
 - **Lint worker** — the process the extension ships and runs for one lint server: it hosts Rslint's JS side (config evaluation, plugin rules) on a User Node runtime with its cwd at the workspace folder root, and fronts the Go `rslint --lsp` process it spawns, so the editor sees one language server. _Avoid_: lint host, lint proxy, lint server (that is what the worker presents, not what it is).
 - **Bridged folder** — a workspace folder whose lint runs against the Rstack config: no native `rslint.config.*` anywhere in the folder, a `rstack.config.*` at its root, and the lint worker pinned to rstack's shipped shim for its whole lifetime. _Avoid_: bridged workspace, rstack folder.
 - **Native folder** — a workspace folder whose lint runs against its own `rslint.config.*`, exactly as the standalone Rslint extension would.
+- **Inline directive** — a source comment that toggles lint rules for a scope: `rslint-disable`, `rslint-enable`, `rslint-disable-line`, `rslint-disable-next-line`, with the `eslint-` prefix accepted as an exact equivalent. Rule ids are comma-separated; a bare directive applies to all rules. _Avoid_: disable comment, suppression comment.
+- **Rule docs link** — the documentation URL derived from a rule id alone (one base URL plus the id, no per-rule data). Best-effort by design: a mistyped or brand-new rule id yields a dead link, never an error. _Avoid_: rule doc URL, docs href.
 
 ## fmt
 

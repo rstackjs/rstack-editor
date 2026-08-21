@@ -19,6 +19,7 @@ import * as vscode from 'vscode';
 import path from 'node:path';
 import fs from 'node:fs';
 import {
+  diagnosticRuleIdIncludes,
   getRslintDiagnostics,
   waitForRslintDiagnostics as waitForDiagnostics,
 } from '../utils/diagnostics';
@@ -201,10 +202,12 @@ suite('rslint no config fallback', function () {
       fs.writeFileSync(js, jsConfig, 'utf8');
       await waitForLintStackRegistration(true);
       const diags = await waitForDiagnostics(doc, (ds) =>
-        ds.some((d) => d.message.includes('no-unsafe-member-access')),
+        ds.some((d) => diagnosticRuleIdIncludes(d, 'no-unsafe-member-access')),
       );
       assert.ok(
-        diags.some((d) => d.message.includes('no-unsafe-member-access')),
+        diags.some((d) =>
+          diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+        ),
         'Step 1: creating rslint.config.js should produce its diagnostics',
       );
 
@@ -244,7 +247,9 @@ suite('rslint no config fallback', function () {
         fs.writeFileSync(js, jsConfig, 'utf8');
         await waitForLintStackRegistration(true);
         await waitForDiagnostics(doc, (ds) =>
-          ds.some((d) => d.message.includes('no-unsafe-member-access')),
+          ds.some((d) =>
+            diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+          ),
         );
 
         // Delete the JS config: the folder is un-detected (rslint.json does

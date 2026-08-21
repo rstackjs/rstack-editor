@@ -5,6 +5,7 @@ import * as vscode from 'vscode';
 import path from 'node:path';
 import fs from 'node:fs';
 import {
+  diagnosticRuleIdIncludes,
   waitForRslintDiagnostics,
   waitForRslintDiagnosticsCount,
   waitForRslintDiagnosticsToChange,
@@ -17,12 +18,13 @@ import {
 import { waitForCodeActionRegistryQuiescence } from '../utils/codeActionRegistry';
 
 export { saveDocumentOnce } from '../utils/codeActionRegistry';
+export { diagnosticRuleIdIncludes } from '../utils/diagnostics';
 
 export const waitForDiagnostics = waitForRslintDiagnostics;
 
 /**
- * Wait until the rslint diagnostics for `doc` include every given message
- * substring.
+ * Wait until the rslint diagnostics for `doc` include every given rule-id
+ * fragment.
  *
  * Deviation from the upstream suites, which assert on the first non-empty
  * publish: since @rslint/core 0.8.1 (web-infra-dev/rslint#1790), a file
@@ -32,13 +34,15 @@ export const waitForDiagnostics = waitForRslintDiagnostics;
  * with slow file watchers (macOS). Waiting for the expected diagnostics keeps
  * the terminal assertion identical without depending on publish batching.
  */
-export function waitForDiagnosticsWithMessages(
+export function waitForDiagnosticsWithRuleIds(
   doc: vscode.TextDocument,
-  ...messages: string[]
+  ...ruleIds: string[]
 ): Promise<vscode.Diagnostic[]> {
   return waitForRslintDiagnostics(doc, (diagnostics) =>
-    messages.every((message) =>
-      diagnostics.some((diagnostic) => diagnostic.message.includes(message)),
+    ruleIds.every((ruleId) =>
+      diagnostics.some((diagnostic) =>
+        diagnosticRuleIdIncludes(diagnostic, ruleId),
+      ),
     ),
   );
 }

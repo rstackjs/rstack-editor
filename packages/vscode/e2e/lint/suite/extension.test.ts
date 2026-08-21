@@ -5,6 +5,7 @@ import * as vscode from 'vscode';
 import path from 'node:path';
 import { executeCodeActionProvider, getFixturesDir } from './fixall-helpers';
 import {
+  diagnosticRuleIdIncludes,
   getRslintDiagnostics,
   waitForRslintDiagnostics as waitForDiagnostics,
   waitForRslintDiagnosticsCount as waitForDiagnosticsCount,
@@ -32,16 +33,16 @@ suite('rslint extension', function () {
     }
   });
 
-  function waitForDiagnosticsWithMessage(
+  function waitForDiagnosticsWithRuleId(
     doc: vscode.TextDocument,
-    messageSubstring: string,
+    ruleId: string,
     timeoutMs = 30000,
   ): Promise<vscode.Diagnostic[]> {
     return waitForDiagnostics(
       doc,
       (diagnostics) =>
         diagnostics.some((diagnostic) =>
-          diagnostic.message.includes(messageSubstring),
+          diagnosticRuleIdIncludes(diagnostic, ruleId),
         ),
       timeoutMs,
     );
@@ -71,7 +72,7 @@ suite('rslint extension', function () {
 
     const control = await openFixture('disable.ts');
     await vscode.window.showTextDocument(control);
-    const controlDiagnostics = await waitForDiagnosticsWithMessage(
+    const controlDiagnostics = await waitForDiagnosticsWithRuleId(
       control,
       'no-unsafe-member-access',
     );
@@ -79,7 +80,7 @@ suite('rslint extension', function () {
       controlDiagnostics.some(
         (diagnostic) =>
           diagnostic.source === 'rslint' &&
-          diagnostic.message.includes('no-unsafe-member-access'),
+          diagnosticRuleIdIncludes(diagnostic, 'no-unsafe-member-access'),
       ),
       'Expected the unignored control file to produce an rslint diagnostic',
     );
@@ -106,7 +107,7 @@ suite('rslint extension', function () {
     // Find the no-unnecessary-type-assertion diagnostic
     const typeAssertionDiag = diagnostics.find(
       (d) =>
-        d.message.includes('no-unnecessary-type-assertion') ||
+        diagnosticRuleIdIncludes(d, 'no-unnecessary-type-assertion') ||
         (d.source === 'rslint' && d.message.includes('assertion')),
     );
     assert.ok(
@@ -414,12 +415,12 @@ suite('rslint extension', function () {
       cleanContent.replace('export', `${insertedContent}export`),
       'VS Code should preserve the document EOL while applying the edit',
     );
-    const diagnostics = await waitForDiagnosticsWithMessage(
+    const diagnostics = await waitForDiagnosticsWithRuleId(
       doc,
       'no-unsafe-member-access',
     );
     const unsafeMember = diagnostics.find((diagnostic) =>
-      diagnostic.message.includes('no-unsafe-member-access'),
+      diagnosticRuleIdIncludes(diagnostic, 'no-unsafe-member-access'),
     );
     assert.ok(unsafeMember, 'Expected an unsafe member access diagnostic');
     assert.deepStrictEqual(
@@ -533,7 +534,7 @@ suite('rslint extension', function () {
         'const baseline: any = {};\nbaseline.member;\nexport {};\n',
       ),
     );
-    await waitForDiagnosticsWithMessage(doc, 'no-unsafe-member-access');
+    await waitForDiagnosticsWithRuleId(doc, 'no-unsafe-member-access');
 
     // Step 1: Start with clean code — should have zero diagnostics
     await editor.edit((b) =>
@@ -553,7 +554,7 @@ suite('rslint extension', function () {
         'const obj: any = {};\nobj.foo.bar;\nexport {};\n',
       ),
     );
-    const errorADiags = await waitForDiagnosticsWithMessage(
+    const errorADiags = await waitForDiagnosticsWithRuleId(
       doc,
       'no-unsafe-member-access',
     );
@@ -562,7 +563,9 @@ suite('rslint extension', function () {
       `Step 2 (error A): expected diagnostics, got ${errorADiags.length}`,
     );
     assert.ok(
-      errorADiags.some((d) => d.message.includes('no-unsafe-member-access')),
+      errorADiags.some((d) =>
+        diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+      ),
       `Step 2 (error A): expected no-unsafe-member-access diagnostic, got: ${errorADiags.map((d) => d.message).join(', ')}`,
     );
 
@@ -573,7 +576,7 @@ suite('rslint extension', function () {
         "const someValue: string = 'hello';\nconst result = someValue as string;\nexport {};\n",
       ),
     );
-    const errorBDiags = await waitForDiagnosticsWithMessage(
+    const errorBDiags = await waitForDiagnosticsWithRuleId(
       doc,
       'no-unnecessary-type-assertion',
     );
@@ -583,13 +586,15 @@ suite('rslint extension', function () {
     );
     assert.ok(
       errorBDiags.some((d) =>
-        d.message.includes('no-unnecessary-type-assertion'),
+        diagnosticRuleIdIncludes(d, 'no-unnecessary-type-assertion'),
       ),
       `Step 3 (error B): expected no-unnecessary-type-assertion diagnostic, got: ${errorBDiags.map((d) => d.message).join(', ')}`,
     );
     // Verify error A is gone
     assert.ok(
-      !errorBDiags.some((d) => d.message.includes('no-unsafe-member-access')),
+      !errorBDiags.some((d) =>
+        diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+      ),
       `Step 3 (error B): no-unsafe-member-access should be gone`,
     );
 

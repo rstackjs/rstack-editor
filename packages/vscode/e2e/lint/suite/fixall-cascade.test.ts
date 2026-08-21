@@ -5,6 +5,7 @@ import * as vscode from 'vscode';
 import {
   waitForDiagnostics,
   waitForContentChange,
+  diagnosticRuleIdIncludes,
   findFixAllAction,
   requestFixAll,
   withTmpFile,
@@ -27,7 +28,7 @@ suite('rslint fixAll - cascade (multi-pass)', function () {
     await withTmpFile(cascadeContent, async (doc) => {
       const initialDiags = await waitForDiagnostics(doc);
       const wrapperDiags = initialDiags.filter((d) =>
-        d.message.includes('no-wrapper-object-types'),
+        diagnosticRuleIdIncludes(d, 'no-wrapper-object-types'),
       );
       assert.ok(
         wrapperDiags.length > 0,
@@ -72,7 +73,9 @@ suite('rslint fixAll - cascade (multi-pass)', function () {
 
       const diags = await waitForDiagnostics(doc);
       assert.ok(
-        diags.some((d) => d.message.includes('no-wrapper-object-types')),
+        diags.some((d) =>
+          diagnosticRuleIdIncludes(d, 'no-wrapper-object-types'),
+        ),
         `Expected no-wrapper-object-types before on-save cascade. Got: ${diags
           .map((d) => d.message)
           .join(' | ')}`,
