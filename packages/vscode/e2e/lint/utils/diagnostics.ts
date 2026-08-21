@@ -4,6 +4,24 @@ import * as vscode from 'vscode';
 
 export const rslintDiagnosticSource = 'rslint';
 
+/**
+ * Rslint's rule id lives in the clickable VS Code diagnostic-code shape.
+ * Issue #27 intentionally strips the old `[rule-id] ` message prefix, so the
+ * ported suites must identify rules here instead of searching the prose.
+ */
+function diagnosticRuleId(diagnostic: vscode.Diagnostic): string | undefined {
+  const code = diagnostic.code;
+  if (typeof code === 'object') return String(code.value);
+  return code === undefined ? undefined : String(code);
+}
+
+export function diagnosticRuleIdIncludes(
+  diagnostic: vscode.Diagnostic,
+  fragment: string,
+): boolean {
+  return diagnosticRuleId(diagnostic)?.includes(fragment) ?? false;
+}
+
 export function getRslintDiagnostics(
   documentOrUri: vscode.TextDocument | vscode.Uri,
 ): vscode.Diagnostic[] {

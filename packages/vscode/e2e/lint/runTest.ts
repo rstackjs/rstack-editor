@@ -285,6 +285,11 @@ async function main(): Promise<void> {
       tests: suiteDir('suite-rule-option-types'),
     },
     {
+      name: 'Self-documenting diagnostics tests',
+      workspace: fixture('hover'),
+      tests: suiteDir('suite-hover'),
+    },
+    {
       name: 'import/no-cycle tests',
       workspace: fixture('import-cycle'),
       tests: suiteDir('suite-import-cycle'),

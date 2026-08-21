@@ -3,6 +3,7 @@
 import * as assert from 'node:assert';
 import path from 'node:path';
 import * as vscode from 'vscode';
+import { diagnosticRuleIdIncludes } from '../utils/diagnostics';
 
 function workspaceFolder(name: string): vscode.WorkspaceFolder {
   const folder = vscode.workspace.workspaceFolders?.find(
@@ -35,7 +36,7 @@ async function waitForSingleRslintDiagnostic(
     const diagnostics = rslintDiagnostics(document);
     if (
       diagnostics.length === 1 &&
-      diagnostics[0].message.includes('no-explicit-any')
+      diagnosticRuleIdIncludes(diagnostics[0], 'no-explicit-any')
     ) {
       // Do not accept a transient single result while a duplicate owner is
       // still publishing its first diagnostics.

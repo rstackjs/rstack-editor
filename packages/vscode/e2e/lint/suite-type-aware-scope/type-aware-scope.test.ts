@@ -3,7 +3,10 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import path from 'node:path';
-import { waitForRslintDiagnostics as waitForDiagnostics } from '../utils/diagnostics';
+import {
+  diagnosticRuleIdIncludes,
+  waitForRslintDiagnostics as waitForDiagnostics,
+} from '../utils/diagnostics';
 import { closeTextEditor } from '../utils/documents';
 
 // Tests that type-aware rules (e.g. require-await) only run on files covered
@@ -31,18 +34,18 @@ suite('rslint type-aware rule scope', function () {
     await vscode.window.showTextDocument(doc);
 
     const diagnostics = await waitForDiagnostics(doc, (diags) =>
-      diags.some((d) => d.message.includes('require-await')),
+      diags.some((d) => diagnosticRuleIdIncludes(d, 'require-await')),
     );
 
     // require-await should fire (type-aware, file IS in tsconfig)
     assert.ok(
-      diagnostics.some((d) => d.message.includes('require-await')),
+      diagnostics.some((d) => diagnosticRuleIdIncludes(d, 'require-await')),
       `Expected require-await for file in tsconfig. Got: ${diagnostics.map((d) => d.message).join(', ')}`,
     );
 
     // no-console should also fire (non-type-aware, always runs)
     assert.ok(
-      diagnostics.some((d) => d.message.includes('no-console')),
+      diagnostics.some((d) => diagnosticRuleIdIncludes(d, 'no-console')),
       'Expected no-console for file in tsconfig',
     );
   });
@@ -57,18 +60,18 @@ suite('rslint type-aware rule scope', function () {
 
     // Wait for no-console (non-type-aware) to appear — proves rslint IS linting the file
     const diagnostics = await waitForDiagnostics(doc, (diags) =>
-      diags.some((d) => d.message.includes('no-console')),
+      diags.some((d) => diagnosticRuleIdIncludes(d, 'no-console')),
     );
 
     // no-console SHOULD fire (non-type-aware, always runs)
     assert.ok(
-      diagnostics.some((d) => d.message.includes('no-console')),
+      diagnostics.some((d) => diagnosticRuleIdIncludes(d, 'no-console')),
       `Expected no-console for file outside tsconfig. Got: ${diagnostics.map((d) => d.message).join(', ')}`,
     );
 
     // require-await should NOT fire (type-aware, file is NOT in configured tsconfig)
     assert.ok(
-      !diagnostics.some((d) => d.message.includes('require-await')),
+      !diagnostics.some((d) => diagnosticRuleIdIncludes(d, 'require-await')),
       'require-await should NOT fire for file outside parserOptions.project tsconfig',
     );
   });
@@ -81,10 +84,10 @@ suite('rslint type-aware rule scope', function () {
     const doc = await vscode.workspace.openTextDocument(filePath);
     const editor = await vscode.window.showTextDocument(doc);
     const initial = await waitForDiagnostics(doc, (diags) =>
-      diags.some((d) => d.message.includes('require-await')),
+      diags.some((d) => diagnosticRuleIdIncludes(d, 'require-await')),
     );
     assert.ok(
-      initial.some((d) => d.message.includes('require-await')),
+      initial.some((d) => diagnosticRuleIdIncludes(d, 'require-await')),
       'Expected require-await before editing the standalone project source',
     );
 
@@ -106,11 +109,11 @@ suite('rslint type-aware rule scope', function () {
     const updated = await waitForDiagnostics(
       doc,
       (diags) =>
-        diags.some((d) => d.message.includes('no-console')) &&
-        !diags.some((d) => d.message.includes('require-await')),
+        diags.some((d) => diagnosticRuleIdIncludes(d, 'no-console')) &&
+        !diags.some((d) => diagnosticRuleIdIncludes(d, 'require-await')),
     );
     assert.ok(
-      !updated.some((d) => d.message.includes('require-await')),
+      !updated.some((d) => diagnosticRuleIdIncludes(d, 'require-await')),
       'Incremental standalone Program retained a stale require-await diagnostic',
     );
 
@@ -118,10 +121,12 @@ suite('rslint type-aware rule scope', function () {
     const reopened = await vscode.workspace.openTextDocument(filePath);
     await vscode.window.showTextDocument(reopened);
     const reopenedDiagnostics = await waitForDiagnostics(reopened, (diags) =>
-      diags.some((d) => d.message.includes('require-await')),
+      diags.some((d) => diagnosticRuleIdIncludes(d, 'require-await')),
     );
     assert.ok(
-      reopenedDiagnostics.some((d) => d.message.includes('require-await')),
+      reopenedDiagnostics.some((d) =>
+        diagnosticRuleIdIncludes(d, 'require-await'),
+      ),
       'Reopened standalone project source did not restore disk diagnostics',
     );
   });
@@ -137,10 +142,12 @@ suite('rslint type-aware rule scope', function () {
     const source = await vscode.workspace.openTextDocument(sourcePath);
     await vscode.window.showTextDocument(source);
     const initial = await waitForDiagnostics(source, (diags) =>
-      diags.some((d) => d.message.includes('no-unsafe-member-access')),
+      diags.some((d) => diagnosticRuleIdIncludes(d, 'no-unsafe-member-access')),
     );
     assert.ok(
-      initial.some((d) => d.message.includes('no-unsafe-member-access')),
+      initial.some((d) =>
+        diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+      ),
       'Expected the dependency any type to produce no-unsafe-member-access',
     );
 
@@ -154,11 +161,15 @@ suite('rslint type-aware rule scope', function () {
       const updated = await waitForDiagnostics(
         source,
         (diags) =>
-          diags.some((d) => d.message.includes('no-console')) &&
-          !diags.some((d) => d.message.includes('no-unsafe-member-access')),
+          diags.some((d) => diagnosticRuleIdIncludes(d, 'no-console')) &&
+          !diags.some((d) =>
+            diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+          ),
       );
       assert.ok(
-        !updated.some((d) => d.message.includes('no-unsafe-member-access')),
+        !updated.some((d) =>
+          diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+        ),
         'External dependency change left stale standalone Program diagnostics',
       );
     } finally {
@@ -166,10 +177,12 @@ suite('rslint type-aware rule scope', function () {
     }
 
     const restored = await waitForDiagnostics(source, (diags) =>
-      diags.some((d) => d.message.includes('no-unsafe-member-access')),
+      diags.some((d) => diagnosticRuleIdIncludes(d, 'no-unsafe-member-access')),
     );
     assert.ok(
-      restored.some((d) => d.message.includes('no-unsafe-member-access')),
+      restored.some((d) =>
+        diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
+      ),
       'Restored dependency did not restore standalone Program diagnostics',
     );
   });

@@ -1,12 +1,16 @@
 // Ported from web-infra-dev/rslint
 // `packages/vscode-extension/__tests__/suite-import-cycle/import-cycle.test.ts`
-// at 760c4135. Assertion semantics are unchanged. The upstream fixture's
-// deprecated rslint.json is an intentional deviation: this extension does not
-// support JSON configs, so it uses an equivalent rslint.config.mjs.
+// at 760c4135. Rule assertions read Diagnostic.code because issue #27 strips
+// the message prefix. The upstream fixture's deprecated rslint.json is an
+// intentional deviation: this extension does not support JSON configs, so it
+// uses an equivalent rslint.config.mjs.
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import path from 'node:path';
-import { waitForRslintDiagnostics } from '../utils/diagnostics';
+import {
+  diagnosticRuleIdIncludes,
+  waitForRslintDiagnostics,
+} from '../utils/diagnostics';
 import { closeTextEditor } from '../utils/documents';
 
 /**
@@ -32,8 +36,8 @@ import { closeTextEditor } from '../utils/documents';
 suite('rslint import/no-cycle over LSP', function () {
   this.timeout(120000);
 
-  const cycleMarker = '[import/no-cycle]';
-  const sentinelMarker = '[no-var]';
+  const cycleRuleId = 'import/no-cycle';
+  const sentinelRuleId = 'no-var';
 
   const brokenC = [
     'export var witnessC = 1;',
@@ -66,11 +70,11 @@ suite('rslint import/no-cycle over LSP', function () {
   function cycleDiagnostics(
     diagnostics: vscode.Diagnostic[],
   ): vscode.Diagnostic[] {
-    return diagnostics.filter((d) => d.message.includes(cycleMarker));
+    return diagnostics.filter((d) => diagnosticRuleIdIncludes(d, cycleRuleId));
   }
 
   function isLintedPass(diagnostics: vscode.Diagnostic[]): boolean {
-    return diagnostics.some((d) => d.message.includes(sentinelMarker));
+    return diagnostics.some((d) => diagnosticRuleIdIncludes(d, sentinelRuleId));
   }
 
   /** Replaces the whole buffer, leaving the document dirty and unsaved. */
