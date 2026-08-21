@@ -68,6 +68,10 @@ export const readPackageVersion = (
  * floor. Verified: 22.17.1 reports `process.features.typescript` false,
  * 22.18.0 reports `strip`. See `shared/nodeResolution.ts` for how candidates
  * are probed.
+ *
+ * `scripts/playgroundNode.mjs` regex-parses this exact declaration (it is a
+ * plain .mjs with no access to TS exports) — keep the single-quoted literal
+ * form if this constant moves or is reformatted.
  */
 export const NODE_RUNTIME_RANGE = '^22.18.0 || >=23.6.0';
 

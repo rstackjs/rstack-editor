@@ -2,6 +2,32 @@
   "version": "2.0.0",
   "tasks": [
     {
+      // Materializes a floor-satisfying Node into .playground/node-bin/ so
+      // launch.json can prepend it to the dev host's PATH. A GUI-launched
+      // VS Code skips the contributor's shell hooks (fnm/nvm on .nvmrc), so
+      // without this the dev host sees the desktop session's node — often
+      // below the extension's runtime floor, and Rslint reports
+      // "version mismatch" instead of linting.
+      "label": "playground node",
+      "type": "shell",
+      "command": "node",
+      "args": ["packages/vscode/scripts/playgroundNode.mjs"],
+      "group": "build",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      }
+    },
+    {
+      // What F5 depends on: materialize the playground Node, then start the
+      // watch build. Kept separate from "extension watch" so a plain rebuild
+      // from the task palette does not run the playground helper.
+      "label": "playground",
+      "dependsOrder": "sequence",
+      "dependsOn": ["playground node", "extension watch"]
+    },
+    {
       // Background watch build the F5 launch depends on. `--env-mode dev`
       // (`watch:local`) so breakpoints in src/ bind inside the dev host.
       "label": "extension watch",
