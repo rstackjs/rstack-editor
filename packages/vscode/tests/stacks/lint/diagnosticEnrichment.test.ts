@@ -42,15 +42,37 @@ describe('enrichRslintDiagnostic', () => {
     }
   });
 
-  it('yields to a server-published code even when the prefix remains', () => {
+  it('yields to an object code with a server-published target', () => {
     const diagnostic = {
       message: '[no-console] Unexpected console statement.',
-      code: 'no-console',
+      code: {
+        value: 'no-console',
+        target: {
+          toString: () => 'https://server.example/rules/no-console',
+        },
+      },
     } as Diagnostic;
     const before = { ...diagnostic };
 
     enrichRslintDiagnostic(diagnostic);
 
     expect(diagnostic).toEqual(before);
+  });
+
+  it('upgrades a primitive code with a Rule docs link and strips the prefix', () => {
+    const diagnostic = {
+      message: '[parsed-rule] Unexpected console statement.',
+      code: 'no-console',
+    } as Diagnostic;
+
+    enrichRslintDiagnostic(diagnostic);
+
+    expect(diagnostic.message).toBe('Unexpected console statement.');
+    expect(diagnostic.code).toMatchObject({ value: 'no-console' });
+    expect(
+      typeof diagnostic.code === 'object'
+        ? diagnostic.code.target.toString()
+        : undefined,
+    ).toBe('https://rslint.rs/rules/eslint/no-console');
   });
 });

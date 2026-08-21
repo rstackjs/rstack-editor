@@ -17,20 +17,20 @@ function ruleDocsUri(ruleId: string): Uri {
 
 /** Enriches the diagnostic shape published by today's Rslint server. */
 export function enrichRslintDiagnostic(diagnostic: Diagnostic): void {
-  // The day the server publishes `code` itself, its answer is authoritative —
-  // this synthesis yields automatically and becomes dead code to delete
-  // (ADR 0004), even if the message keeps the `[rule-id] ` prefix.
-  if (diagnostic.code !== undefined) return;
+  // An object code means the language client converted a server-published
+  // codeDescription into the authoritative value/target shape. This synthesis
+  // then yields automatically and becomes dead code to delete (ADR 0004).
+  if (typeof diagnostic.code === 'object') return;
 
   const match = RULE_PREFIX.exec(diagnostic.message);
   if (!match) return;
 
-  const ruleId = match[1];
+  const code = diagnostic.code ?? match[1];
   // The language client has already converted LSP diagnostics here. VS Code's
   // equivalent of LSP code + codeDescription is the value/target code shape.
   diagnostic.code = {
-    value: ruleId,
-    target: ruleDocsUri(ruleId),
+    value: code,
+    target: ruleDocsUri(String(code)),
   };
   diagnostic.message = diagnostic.message.slice(match[0].length);
 }

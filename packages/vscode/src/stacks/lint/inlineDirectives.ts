@@ -6,6 +6,10 @@ export interface InlineDirectiveRuleToken {
   readonly end: number;
 }
 
+// This intentionally scans raw text, so comment-shaped string, template, or
+// regex literals whose body starts with an Inline directive are false positives.
+// A language-aware scanner is disproportionate for a hover/underline affordance;
+// requiring the directive as the first token keeps the accepted surface tiny.
 const COMMENT_PATTERN = /\/\/[^\r\n]*|\/\*[\s\S]*?\*\//g;
 const DIRECTIVE_PATTERN =
   /^\s*(?:rslint|eslint)-(?:disable-next-line|disable-line|disable|enable)(?=\s|$)/;

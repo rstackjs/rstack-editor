@@ -83,8 +83,8 @@ class RslintController implements StackController {
   // Mirror of the live runtimes, kept here (not on the router) so answering
   // "does this document's server advertise hover?" needs no new surface on the
   // upstream-copied WorkspaceDocumentRouter. Reachability is still gated by
-  // router ownership: a closed runtime's key disappears from the router before
-  // this map is consulted, and `onRuntimeClosed` prunes the entry itself.
+  // router ownership; each runtime removes itself only when it is still the
+  // entry for its key, so an overlapping replacement survives the old close.
   readonly #runtimes = new Map<string, Rslint>();
   #disposed = false;
 
@@ -217,7 +217,6 @@ class RslintController implements StackController {
           this.clearState('failures', document.uri.toString());
         },
         onRuntimeClosed: (resolved) => {
-          this.#runtimes.delete(resolved.key);
           this.clearState('runtimes', resolved.key);
         },
       },
@@ -233,7 +232,7 @@ class RslintController implements StackController {
     const { workspaceFolder, installation } = resolved;
     const folderKey = folderKeyOf(workspaceFolder);
     this.setState(folderKey, 'runtimes', resolved.key, { kind: 'starting' });
-    const runtime = new Rslint({
+    const runtime: Rslint = new Rslint({
       rootKey: resolved.key,
       workspaceFolder,
       installation,
@@ -252,6 +251,11 @@ class RslintController implements StackController {
           resolved.key,
           attributeToCore(state, installation.packageDirectory),
         );
+      },
+      onClosed: () => {
+        if (this.#runtimes.get(resolved.key) === runtime) {
+          this.#runtimes.delete(resolved.key);
+        }
       },
     });
     this.#runtimes.set(resolved.key, runtime);
