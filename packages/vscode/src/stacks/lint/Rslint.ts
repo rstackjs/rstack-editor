@@ -721,6 +721,10 @@ export class Rslint implements Disposable {
     return this.client?.state === State.Running;
   }
 
+  public serverAdvertisesHover(): boolean {
+    return Boolean(this.client?.initializeResult?.capabilities.hoverProvider);
+  }
+
   public async sendDocumentOpen(document: TextDocument): Promise<void> {
     const provider = this.client
       ?.getFeature(DidOpenTextDocumentNotification.method)
