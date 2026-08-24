@@ -595,7 +595,7 @@ export class Project implements vscode.Disposable {
           this.reportMissingDependency(result.message);
           return;
         }
-        status.installed(this.sourceUri.toString());
+        status.installed(this.configDependencyStatusSource);
         this.root = vscode.Uri.file(result.root);
         this.include = result.include;
         this.exclude = result.exclude;
@@ -614,6 +614,16 @@ export class Project implements vscode.Disposable {
       });
   }
 
+  /**
+   * The latch key for this project's config-dependency verdict — its own
+   * namespace for the same reasons as `RstestApi.nodeRuntimeStatusSource`:
+   * a different fact than the core checks sharing the bare source URI, and
+   * one that must die with the project (`dispose` forgets it).
+   */
+  private get configDependencyStatusSource(): string {
+    return `config-deps:${this.sourceUri.toString()}`;
+  }
+
   // The config imports a package that is not installed: the not-installed
   // state (AGENTS.md), one step past a missing `@rstest/core` — some install
   // *above* the project satisfied the shim, so the config itself is what
@@ -629,7 +639,7 @@ export class Project implements vscode.Disposable {
         'rstest',
         relativeTo(this.workspaceFolder, this.sourceUri),
       ),
-      this.sourceUri.toString(),
+      this.configDependencyStatusSource,
     );
     this.onConfigResolved?.();
   }
@@ -699,6 +709,7 @@ export class Project implements vscode.Disposable {
     // its own entries. Bridge *resolution* failures latch under the config
     // directory instead and are reconciled by `syncBridgeProjects`, not here.
     status.forget(this.sourceUri.toString());
+    status.forget(this.configDependencyStatusSource);
   }
   get collection() {
     return this.testItem?.children || this.parentCollection;

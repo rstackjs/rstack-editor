@@ -116,7 +116,9 @@ describe('resolveRstackShim', () => {
     const root = makeTmpDir();
 
     expect(resolveRstackShim(root)).toBeUndefined();
-    expect(logged.join('\n')).toContain('Cannot find the "rstack" package');
+    // The shared not-installed wording, with the bridge's own consequence.
+    expect(logged.join('\n')).toContain('rstack is not installed');
+    expect(logged.join('\n')).toContain('Rstest cannot be driven');
     // The uniform not-installed policy: the same `disabled` shape fmt and
     // lint report, with the restart command as the way out.
     expect(reported).toEqual([

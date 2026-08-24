@@ -49,18 +49,28 @@ describe('StatusHolder failure latches', () => {
     expect(calls).toEqual(['crashed:spawn ENOENT', 'running:']);
   });
 
-  it('lets a new verdict supersede another kind latched by the same root', () => {
-    // One source, one verdict: without this, the higher-ranked stale entry
-    // would keep painting over the newer observation — an outdated rstack
-    // that is then removed must show "not installed", not the upgrade hint.
+  it('lets the package-state verdicts supersede each other per root', () => {
+    // Mismatch and not-installed describe the same fact — the root's package
+    // — and are mutually exclusive: without the supersession the stale
+    // higher-ranked mismatch would keep painting the upgrade hint after the
+    // package is removed.
     const calls = bindRecorder();
     status.versionMismatch('rstack too old', '/a');
     status.notInstalled('rstack is not installed', '/a');
     expect(calls).toEqual(['mismatch:rstack too old', 'report:disabled']);
 
+    status.versionMismatch('rstack too old', '/a');
+    expect(calls.slice(2)).toEqual(['mismatch:rstack too old']);
+  });
+
+  it('lets a package-state observation retire a stale crash', () => {
+    // The crash's only other exit is `workerSpawned`, which cannot happen
+    // while the package is unusable — a fresh resolution verdict restates
+    // the root, so the crash must not outlive it and paint over `disabled`.
+    const calls = bindRecorder();
     status.crashed('spawn ENOENT', '/a');
     status.notInstalled('rstack is not installed', '/a');
-    expect(calls.slice(2)).toEqual(['crashed:spawn ENOENT', 'report:disabled']);
+    expect(calls).toEqual(['crashed:spawn ENOENT', 'report:disabled']);
   });
 
   it('outranks a mismatch with a crash and falls back on recovery', () => {

@@ -5,7 +5,9 @@
  * (`missingDependencyCauseOf`).
  *
  * Every message here replaces Node's own `MODULE_NOT_FOUND` text, which
- * embeds a multi-line require stack and says nothing about what to do. An
+ * embeds a multi-line require stack and says nothing about what to do; the
+ * classifier also touches the filesystem once, to check whether a failing
+ * subpath's package really is absent. An
  * uninstalled core is the normal state of a freshly cloned repository and is
  * resolved for every config file without the user asking, so it is only
  * logged; a `rstestPackagePath` that does not resolve is a setting the user
@@ -13,6 +15,7 @@
  */
 
 import path from 'node:path';
+import { findPackageJsonUncached } from '../../shared/packageResolve';
 
 /**
  * Resolution failed after the actionable error was already logged or shown.
@@ -63,7 +66,10 @@ export function formatConfiguredCoreNotFoundMessage(
 // verdict travels as data (`NormalizedConfigResult`). Only the first line
 // comes back: the rest of a CJS message is the require stack, and the
 // not-installed state is one warn line without one.
-export function missingDependencyCauseOf(error: unknown): string | undefined {
+export function missingDependencyCauseOf(
+  error: unknown,
+  resolveFrom: string,
+): string | undefined {
   if (!(error instanceof Error)) return undefined;
   const { code } = error as NodeJS.ErrnoException;
   if (code !== 'ERR_MODULE_NOT_FOUND' && code !== 'MODULE_NOT_FOUND') {
@@ -78,6 +84,19 @@ export function missingDependencyCauseOf(error: unknown): string | undefined {
     specifier.startsWith('.') ||
     specifier.startsWith('file:') ||
     path.isAbsolute(specifier)
+  ) {
+    return undefined;
+  }
+  // `installed-package/missing-subpath` wears the same bare shape, but the
+  // package itself is there — installing dependencies cannot fix it either,
+  // so a subpath is checked against the physical `node_modules` with the
+  // same uncached walk-up every stack resolves packages with.
+  const packageName = specifier.startsWith('@')
+    ? specifier.split('/').slice(0, 2).join('/')
+    : specifier.split('/', 1)[0];
+  if (
+    packageName !== specifier &&
+    findPackageJsonUncached(packageName, resolveFrom) !== undefined
   ) {
     return undefined;
   }

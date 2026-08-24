@@ -33,8 +33,9 @@ class StatusHolder implements StatusReporter {
   // URI (unique per project, so sibling configs in one directory stay
   // independent), a bridge shim resolution under its config directory, a
   // fact about the extension host itself under `NODE_RUNTIME_STATUS_SOURCE`
-  // below, and a project's configured-runtime advisory under a
-  // `node-runtime:`-prefixed URI; the four namespaces never collide.
+  // below, a project's configured-runtime advisory under a
+  // `node-runtime:`-prefixed URI, and a project's config-dependency verdict
+  // under a `config-deps:`-prefixed URI; the namespaces never collide.
   // A recovery observed under one key must not clear another key's
   // live failure. An entry is cleared by the code path that observes the
   // corresponding recovery (a worker that actually spawned, a version check
@@ -117,27 +118,28 @@ class StatusHolder implements StatusReporter {
     this.#reporter?.running(detail);
   }
 
+  crashed(detail: string, source = ''): void {
+    this.#crashes.set(source, detail);
+    this.#paintOrRun();
+  }
+
   /**
-   * One source, one verdict: a newly observed failure kind replaces whatever
-   * other kind the same source had latched, so a raise site never has to know
-   * the other tables exist. Without this, a lower-ranked observation could
-   * not win — a root whose `rstack` was outdated and is now removed would
-   * keep painting the stale upgrade hint over "not installed".
+   * A package-state observation (`versionMismatch` / `notInstalled`) is a
+   * full restatement of its root: the two are mutually exclusive facts about
+   * the same package, and either also retires a previous crash — the worker
+   * that failed ran against a state that no longer holds, and its only other
+   * exit, `workerSpawned`, cannot happen while the package is unusable.
+   * `crashed` above supersedes nothing: it is a fact about the worker,
+   * arriving while the package state stays whatever it was.
    */
-  #supersede(keep: Map<string, string>, source: string): void {
+  #restatePackageState(keep: Map<string, string>, source: string): void {
     for (const latch of [this.#crashes, this.#mismatches, this.#notInstalled]) {
       if (latch !== keep) latch.delete(source);
     }
   }
 
-  crashed(detail: string, source = ''): void {
-    this.#supersede(this.#crashes, source);
-    this.#crashes.set(source, detail);
-    this.#paintOrRun();
-  }
-
   versionMismatch(detail: string, source = ''): void {
-    this.#supersede(this.#mismatches, source);
+    this.#restatePackageState(this.#mismatches, source);
     this.#mismatches.set(source, detail);
     this.#paintOrRun();
   }
@@ -162,7 +164,7 @@ class StatusHolder implements StatusReporter {
    */
   notInstalled(reason: string, source = ''): void {
     if (this.#notInstalled.get(source) === reason) return;
-    this.#supersede(this.#notInstalled, source);
+    this.#restatePackageState(this.#notInstalled, source);
     this.#notInstalled.set(source, reason);
     this.#paintOrRun();
   }

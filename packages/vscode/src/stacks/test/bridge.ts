@@ -6,7 +6,10 @@ import {
   formatVersionMismatch,
   readPackageVersion,
 } from '../../shared/versionCheck';
-import { formatNotInstalledStatus } from '../../shared/notInstalled';
+import {
+  formatNotInstalledLog,
+  formatNotInstalledStatus,
+} from '../../shared/notInstalled';
 import { logger } from './logger';
 import { status } from './status';
 
@@ -74,13 +77,18 @@ export function resolveRstackShim(
   if (packageJsonPath === undefined) {
     if (!silent) {
       logger.warn(
-        `Cannot find the "rstack" package from ${configDir}. Rstest cannot be driven by "rstack.config.*" until the project dependencies are installed.`,
+        formatNotInstalledLog(
+          'rstack',
+          path.basename(configDir),
+          configDir,
+          'Rstest cannot be driven by "rstack.config.*" until it is installed',
+        ),
       );
     }
     // Latched like the version mismatch below, under the same key, so the
     // status stays until this directory resolves or stops being a candidate.
-    // A stale mismatch from a previously-present install is superseded by
-    // the latch itself (one source, one verdict).
+    // A stale mismatch from a previously-present install is retired by the
+    // latch itself (a package-state observation restates its root).
     status.notInstalled(
       formatNotInstalledStatus('rstest', 'rstack'),
       configDir,
@@ -122,8 +130,9 @@ export function resolveRstackShim(
     packageDirectory,
     version,
   });
-  // At most one of the two latches can be live (one source, one verdict), so
-  // this repaints once, whichever failure the previous pass observed.
+  // At most one of the two latches can be live (a package-state observation
+  // restates its root), so this repaints once, whichever failure the
+  // previous pass observed.
   status.versionOk(configDir);
   status.installed(configDir);
   return { configFilePath, packageDirectory, version };
