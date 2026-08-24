@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import net from 'node:net';
 import path, { dirname } from 'node:path';
 import { type BirpcReturn, createBirpc } from 'birpc';
@@ -643,6 +644,12 @@ export class RstestApi {
     });
   }
 
+  // One wording for the pre-spawn guard and the 'error'-handler fallback it
+  // leaves for the delete-after-check race.
+  private missingCwdMessage(): string {
+    return `worker spawn skipped: project directory ${this.cwd} no longer exists; the project will be re-detected if it comes back`;
+  }
+
   public async createChildProcess(
     testRunReporter = new TestRunReporter(),
     startDebugging?: boolean,
@@ -689,6 +696,18 @@ export class RstestApi {
         'worker spawn aborted: this master was disposed while its Node runtime was being resolved',
       );
     }
+    // A project directory deleted under a live master (branch switch,
+    // `git clean`, a build wiping fixtures) is a stale-project state, not a
+    // runtime the user must fix: detection watches the config file and will
+    // drop or re-add the project. Refusing here, before the spawn, spares
+    // the caller a worker whose every call rejects with an opaque
+    // "[birpc] rpc is closed" — and spares the user Node's misreading of a
+    // missing cwd as "spawn node ENOENT".
+    if (!existsSync(this.cwd)) {
+      const message = this.missingCwdMessage();
+      logger.warn(message);
+      throw new Error(message);
+    }
     const nodeEnv = getConfigValue('nodeEnv', this.workspace);
     const debugNodeEnv = startDebugging
       ? getConfigValue('debugNodeEnv', this.workspace)
@@ -732,9 +751,15 @@ export class RstestApi {
 
     const worker = createBirpc<Worker, TestRunReporter>(testRunReporter, {
       // Target the local process rather than the shared field, which is
-      // reassigned on every spawn; skip once the IPC channel is gone.
+      // reassigned on every spawn; skip once the IPC channel is gone. The
+      // callback matters: without one, Node surfaces a failed write — a
+      // message losing the race against the worker's death — as a process
+      // 'error' event instead.
       post: (data) => {
-        if (rstestProcess.connected) rstestProcess.send(data);
+        if (rstestProcess.connected)
+          rstestProcess.send(data, (error) => {
+            if (error) logger.debug('IPC send to worker failed', error);
+          });
       },
       on: (fn) => rstestProcess.on('message', fn),
       bind: 'functions',
@@ -754,23 +779,38 @@ export class RstestApi {
       configFilePath: this.configFilePath,
     });
 
+    let spawned = false;
     rstestProcess.on('spawn', () => {
+      spawned = true;
       status.workerSpawned(this.statusSource);
     });
 
     rstestProcess.on('error', (error) => {
-      logger.error('Worker process error', error);
-      // The status-aggregation adaptation: a worker that never came up is the
-      // `crashed` state of the shared status bar. The notification is kept because
-      // a failed spawn is almost always a wrong `nodeExecutable` the user has
-      // to fix, and the status bar alone is easy to miss mid-run.
-      status.crashed(
-        `worker process failed: ${error.message}`,
-        this.statusSource,
-      );
-      vscode.window.showErrorMessage(
-        `Rstest worker process failed: ${error.message}`,
-      );
+      if (spawned) {
+        // Post-spawn errors (a failed kill(), an IPC write losing the race
+        // against the worker's death) are teardown noise with nothing for
+        // the user to fix; the 'exit' handler already reports an exit nobody
+        // asked for. Same shape as `LanguageServerProcessOwner`'s handler.
+        logger.debug('Worker process error after spawn', error);
+      } else if (!existsSync(this.cwd)) {
+        // The cwd was deleted between the pre-spawn guard and the spawn —
+        // Node blames the executable ("spawn node ENOENT") when it is the
+        // cwd that is gone. Same stale-project state, same quiet report.
+        logger.warn(this.missingCwdMessage());
+      } else {
+        logger.error('Worker process error', error);
+        // The status-aggregation adaptation: a worker that never came up is the
+        // `crashed` state of the shared status bar. The notification is kept because
+        // a failed spawn is almost always a wrong `nodeExecutable` the user has
+        // to fix, and the status bar alone is easy to miss mid-run.
+        status.crashed(
+          `worker process failed: ${error.message}`,
+          this.statusSource,
+        );
+        vscode.window.showErrorMessage(
+          `Rstest worker process failed: ${error.message}`,
+        );
+      }
       // Reject any in-flight birpc calls instead of letting them hang; $close
       // runs the `off` handler, which removes the process from the Set.
       if (!worker.$closed) worker.$close();
