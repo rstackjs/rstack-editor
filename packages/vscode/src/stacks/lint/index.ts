@@ -6,6 +6,7 @@ import type {
   StackState,
 } from '../../types';
 import { NODE_EXECUTABLE_SETTING } from '../../shared/nodeResolution';
+import { formatNotInstalledLog } from '../../shared/notInstalled';
 import { CoreResolver, type ResolvedCoreRuntime } from './CoreResolver';
 import { Logger } from './logger';
 import { Rslint } from './Rslint';
@@ -17,6 +18,7 @@ import {
   attributeToCore,
   foldRslintFolderState,
   statusForRslintStartFailure,
+  missingPackageOf,
 } from './status';
 import { WorkspaceDocumentRouter } from './WorkspaceDocumentRouter';
 
@@ -198,7 +200,35 @@ class RslintController implements StackController {
       logger,
       {
         folderMode: (folder) => this.folderMode(folder),
-        onDocumentFailure: ({ document, workspaceFolder, error, resolved }) => {
+        onDocumentFailure: ({
+          document,
+          workspaceFolder,
+          error,
+          resolved,
+          keeping,
+        }) => {
+          // The hook owns the report. The Output-channel line: a folder whose
+          // `rstack` or `@rslint/core` is not installed is the not-installed
+          // state (AGENTS.md) — one warn line, no stack; anything else is
+          // upstream's error. A document with a last-good runtime still
+          // lints, so its consequence says what it keeps, not "will not".
+          const missing = missingPackageOf(error);
+          if (missing !== undefined) {
+            logger.warn(
+              formatNotInstalledLog(
+                missing,
+                workspaceFolder.name,
+                workspaceFolder.uri.fsPath,
+                `${document.uri} ${keeping ? `keeps ${keeping}` : 'will not lint'} until it is installed`,
+              ),
+            );
+          } else {
+            const suffix = keeping ? ` (keeping ${keeping} active)` : '';
+            logger.error(
+              `Could not select an Rslint core for ${document.uri}${suffix}`,
+              error,
+            );
+          }
           // Last-good semantics: the document keeps whatever runtime it had.
           // The failure is still the folder's worst news, so it is folded in
           // beside the runtimes rather than shown as a toast. A start failure

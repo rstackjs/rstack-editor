@@ -4,30 +4,58 @@ import {
   aggregateFolderStates,
   attributeToCore,
   foldRslintFolderState,
+  missingPackageOf,
   RslintVersionMismatchError,
   runningRslintStatus,
   statusForRslintStartFailure,
 } from '../../../src/stacks/lint/status';
 
 describe('Rslint status classification', () => {
-  it('disables a bridged folder whose rstack package is missing', () => {
+  it('disables a folder whose package is not installed', () => {
+    // Both not-installed shapes take the uniform disabled state (AGENTS.md):
+    // a bridged folder without rstack, a fresh clone without the core.
     expect(
       statusForRslintStartFailure(
         new RslintResolutionError('missing-rstack', 'missing rstack'),
       ),
     ).toMatchObject({ kind: 'disabled' });
-  });
-
-  it('classifies missing core and worker failures as crashes', () => {
     expect(
       statusForRslintStartFailure(
         new RslintResolutionError('missing-core', 'missing core'),
       ),
-    ).toEqual({ kind: 'crashed', detail: 'missing core' });
+    ).toMatchObject({ kind: 'disabled' });
+  });
+
+  it('names the package a not-installed failure is missing', () => {
+    // The same boundary the status and the warn line use: a missing package
+    // is the disabled state; a present-but-broken install is an error.
+    expect(
+      missingPackageOf(
+        new RslintResolutionError('missing-rstack', 'missing rstack'),
+      ),
+    ).toBe('rstack');
+    expect(
+      missingPackageOf(
+        new RslintResolutionError('missing-core', 'missing core'),
+      ),
+    ).toBe('@rslint/core');
+    expect(
+      missingPackageOf(new RslintResolutionError('missing-shim', 'no shim')),
+    ).toBe(undefined);
+    expect(missingPackageOf(new Error('missing rstack'))).toBe(undefined);
+  });
+
+  it('classifies worker and misconfiguration failures as crashes', () => {
     expect(statusForRslintStartFailure(new Error('worker stopped'))).toEqual({
       kind: 'crashed',
       detail: 'worker stopped',
     });
+    // A wrong `corePath` setting is fixed in the setting, not by an install.
+    expect(
+      statusForRslintStartFailure(
+        new RslintResolutionError('invalid-package', 'not a core'),
+      ),
+    ).toEqual({ kind: 'crashed', detail: 'not a core' });
   });
 
   it('classifies package and automatic Node floors as version mismatches', () => {
@@ -129,9 +157,9 @@ describe('foldRslintFolderState', () => {
   });
 
   it('lets a bridged folder that lost rstack outrank its live runtime', () => {
-    // Inside a folder `disabled` only ever means "missing rstack" — a
-    // failure the user must see, not the shell's kill switch — so, unlike the
-    // cross-folder rank, it beats a healthy runtime.
+    // Inside a folder `disabled` only ever means "a package is not
+    // installed" — a failure the user must see, not the shell's kill switch —
+    // so, unlike the cross-folder rank, it beats a healthy runtime.
     expect(
       foldRslintFolderState([
         { kind: 'running' },

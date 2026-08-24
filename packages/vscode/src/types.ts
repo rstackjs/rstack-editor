@@ -26,6 +26,19 @@ export const stackCommand = (
   verb: 'restart' | 'output.focus',
 ): string => `rstack.${stack}.${verb}`;
 
+/** The `category` every contributed command shares in package.json. */
+export const COMMAND_CATEGORY = 'Rstack';
+
+/**
+ * The title side of `stackCommand`, spelled once for the same reason: a
+ * status that tells the user which command to run has to say what the
+ * Command Palette shows (`<category>: <title>`), and a status naming a
+ * command that was renamed is not a type error. `tests/extension.test.ts`
+ * checks the manifest against this.
+ */
+export const stackCommandTitle = (stack: StackId, verb: 'restart'): string =>
+  `${verb === 'restart' ? 'Restart' : verb} ${STACK_LABELS[stack]}`;
+
 /**
  * Per-stack state machine surfaced by the status bar hover.
  *

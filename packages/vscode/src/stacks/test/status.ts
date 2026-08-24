@@ -33,8 +33,9 @@ class StatusHolder implements StatusReporter {
   // URI (unique per project, so sibling configs in one directory stay
   // independent), a bridge shim resolution under its config directory, a
   // fact about the extension host itself under `NODE_RUNTIME_STATUS_SOURCE`
-  // below, and a project's configured-runtime advisory under a
-  // `node-runtime:`-prefixed URI; the four namespaces never collide.
+  // below, a project's configured-runtime advisory under a
+  // `node-runtime:`-prefixed URI, and a project's config-dependency verdict
+  // under a `config-deps:`-prefixed URI; the namespaces never collide.
   // A recovery observed under one key must not clear another key's
   // live failure. An entry is cleared by the code path that observes the
   // corresponding recovery (a worker that actually spawned, a version check
@@ -44,6 +45,13 @@ class StatusHolder implements StatusReporter {
   // stack, which is exactly the lifetime of the resolution it reports on.
   #crashes = new Map<string, string>();
   #mismatches = new Map<string, string>();
+  // A root whose dependencies are not installed — `@rstest/core` missing, the
+  // bridge's `rstack` missing, or a config importing a package that is not
+  // there. The uniform not-installed policy (AGENTS.md): a `disabled` status
+  // with the way out in its reason, as fmt and lint report it, never a crash
+  // and never a notification. Cleared by the resolution that succeeds under
+  // the same key (`installed`) or by `forget`.
+  #notInstalled = new Map<string, string>();
   #lastRunningDetail: string | undefined;
 
   get stack() {
@@ -54,6 +62,7 @@ class StatusHolder implements StatusReporter {
     this.#reporter = reporter;
     this.#crashes.clear();
     this.#mismatches.clear();
+    this.#notInstalled.clear();
     this.#lastRunningDetail = undefined;
   }
 
@@ -62,13 +71,18 @@ class StatusHolder implements StatusReporter {
   }
 
   get #latched(): boolean {
-    return this.#crashes.size > 0 || this.#mismatches.size > 0;
+    return (
+      this.#crashes.size > 0 ||
+      this.#mismatches.size > 0 ||
+      this.#notInstalled.size > 0
+    );
   }
 
   /**
-   * Worst live state first: a crash outranks a version mismatch. Within one
-   * severity the oldest unrecovered entry wins, keeping the display stable
-   * while other roots come and go.
+   * Worst live state first: a crash outranks a version mismatch, which
+   * outranks a missing install — the same rank the fmt and lint folds use.
+   * Within one severity the oldest unrecovered entry wins, keeping the
+   * display stable while other roots come and go.
    */
   #paintOrRun(): void {
     const [crash] = this.#crashes.values();
@@ -79,6 +93,11 @@ class StatusHolder implements StatusReporter {
     const [mismatch] = this.#mismatches.values();
     if (mismatch !== undefined) {
       this.#reporter?.versionMismatch(mismatch);
+      return;
+    }
+    const [notInstalled] = this.#notInstalled.values();
+    if (notInstalled !== undefined) {
+      this.#reporter?.report({ kind: 'disabled', reason: notInstalled });
       return;
     }
     this.#reporter?.running(this.#lastRunningDetail);
@@ -104,7 +123,23 @@ class StatusHolder implements StatusReporter {
     this.#paintOrRun();
   }
 
+  /**
+   * A package-state observation (`versionMismatch` / `notInstalled`) is a
+   * full restatement of its root: the two are mutually exclusive facts about
+   * the same package, and either also retires a previous crash — the worker
+   * that failed ran against a state that no longer holds, and its only other
+   * exit, `workerSpawned`, cannot happen while the package is unusable.
+   * `crashed` above supersedes nothing: it is a fact about the worker,
+   * arriving while the package state stays whatever it was.
+   */
+  #restatePackageState(keep: Map<string, string>, source: string): void {
+    for (const latch of [this.#crashes, this.#mismatches, this.#notInstalled]) {
+      if (latch !== keep) latch.delete(source);
+    }
+  }
+
   versionMismatch(detail: string, source = ''): void {
+    this.#restatePackageState(this.#mismatches, source);
     this.#mismatches.set(source, detail);
     this.#paintOrRun();
   }
@@ -122,6 +157,25 @@ class StatusHolder implements StatusReporter {
   }
 
   /**
+   * A root's dependencies are not installed: `disabled`, with the way out.
+   * Unlike the crash and mismatch latches this one is re-raised on every
+   * refresh pass and worker spawn with the same words, so an unchanged entry
+   * is not repainted.
+   */
+  notInstalled(reason: string, source = ''): void {
+    if (this.#notInstalled.get(source) === reason) return;
+    this.#restatePackageState(this.#notInstalled, source);
+    this.#notInstalled.set(source, reason);
+    this.#paintOrRun();
+  }
+
+  /** A resolution under that root succeeded: its missing install is over. */
+  installed(source = ''): void {
+    if (!this.#notInstalled.delete(source)) return;
+    this.#paintOrRun();
+  }
+
+  /**
    * A resolution root went away (its config file or workspace folder was
    * removed) without recovering: its failures must not outlive it and keep
    * suppressing the surviving roots' status.
@@ -129,7 +183,8 @@ class StatusHolder implements StatusReporter {
   forget(source: string): void {
     const hadCrash = this.#crashes.delete(source);
     const hadMismatch = this.#mismatches.delete(source);
-    if (hadCrash || hadMismatch) this.#paintOrRun();
+    const hadNotInstalled = this.#notInstalled.delete(source);
+    if (hadCrash || hadMismatch || hadNotInstalled) this.#paintOrRun();
   }
 }
 

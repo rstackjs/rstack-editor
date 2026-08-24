@@ -1,7 +1,8 @@
 import { pathToFileURL } from 'node:url';
 import { createBirpc } from 'birpc';
 import type { TestRunReporter } from '../testRunReporter';
-import type { WorkerInitOptions } from '../types';
+import { missingDependencyCauseOf } from '../coreResolution';
+import type { NormalizedConfigResult, WorkerInitOptions } from '../types';
 import { logger } from './logger';
 import { CoverageReporter, ProgressLogger, ProgressReporter } from './reporter';
 
@@ -56,23 +57,45 @@ export class Worker {
     return { rstest, projects };
   }
 
-  public async getNormalizedConfig(options: WorkerInitOptions) {
-    const { rstest, projects } = await this.init(options);
-    return {
-      root: rstest.context.normalizedConfig.root,
-      include: rstest.context.normalizedConfig.include,
-      exclude: rstest.context.normalizedConfig.exclude.patterns,
-      // Sub-projects this config aggregates via `projects`. Empty for a leaf
-      // config. The extension uses these to avoid registering a child config
-      // as its own top-level project when a parent already covers it
-      // (otherwise the same test files show up twice). A file-based child is
-      // identified by its config file; inline children only have a root.
-      // `null` (not `undefined`) so the fields survive the IPC JSON round-trip.
-      childProjects: projects.map((project) => ({
-        configFilePath: project.configFilePath ?? null,
-        root: project.config.root ?? null,
-      })),
-    };
+  public async getNormalizedConfig(
+    options: WorkerInitOptions,
+  ): Promise<NormalizedConfigResult> {
+    // The core loads outside the classified region: a broken `@rstest/core`
+    // install failing to import is the real error to report, not "the config
+    // imports an uninstalled package". Once this import succeeds, `init()`'s
+    // own import of the same path is served from the module cache.
+    await import(normalizeImportPath(options.rstestPath));
+    try {
+      const { rstest, projects } = await this.init(options);
+      return {
+        ok: true,
+        root: rstest.context.normalizedConfig.root,
+        include: rstest.context.normalizedConfig.include,
+        exclude: rstest.context.normalizedConfig.exclude.patterns,
+        // Sub-projects this config aggregates via `projects`. Empty for a
+        // leaf config. The extension uses these to avoid registering a child
+        // config as its own top-level project when a parent already covers
+        // it (otherwise the same test files show up twice). A file-based
+        // child is identified by its config file; inline children only have
+        // a root. `null` (not `undefined`) so the fields survive the IPC
+        // JSON round-trip.
+        childProjects: projects.map((project) => ({
+          configFilePath: project.configFilePath ?? null,
+          root: project.config.root ?? null,
+        })),
+      };
+    } catch (error) {
+      // Classified here and not in the master: `code` does not survive the
+      // IPC round-trip. Only this unprompted, per-config evaluation gets the
+      // treatment — a run or list the user asked for reports its failure.
+      // The worker's spawn cwd is the project root (adaptation #5), which is
+      // where the config's dependencies are installed.
+      const cause = missingDependencyCauseOf(error, process.cwd());
+      if (cause !== undefined) {
+        return { ok: false, reason: 'missing-dependency', message: cause };
+      }
+      throw error;
+    }
   }
 
   public async runTest(data: WorkerInitOptions) {
