@@ -12,6 +12,10 @@ import {
 import { RSTACK_CONFIG_GLOB } from '../../detection';
 import { getConfiguredNodeExecutable } from '../../shared/nodeExecutableSetting';
 import {
+  formatNotInstalledLog,
+  formatNotInstalledStatus,
+} from '../../shared/notInstalled';
+import {
   configuredNodeBelowFloor,
   NODE_EXECUTABLE_SETTING,
   NodePreflightError,
@@ -299,12 +303,9 @@ class FmtFolderRuntime {
       // install that changes no lockfile (a fresh clone whose lockfile is
       // already current) fires no file event, so nothing rebuilds this
       // runtime — the status message is where the way out has to live.
-      this.setState(
-        'disabled',
-        'rstack is not installed (node_modules missing) — install it, then run "Rstack: Restart rs fmt" if this status stays',
-      );
+      this.setState('disabled', formatNotInstalledStatus('fmt', 'rstack'));
       context.output.warn(
-        `rstack is not installed in ${this.folder.name} (node_modules missing); searched from ${folderRoot}`,
+        formatNotInstalledLog('rstack', this.folder.name, folderRoot),
       );
       return;
     }

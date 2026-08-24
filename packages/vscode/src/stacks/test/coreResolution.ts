@@ -40,12 +40,31 @@ export function isModuleNotFoundError(
   );
 }
 
-export function formatCoreNotFoundMessage(searchedFrom: string): string {
-  return `Cannot find "@rstest/core" from ${searchedFrom}. Install the project dependencies, then refresh the Test Explorer. If Rstest is installed elsewhere, set "rstack.rstest.rstestPackagePath" to its package.json.`;
-}
-
 export function formatConfiguredCoreNotFoundMessage(
   configuredPackagePath: string,
 ): string {
   return `Cannot find "@rstest/core" at the configured "rstack.rstest.rstestPackagePath": ${configuredPackagePath}. Update the setting to point at an installed "@rstest/core" package.json.`;
+}
+
+// Whether a config evaluation failed because something it imports is not
+// installed. Read from the error's `code` — Node's own classification, set by
+// both loaders (`ERR_MODULE_NOT_FOUND` for ESM, `MODULE_NOT_FOUND` for CJS) —
+// never from the message text. Any other failure (a syntax error in the
+// config, a thrown plugin) is a real error. The check has to run in the
+// worker, where the error is thrown: the IPC channel back to the extension
+// host (`serialization: 'advanced'`) keeps an Error's message and stack but
+// drops its `code`, so the classification is carried as data instead
+// (`NormalizedConfigResult`).
+export function isMissingDependencyError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const { code } = error as NodeJS.ErrnoException;
+  return code === 'ERR_MODULE_NOT_FOUND' || code === 'MODULE_NOT_FOUND';
+}
+
+/** `cause` is the loader's own text, which names the specifier and the importer. */
+export function formatConfigDependencyMissingMessage(
+  configFilePath: string,
+  cause: string,
+): string {
+  return `Cannot load ${configFilePath}: ${cause}. Install the project dependencies to enable Rstest for this config.`;
 }

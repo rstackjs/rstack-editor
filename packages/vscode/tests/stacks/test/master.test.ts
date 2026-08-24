@@ -12,6 +12,7 @@ import {
 } from '../../../src/shared/nodeResolution';
 import { status } from '../../../src/stacks/test/status';
 import type { StatusReporter } from '../../../src/types';
+import { createStatusRecorder } from './statusRecorder';
 
 // The Rstest runner injects its own `@rstest/core` into every resolution path so
 // that test files can import it, which makes "the project has no @rstest/core"
@@ -59,13 +60,14 @@ rs.mock('../../../src/stacks/test/nodeRequire', () => {
 // output channel, and the terminal a "Run in Terminal" would open.
 const shownMessages: string[] = [];
 const loggedErrors: string[] = [];
+const loggedWarnings: string[] = [];
 const createdTerminals: string[] = [];
 const settings: Record<string, unknown> = {};
 
 const channel = {
   debug: () => {},
   info: () => {},
-  warn: () => {},
+  warn: (message: string) => loggedWarnings.push(message),
   error: (message: string) => loggedErrors.push(message),
   show: () => {},
   dispose: () => {},
@@ -223,15 +225,33 @@ describe('RstestApi with a missing @rstest/core', () => {
     for (const key of Object.keys(settings)) delete settings[key];
   });
 
-  it('should log an actionable message instead of notifying, while discovering projects', async () => {
-    await expect(createApi().getNormalizedConfig()).rejects.toThrow(
-      'Failed to resolve rstest path',
-    );
+  it('should warn with the way out instead of notifying, while discovering projects', async () => {
+    // The uniform not-installed policy: a `disabled` status with the way
+    // out plus one warn line, never a crash and never a notification.
+    loggedWarnings.length = 0;
+    const { reporter, reported } = createStatusRecorder();
+    status.bind(reporter);
+    try {
+      await expect(createApi().getNormalizedConfig()).rejects.toThrow(
+        'Failed to resolve rstest path',
+      );
+    } finally {
+      status.unbind();
+    }
     expect(shownMessages).toEqual([]);
-    const logged = loggedErrors.join('\n');
-    expect(logged).toContain(`Cannot find "@rstest/core" from ${noCoreDir}`);
-    expect(logged).toContain('Install the project dependencies');
+    expect(loggedErrors).toEqual([]);
+    const logged = loggedWarnings.join('\n');
+    expect(logged).toContain('@rstest/core is not installed');
+    expect(logged).toContain(`searched from ${noCoreDir}`);
+    expect(logged).toContain('rstestPackagePath');
     expect(logged).not.toContain('Require stack');
+    expect(reported).toEqual([
+      {
+        kind: 'disabled',
+        reason:
+          '@rstest/core is not installed (node_modules missing) — install it, then run "Rstack: Restart Rstest" if this status stays',
+      },
+    ]);
   });
 
   it('should stay silent while listing tests', async () => {

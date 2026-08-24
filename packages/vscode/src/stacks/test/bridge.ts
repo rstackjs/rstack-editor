@@ -6,6 +6,7 @@ import {
   formatVersionMismatch,
   readPackageVersion,
 } from '../../shared/versionCheck';
+import { formatNotInstalledStatus } from '../../shared/notInstalled';
 import { logger } from './logger';
 import { status } from './status';
 
@@ -76,6 +77,12 @@ export function resolveRstackShim(
         `Cannot find the "rstack" package from ${configDir}. Rstest cannot be driven by "rstack.config.*" until the project dependencies are installed.`,
       );
     }
+    // Latched like the version mismatch below, under the same key, so the
+    // status stays until this directory resolves or stops being a candidate.
+    status.notInstalled(
+      formatNotInstalledStatus('rstest', 'rstack'),
+      configDir,
+    );
     return undefined;
   }
 
@@ -110,6 +117,7 @@ export function resolveRstackShim(
     packageDirectory,
     version,
   });
+  status.installed(configDir);
   status.versionOk(configDir);
   return { configFilePath, packageDirectory, version };
 }

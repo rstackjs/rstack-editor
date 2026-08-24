@@ -3,8 +3,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from '@rstest/core';
 import {
+  formatConfigDependencyMissingMessage,
   formatConfiguredCoreNotFoundMessage,
-  formatCoreNotFoundMessage,
+  isMissingDependencyError,
   isModuleNotFoundError,
 } from '../../../src/stacks/test/coreResolution';
 
@@ -62,8 +63,57 @@ describe('core-not-found messages', () => {
     );
     expect(message).toContain('/repo/vendor/core/package.json');
     expect(message).not.toContain('Install the project dependencies');
-    expect(formatCoreNotFoundMessage('/repo/app')).toContain(
-      'Install the project dependencies',
+  });
+});
+
+describe('isMissingDependencyError', () => {
+  // Same reasoning as `resolveError`: the predicate reads a code Node owns,
+  // so the errors come from Node's own loaders.
+  const importError = async (specifier: string): Promise<unknown> => {
+    try {
+      await import(specifier);
+    } catch (e) {
+      return e;
+    }
+    throw new Error(`expected "${specifier}" not to import`);
+  };
+
+  it('should detect a package an ESM config failed to import', async () => {
+    expect(
+      isMissingDependencyError(
+        await importError('@rstest/definitely-not-installed'),
+      ),
+    ).toBe(true);
+  });
+
+  it('should detect a package a CJS config failed to require', () => {
+    expect(
+      isMissingDependencyError(
+        resolveError('@rstest/definitely-not-installed', __dirname),
+      ),
+    ).toBe(true);
+  });
+
+  it('should leave every other failure to the full error report', () => {
+    expect(isMissingDependencyError(new SyntaxError('Unexpected token'))).toBe(
+      false,
     );
+    expect(isMissingDependencyError(new Error("Cannot find package 'x'"))).toBe(
+      false,
+    );
+    expect(isMissingDependencyError("Cannot find package 'x'")).toBe(false);
+    expect(isMissingDependencyError(undefined)).toBe(false);
+  });
+});
+
+describe('formatConfigDependencyMissingMessage', () => {
+  it("should name the config, the loader's own words and the way out", () => {
+    const message = formatConfigDependencyMissingMessage(
+      '/repo/templates/app/rstack.config.ts',
+      "Cannot find package '@rsbuild/plugin-react' imported from /repo/templates/app/rstack.config.ts",
+    );
+    expect(message).toContain('/repo/templates/app/rstack.config.ts');
+    expect(message).toContain("Cannot find package '@rsbuild/plugin-react'");
+    expect(message).toContain('Install the project dependencies');
   });
 });

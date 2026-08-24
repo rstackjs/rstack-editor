@@ -18,8 +18,11 @@ import {
 } from '../../shared/nodeExecutableSetting';
 import { CONFIG_SECTION, getConfigValue } from './config';
 import {
+  formatNotInstalledLog,
+  formatNotInstalledStatus,
+} from '../../shared/notInstalled';
+import {
   formatConfiguredCoreNotFoundMessage,
-  formatCoreNotFoundMessage,
   isModuleNotFoundError,
   ReportedRstestResolutionError,
 } from './coreResolution';
@@ -39,6 +42,15 @@ import { runInTerminal as sendToTerminal, shellQuote } from './terminal';
 import { TestRunReporter } from './testRunReporter';
 import { toErrorMessage } from './utils';
 import type { Worker } from './worker';
+
+// Both arguments are literals, so the status is one string for the master's
+// lifetime; the log's consequence is the one recovery the shared line cannot
+// know about — the setting that points Rstest at a core installed elsewhere.
+const CORE_NOT_INSTALLED_STATUS = formatNotInstalledStatus(
+  'rstest',
+  '@rstest/core',
+);
+const CORE_NOT_INSTALLED_CONSEQUENCE = `install the project dependencies, or set "${CONFIG_SECTION}.rstestPackagePath" to an installed @rstest/core package.json`;
 
 export const runningWorkers = new Set<BirpcReturn<Worker, TestRunReporter>>();
 
@@ -313,9 +325,24 @@ export class RstestApi {
           formatConfiguredCoreNotFoundMessage(configuredPackagePath),
         );
       }
-      logger.error(formatCoreNotFoundMessage(fromDir));
+      this.reportCoreNotInstalled(fromDir);
       return undefined;
     }
+  }
+
+  // The not-installed policy (AGENTS.md): a `disabled` status naming the way
+  // out plus one warn line — the normal state of a repository whose
+  // dependencies are not installed yet, never a notification.
+  private reportCoreNotInstalled(searchedFrom: string): void {
+    logger.warn(
+      formatNotInstalledLog(
+        '@rstest/core',
+        this.workspace.name,
+        searchedFrom,
+        CORE_NOT_INSTALLED_CONSEQUENCE,
+      ),
+    );
+    status.notInstalled(CORE_NOT_INSTALLED_STATUS, this.statusSource);
   }
 
   // Returns '' when resolution failed. Every such branch has already reported
@@ -356,9 +383,7 @@ export class RstestApi {
           this.rstestResolutionDir,
         );
         if (!found) {
-          // The normal state of a repository whose dependencies are not
-          // installed yet: output channel only, never a notification.
-          logger.error(formatCoreNotFoundMessage(this.rstestResolutionDir));
+          this.reportCoreNotInstalled(this.rstestResolutionDir);
           return '';
         }
         corePackageJsonPath = found;
@@ -384,6 +409,8 @@ export class RstestApi {
       // and a mismatch re-latched now — for a root that may never come back —
       // would have nothing left to clear it.
       if (!this.disposed) {
+        // The core resolved: this root's missing install, if any, is over.
+        status.installed(this.statusSource);
         if (
           !reportVersionCheck(
             status,
@@ -423,7 +450,7 @@ export class RstestApi {
         this.rstestResolutionDir,
       );
       if (!pkgJsonPath) {
-        logger.error(formatCoreNotFoundMessage(this.rstestResolutionDir));
+        this.reportCoreNotInstalled(this.rstestResolutionDir);
       }
     }
     if (!pkgJsonPath) return undefined;
@@ -439,12 +466,12 @@ export class RstestApi {
 
   public async getNormalizedConfig() {
     const worker = await this.createChildProcess();
-    const config = await worker.getNormalizedConfig({
+    const result = await worker.getNormalizedConfig({
       rstestPath: this.resolveRstestPath(),
       configFilePath: this.configFilePath,
     });
     worker.$close();
-    return config;
+    return result;
   }
 
   public async listTests(include?: string[]) {

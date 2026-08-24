@@ -6,6 +6,7 @@ import type {
   StackState,
 } from '../../types';
 import { NODE_EXECUTABLE_SETTING } from '../../shared/nodeResolution';
+import { formatNotInstalledLog } from '../../shared/notInstalled';
 import { CoreResolver, type ResolvedCoreRuntime } from './CoreResolver';
 import { Logger } from './logger';
 import { Rslint } from './Rslint';
@@ -17,6 +18,7 @@ import {
   attributeToCore,
   foldRslintFolderState,
   statusForRslintStartFailure,
+  isMissingRstackFailure,
 } from './status';
 import { WorkspaceDocumentRouter } from './WorkspaceDocumentRouter';
 
@@ -198,7 +200,32 @@ class RslintController implements StackController {
       logger,
       {
         folderMode: (folder) => this.folderMode(folder),
-        onDocumentFailure: ({ document, workspaceFolder, error, resolved }) => {
+        onDocumentFailure: ({
+          document,
+          workspaceFolder,
+          error,
+          resolved,
+          keeping,
+        }) => {
+          // The hook owns the report. The Output-channel line: a folder whose
+          // `rstack` is not installed is the not-installed state (AGENTS.md)
+          // — one warn line, no stack; anything else is upstream's error.
+          const suffix = keeping ? ` (keeping ${keeping} active)` : '';
+          if (isMissingRstackFailure(error)) {
+            logger.warn(
+              formatNotInstalledLog(
+                'rstack',
+                workspaceFolder.name,
+                workspaceFolder.uri.fsPath,
+                `${document.uri} will not lint until it is${suffix}`,
+              ),
+            );
+          } else {
+            logger.error(
+              `Could not select an Rslint core for ${document.uri}${suffix}`,
+              error,
+            );
+          }
           // Last-good semantics: the document keeps whatever runtime it had.
           // The failure is still the folder's worst news, so it is folded in
           // beside the runtimes rather than shown as a toast. A start failure

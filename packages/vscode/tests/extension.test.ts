@@ -8,6 +8,12 @@
  */
 import { afterEach, beforeEach, describe, expect, it, rs } from '@rstest/core';
 import type vscode from 'vscode';
+import {
+  COMMAND_CATEGORY,
+  STACK_IDS,
+  stackCommand,
+  stackCommandTitle,
+} from '../src/types';
 
 interface FakeController {
   readonly restartOnSettings?: readonly string[];
@@ -448,7 +454,7 @@ describe('the shell restart command', () => {
     // adds back by symmetry.
     const manifest = require('../package.json') as {
       contributes: {
-        commands: Array<{ command: string }>;
+        commands: Array<{ command: string; title: string; category?: string }>;
         menus: { commandPalette: Array<{ command: string; when: string }> };
       };
     };
@@ -461,13 +467,24 @@ describe('the shell restart command', () => {
 
     // The per-stack ones are the opposite: they only make sense for a stack
     // that is up, so each is gated on its own context key.
-    for (const stack of ['rslint', 'rstest', 'fmt']) {
-      expect(harness.commands.has(`rstack.${stack}.restart`)).toBe(true);
+    for (const stack of STACK_IDS) {
+      const command = stackCommand(stack, 'restart');
+      expect(harness.commands.has(command)).toBe(true);
       expect(
         manifest.contributes.menus.commandPalette.find(
-          (entry) => entry.command === `rstack.${stack}.restart`,
+          (entry) => entry.command === command,
         )?.when,
       ).toBe(`rstack.${stack}.active`);
+      // The not-installed statuses tell the user to run this command by its
+      // palette name (`shared/notInstalled.ts`); the manifest is the truth.
+      expect(
+        manifest.contributes.commands.find(
+          (entry) => entry.command === command,
+        ),
+      ).toMatchObject({
+        title: stackCommandTitle(stack, 'restart'),
+        category: COMMAND_CATEGORY,
+      });
     }
   });
 

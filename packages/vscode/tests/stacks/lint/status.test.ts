@@ -4,6 +4,7 @@ import {
   aggregateFolderStates,
   attributeToCore,
   foldRslintFolderState,
+  isMissingRstackFailure,
   RslintVersionMismatchError,
   runningRslintStatus,
   statusForRslintStartFailure,
@@ -16,6 +17,22 @@ describe('Rslint status classification', () => {
         new RslintResolutionError('missing-rstack', 'missing rstack'),
       ),
     ).toMatchObject({ kind: 'disabled' });
+  });
+
+  it('tells the not-installed state apart from an unusable install', () => {
+    // The same boundary the status uses: only a missing `rstack` is the
+    // warn-level, disabled state; a present-but-broken one is an error.
+    expect(
+      isMissingRstackFailure(
+        new RslintResolutionError('missing-rstack', 'missing rstack'),
+      ),
+    ).toBe(true);
+    expect(
+      isMissingRstackFailure(
+        new RslintResolutionError('missing-core', 'missing core'),
+      ),
+    ).toBe(false);
+    expect(isMissingRstackFailure(new Error('missing rstack'))).toBe(false);
   });
 
   it('classifies missing core and worker failures as crashes', () => {

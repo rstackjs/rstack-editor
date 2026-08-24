@@ -7,3 +7,20 @@ export type WorkerInitOptions = RstestConfig & {
   rstestPath: string;
   command?: 'run' | 'list' | 'watch';
 };
+
+/**
+ * What the worker answers `getNormalizedConfig` with. A config that fails to
+ * evaluate because a dependency is not installed is a result, not a rejection:
+ * the IPC channel would strip the error's `code` (see
+ * `isMissingDependencyError`), so the worker classifies it and reports the
+ * loader's message as data.
+ */
+export type NormalizedConfigResult =
+  | {
+      ok: true;
+      root: string;
+      include: string[];
+      exclude: string[];
+      childProjects: { configFilePath: string | null; root: string | null }[];
+    }
+  | { ok: false; reason: 'missing-dependency'; message: string };

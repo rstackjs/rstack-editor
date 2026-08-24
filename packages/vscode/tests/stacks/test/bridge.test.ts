@@ -2,10 +2,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from '@rstest/core';
-import type { StackState, StatusReporter } from '../../../src/types';
 import { resolveRstackShim } from '../../../src/stacks/test/bridge';
 import { logger } from '../../../src/stacks/test/logger';
 import { status } from '../../../src/stacks/test/status';
+import { createStatusRecorder } from './statusRecorder';
 
 // Resolution is exercised for real (a temporary `node_modules/rstack` tree)
 // rather than by mocking `nodeRequire`: the whole point of the bridge is that
@@ -13,7 +13,7 @@ import { status } from '../../../src/stacks/test/status';
 // resolver would only assert itself.
 
 const logged: string[] = [];
-const reported: StackState[] = [];
+const { reporter, reported } = createStatusRecorder();
 
 const channel = {
   debug: (message: string) => logged.push(message),
@@ -22,16 +22,6 @@ const channel = {
   error: (message: string) => logged.push(message),
   show: () => {},
   dispose: () => {},
-};
-
-const reporter: StatusReporter = {
-  stack: 'rstest',
-  report: (state) => reported.push(state),
-  starting: (detail) => reported.push({ kind: 'starting', detail }),
-  running: (detail) => reported.push({ kind: 'running', detail }),
-  crashed: (detail) => reported.push({ kind: 'crashed', detail }),
-  versionMismatch: (detail) =>
-    reported.push({ kind: 'version-mismatch', detail }),
 };
 
 const tmpDirs: string[] = [];
@@ -114,12 +104,37 @@ describe('resolveRstackShim', () => {
     expect(fs.existsSync(shim!.configFilePath)).toBe(true);
   });
 
-  it('reports nothing when the rstack package is not installed', () => {
+  it('reports a disabled status, not a crash, when the rstack package is not installed', () => {
     const root = makeTmpDir();
 
     expect(resolveRstackShim(root)).toBeUndefined();
     expect(logged.join('\n')).toContain('Cannot find the "rstack" package');
-    expect(reported).toEqual([]);
+    // The uniform not-installed policy: the same `disabled` shape fmt and
+    // lint report, with the restart command as the way out.
+    expect(reported).toEqual([
+      {
+        kind: 'disabled',
+        reason:
+          'rstack is not installed (node_modules missing) — install it, then run "Rstack: Restart Rstest" if this status stays',
+      },
+    ]);
+  });
+
+  it('clears the disabled status once the directory resolves', () => {
+    const configDir = createWorkspace();
+    const rstackDir = path.join(configDir, 'node_modules', 'rstack');
+    const parked = `${rstackDir}.parked`;
+    fs.renameSync(rstackDir, parked);
+
+    expect(resolveRstackShim(configDir)).toBeUndefined();
+    expect(reported.map((state) => state.kind)).toEqual(['disabled']);
+
+    fs.renameSync(parked, rstackDir);
+    expect(resolveRstackShim(configDir)).toBeDefined();
+    expect(reported.map((state) => state.kind)).toEqual([
+      'disabled',
+      'running',
+    ]);
   });
 
   it('stays silent on a repeated failure', () => {

@@ -2,6 +2,9 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, rs } from '@rstest/core';
 import { ReportedRstestResolutionError } from '../../../src/stacks/test/coreResolution';
 import { logger } from '../../../src/stacks/test/logger';
+import { status } from '../../../src/stacks/test/status';
+import type { NormalizedConfigResult } from '../../../src/stacks/test/types';
+import { createStatusRecorder } from './statusRecorder';
 
 // The worker-cwd decoupling adaptation pinned at its only site: upstream derived the
 // worker spawn cwd inside `Project` as `dirname(configFileUri)`, so a `Project`
@@ -16,6 +19,7 @@ const apiCalls: {
   rstestResolutionDir: string;
 }[] = [];
 let normalizedConfigFailure: unknown;
+let normalizedConfigResult: NormalizedConfigResult | undefined;
 
 rs.mock('../../../src/stacks/test/master', () => {
   class RstestApi {
@@ -34,6 +38,9 @@ rs.mock('../../../src/stacks/test/master', () => {
       if (normalizedConfigFailure) {
         return Promise.reject(normalizedConfigFailure);
       }
+      if (normalizedConfigResult) {
+        return Promise.resolve(normalizedConfigResult);
+      }
       return new Promise<never>(() => {});
     }
     dispose() {}
@@ -44,10 +51,11 @@ rs.mock('../../../src/stacks/test/master', () => {
 // One log-channel double for both the vscode mock and `logger.bind`, so the
 // assertions below observe every stack log line.
 const loggedErrors: string[] = [];
+const loggedWarnings: string[] = [];
 const channel = {
   debug: () => {},
   info: () => {},
-  warn: () => {},
+  warn: (message: string) => loggedWarnings.push(message),
   error: (message: string) => loggedErrors.push(message),
   show: () => {},
   dispose: () => {},
@@ -124,7 +132,9 @@ const collection = {
 
 beforeEach(() => {
   normalizedConfigFailure = undefined;
+  normalizedConfigResult = undefined;
   loggedErrors.length = 0;
+  loggedWarnings.length = 0;
   logger.bind(channel as never);
 });
 
@@ -203,5 +213,55 @@ describe('Project config/cwd/package-resolution decoupling', () => {
 
     expect(project.configLoadFailed).toBe(true);
     expect(loggedErrors).toEqual([]);
+  });
+
+  it('reports a config whose dependency is not installed as one warning line', async () => {
+    // A scaffolded template beside its generator: its own dependencies are
+    // never installed, but the walk-up finds the generator's `rstack`, so the
+    // shim loads and the config's own import is what fails.
+    const rstackConfig = uri(
+      path.join('/repo', 'templates', 'app', 'rstack.config.ts'),
+    );
+    // The worker's verdict, as data: it classified the failure where the
+    // error's `code` still existed.
+    normalizedConfigResult = {
+      ok: false,
+      reason: 'missing-dependency',
+      message: `Cannot find package '@rsbuild/plugin-react' imported from ${rstackConfig.fsPath}`,
+    };
+    const { reporter, reported } = createStatusRecorder();
+    status.bind(reporter);
+
+    const { project } = await createProject({
+      sourceUri: rstackConfig,
+      configFileUri: uri('/repo/node_modules/rstack/dist/rstestConfig.js'),
+      cwd: path.dirname(rstackConfig.fsPath),
+      rstestResolutionDir: '/repo/node_modules/rstack',
+      isBridge: true,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(project.configLoadFailed).toBe(true);
+    expect(loggedErrors).toEqual([]);
+    expect(loggedWarnings).toHaveLength(1);
+    expect(loggedWarnings[0]).toContain(rstackConfig.fsPath);
+    expect(loggedWarnings[0]).toContain(
+      "Cannot find package '@rsbuild/plugin-react'",
+    );
+    expect(loggedWarnings[0]).toContain('Install the project dependencies');
+    // The status bar side: `disabled` naming the config (workspace-relative)
+    // and the way out — the same shape fmt and lint report.
+    expect(reported).toEqual([
+      {
+        kind: 'disabled',
+        reason:
+          'templates/app/rstack.config.ts imports a package that is not installed — install the project dependencies, then run "Rstack: Restart Rstest" if this status stays',
+      },
+    ]);
+
+    // Disposal forgets the latch, so the detection-driven retry starts clean.
+    project.dispose();
+    expect(reported.at(-1)).toEqual({ kind: 'running', detail: undefined });
+    status.unbind();
   });
 });

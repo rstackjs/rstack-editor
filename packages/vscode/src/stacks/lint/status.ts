@@ -1,4 +1,5 @@
 import type { StackState } from '../../types';
+import { formatNotInstalledStatus } from '../../shared/notInstalled';
 import { RslintResolutionError } from './resolution';
 
 export class RslintVersionMismatchError extends Error {
@@ -8,18 +9,23 @@ export class RslintVersionMismatchError extends Error {
   }
 }
 
+/**
+ * A bridged folder whose `rstack` is not installed — the not-installed state
+ * the three stacks report uniformly (AGENTS.md): a `disabled` status and a
+ * one-line warning, never a crash or a stack trace. `missing-core` is not it:
+ * rstack is there but unusable, which is worth the full error.
+ */
+export const isMissingRstackFailure = (error: unknown): boolean =>
+  error instanceof RslintResolutionError && error.code === 'missing-rstack';
+
 export const statusForRslintStartFailure = (error: unknown): StackState => {
   if (error instanceof RslintVersionMismatchError) {
     return { kind: 'version-mismatch', detail: error.message };
   }
-  if (
-    error instanceof RslintResolutionError &&
-    error.code === 'missing-rstack'
-  ) {
+  if (isMissingRstackFailure(error)) {
     return {
       kind: 'disabled',
-      reason:
-        'rstack is not installed (node_modules missing) — install it, then restart Rslint if this status stays',
+      reason: formatNotInstalledStatus('rslint', 'rstack'),
     };
   }
   return {

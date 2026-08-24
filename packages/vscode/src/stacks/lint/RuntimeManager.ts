@@ -59,6 +59,8 @@ export interface DocumentResolutionFailure {
   readonly error: unknown;
   /** The core whose runtime failed to start; absent when resolution itself failed. */
   readonly resolved?: ResolvedCoreRuntime;
+  /** The package directory of the runtime the document keeps (last-good), if any. */
+  readonly keeping?: string;
 }
 
 export interface RuntimeManagerOptions {
@@ -394,7 +396,9 @@ export class RuntimeManager {
    * category. Here the same event becomes a folder status entry (the stack
    * owns no UI chrome), so no deduplication is needed: a status is a value,
    * not a notification, and the controller replaces the document's previous
-   * one. The Output-channel line stays.
+   * one. The hook owns the whole report, the Output-channel line included, so
+   * its level and wording live in lint-owned code; upstream's line is kept
+   * only for a manager without a hook.
    */
   private reportFailure(
     document: TextDocument,
@@ -403,19 +407,22 @@ export class RuntimeManager {
     existing: RuntimeEntry | undefined,
     resolved?: ResolvedCoreRuntime,
   ): void {
-    const suffix = existing
-      ? ` (keeping ${existing.resolved.installation.packageDirectory} active)`
-      : '';
+    const keeping = existing?.resolved.installation.packageDirectory;
+    if (this.options.onDocumentFailure) {
+      this.options.onDocumentFailure({
+        document,
+        workspaceFolder,
+        error,
+        resolved,
+        keeping,
+      });
+      return;
+    }
+    const suffix = keeping ? ` (keeping ${keeping} active)` : '';
     this.logger.error(
       `Could not select an Rslint core for ${document.uri}${suffix}`,
       error,
     );
-    this.options.onDocumentFailure?.({
-      document,
-      workspaceFolder,
-      error,
-      resolved,
-    });
   }
 
   private isCurrentDocument(document: TextDocument, epoch: number): boolean {

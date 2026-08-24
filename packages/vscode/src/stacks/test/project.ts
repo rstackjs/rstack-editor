@@ -6,7 +6,11 @@ import vscode from 'vscode';
 import { RSTACK_CONFIG_NAMES } from '../../detection';
 import { resolveRstackShim } from './bridge';
 import { watchConfigValue } from './config';
-import { ReportedRstestResolutionError } from './coreResolution';
+import { formatConfigDependencyMissingStatus } from '../../shared/notInstalled';
+import {
+  formatConfigDependencyMissingMessage,
+  ReportedRstestResolutionError,
+} from './coreResolution';
 import { logger } from './logger';
 import { RstestApi } from './master';
 import { type ChildProjectRef, computeCoveredConfigs } from './projectCoverage';
@@ -20,6 +24,10 @@ import { ProjectFolder, TestFile, TestFolder, testData } from './testTree';
 // `rstack.config.ts` should get the same node-less layout as one with a single
 // `rstest.config.ts`.
 const DEFAULT_ROOT_CONFIG_RE = /^(?:rstest|rstack)\.config\.[mc]?[tj]s$/;
+
+/** A config path as the user sees it: relative to its workspace folder. */
+const relativeTo = (folder: vscode.WorkspaceFolder, uri: vscode.Uri): string =>
+  path.relative(folder.uri.fsPath, uri.fsPath);
 
 /**
  * Where a `Project`'s config comes from. The worker-cwd decoupling adaptation
@@ -396,10 +404,7 @@ export class WorkspaceManager implements vscode.Disposable {
     // at the workspace root): show its test files directly, with no project node.
     if (activeProjects.size === 1) {
       const [[, project]] = activeProjects;
-      const relative = path.relative(
-        this.workspaceFolder.uri.fsPath,
-        project.sourceUri.fsPath,
-      );
+      const relative = relativeTo(this.workspaceFolder, project.sourceUri);
       if (DEFAULT_ROOT_CONFIG_RE.test(relative)) {
         project.refresh(collection, null);
         return;
@@ -452,10 +457,7 @@ export class WorkspaceManager implements vscode.Disposable {
     const root: TreeNode = { children: new Map() };
 
     for (const project of projects.values()) {
-      const relative = path.relative(
-        this.workspaceFolder.uri.fsPath,
-        project.sourceUri.fsPath,
-      );
+      const relative = relativeTo(this.workspaceFolder, project.sourceUri);
       let node = root;
       for (const segment of relative.split(path.sep)) {
         let next = node.children.get(segment);
@@ -587,12 +589,17 @@ export class Project implements vscode.Disposable {
 
     void this.api
       .getNormalizedConfig()
-      .then((config) => {
+      .then((result) => {
         if (this.cancellationSource.token.isCancellationRequested) return;
-        this.root = vscode.Uri.file(config.root);
-        this.include = config.include;
-        this.exclude = config.exclude;
-        this.childProjects = config.childProjects;
+        if (!result.ok) {
+          this.reportMissingDependency(result.message);
+          return;
+        }
+        status.installed(this.sourceUri.toString());
+        this.root = vscode.Uri.file(result.root);
+        this.include = result.include;
+        this.exclude = result.exclude;
+        this.childProjects = result.childProjects;
         this.applyWatch();
         this.onConfigResolved?.();
       })
@@ -605,6 +612,26 @@ export class Project implements vscode.Disposable {
         // Let the manager settle its tree even when a config fails to load.
         this.onConfigResolved?.();
       });
+  }
+
+  // The config imports a package that is not installed: the not-installed
+  // state (AGENTS.md), one step past a missing `@rstest/core` — some install
+  // *above* the project satisfied the shim, so the config itself is what
+  // failed. A scaffolded template beside its generator is the usual shape.
+  // Latched under this project's key, which `dispose` forgets.
+  private reportMissingDependency(cause: string): void {
+    this.configLoadFailed = true;
+    logger.warn(
+      formatConfigDependencyMissingMessage(this.sourceUri.fsPath, cause),
+    );
+    status.notInstalled(
+      formatConfigDependencyMissingStatus(
+        'rstest',
+        relativeTo(this.workspaceFolder, this.sourceUri),
+      ),
+      this.sourceUri.toString(),
+    );
+    this.onConfigResolved?.();
   }
 
   /** The config file path Rstest is asked to load (`-c`). */
