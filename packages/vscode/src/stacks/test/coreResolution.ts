@@ -1,14 +1,18 @@
 /**
- * Helpers for reporting a failed `@rstest/core` resolution.
+ * Classifying and reporting failed Rstest resolutions — the host-side helpers
+ * for a `@rstest/core` that cannot be resolved, and the worker-side
+ * classifier for a config whose own import failed
+ * (`missingDependencyCauseOf`).
  *
- * Both messages replace Node's own `MODULE_NOT_FOUND` text, which embeds the
- * require stack of whoever called `require.resolve` — for a bundled extension
- * its `dist` path plus the VS Code extension host — and says nothing about what
- * to do. They differ in where they end up: an uninstalled core is the normal
- * state of a freshly cloned repository and is resolved for every config file
- * without the user asking, so it is only logged; a `rstestPackagePath` that
- * does not resolve is a setting the user has to fix, so it is notified.
+ * Every message here replaces Node's own `MODULE_NOT_FOUND` text, which
+ * embeds a multi-line require stack and says nothing about what to do. An
+ * uninstalled core is the normal state of a freshly cloned repository and is
+ * resolved for every config file without the user asking, so it is only
+ * logged; a `rstestPackagePath` that does not resolve is a setting the user
+ * has to fix, so it is notified.
  */
+
+import path from 'node:path';
 
 /**
  * Resolution failed after the actionable error was already logged or shown.
@@ -46,25 +50,36 @@ export function formatConfiguredCoreNotFoundMessage(
   return `Cannot find "@rstest/core" at the configured "rstack.rstest.rstestPackagePath": ${configuredPackagePath}. Update the setting to point at an installed "@rstest/core" package.json.`;
 }
 
-// Whether a config evaluation failed because something it imports is not
-// installed. Read from the error's `code` — Node's own classification, set by
-// both loaders (`ERR_MODULE_NOT_FOUND` for ESM, `MODULE_NOT_FOUND` for CJS) —
-// never from the message text. Any other failure (a syntax error in the
-// config, a thrown plugin) is a real error. The check has to run in the
-// worker, where the error is thrown: the IPC channel back to the extension
-// host (`serialization: 'advanced'`) keeps an Error's message and stack but
-// drops its `code`, so the classification is carried as data instead
-// (`NormalizedConfigResult`).
-export function isMissingDependencyError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
+// The one-line cause when a config evaluation failed on a package that is
+// not installed, or `undefined` for a real error. Gated on the error's
+// `code` — Node's own classification (`ERR_MODULE_NOT_FOUND` for ESM,
+// `MODULE_NOT_FOUND` for CJS) — but the code alone is too broad: a typo'd
+// relative import fails with the same codes, and installing dependencies
+// cannot fix it, so only a bare specifier — a package name, read from the
+// message since CJS carries no structured one — counts, and anything
+// unrecognized fails towards the full error report. The check has to run in
+// the worker, where the error is thrown: the IPC channel back to the
+// extension host (`serialization: 'advanced'`) drops the `code`, so the
+// verdict travels as data (`NormalizedConfigResult`). Only the first line
+// comes back: the rest of a CJS message is the require stack, and the
+// not-installed state is one warn line without one.
+export function missingDependencyCauseOf(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
   const { code } = error as NodeJS.ErrnoException;
-  return code === 'ERR_MODULE_NOT_FOUND' || code === 'MODULE_NOT_FOUND';
-}
-
-/** `cause` is the loader's own text, which names the specifier and the importer. */
-export function formatConfigDependencyMissingMessage(
-  configFilePath: string,
-  cause: string,
-): string {
-  return `Cannot load ${configFilePath}: ${cause}. Install the project dependencies to enable Rstest for this config.`;
+  if (code !== 'ERR_MODULE_NOT_FOUND' && code !== 'MODULE_NOT_FOUND') {
+    return undefined;
+  }
+  const [firstLine] = error.message.split('\n', 1);
+  const specifier = /^Cannot find (?:package|module) '([^']+)'/.exec(
+    firstLine,
+  )?.[1];
+  if (
+    specifier === undefined ||
+    specifier.startsWith('.') ||
+    specifier.startsWith('file:') ||
+    path.isAbsolute(specifier)
+  ) {
+    return undefined;
+  }
+  return firstLine;
 }

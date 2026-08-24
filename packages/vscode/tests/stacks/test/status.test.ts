@@ -49,6 +49,20 @@ describe('StatusHolder failure latches', () => {
     expect(calls).toEqual(['crashed:spawn ENOENT', 'running:']);
   });
 
+  it('lets a new verdict supersede another kind latched by the same root', () => {
+    // One source, one verdict: without this, the higher-ranked stale entry
+    // would keep painting over the newer observation — an outdated rstack
+    // that is then removed must show "not installed", not the upgrade hint.
+    const calls = bindRecorder();
+    status.versionMismatch('rstack too old', '/a');
+    status.notInstalled('rstack is not installed', '/a');
+    expect(calls).toEqual(['mismatch:rstack too old', 'report:disabled']);
+
+    status.crashed('spawn ENOENT', '/a');
+    status.notInstalled('rstack is not installed', '/a');
+    expect(calls.slice(2)).toEqual(['crashed:spawn ENOENT', 'report:disabled']);
+  });
+
   it('outranks a mismatch with a crash and falls back on recovery', () => {
     const calls = bindRecorder();
     status.versionMismatch('core too old', '/a');

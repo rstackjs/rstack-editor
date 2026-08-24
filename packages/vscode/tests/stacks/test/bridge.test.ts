@@ -162,8 +162,8 @@ describe('resolveRstackShim', () => {
 
   it('clears the not-installed latch once the package exists, even unusable', () => {
     // First pass: no rstack at all. Second pass: a partial install without
-    // the shim — "not installed" would now be a lie, and the shim failure
-    // carries its own report.
+    // the shim — "not installed" would now be a lie, and the shim verdict
+    // supersedes it in one paint.
     const configDir = createWorkspace({ shim: false });
     const restore = parkRstack(configDir);
 
@@ -172,13 +172,25 @@ describe('resolveRstackShim', () => {
 
     restore();
     expect(resolveRstackShim(configDir)).toBeUndefined();
-    // The latch clears the moment the package resolves, then the shim verdict
-    // lands — all within one synchronous pass, so the middle `running` never
-    // reaches the (asynchronously rendered) status bar.
     expect(reported.map((state) => state.kind)).toEqual([
       'disabled',
-      'running',
       'version-mismatch',
+    ]);
+  });
+
+  it('replaces a stale mismatch with the disabled state when rstack disappears', () => {
+    // A shim-less (or below-floor) install latches a mismatch; if the package
+    // is then removed, the higher-ranked mismatch must not keep painting an
+    // upgrade hint over "not installed".
+    const configDir = createWorkspace({ shim: false });
+    expect(resolveRstackShim(configDir)).toBeUndefined();
+    expect(reported.map((state) => state.kind)).toEqual(['version-mismatch']);
+
+    parkRstack(configDir);
+    expect(resolveRstackShim(configDir)).toBeUndefined();
+    expect(reported.map((state) => state.kind)).toEqual([
+      'version-mismatch',
+      'disabled',
     ]);
   });
 

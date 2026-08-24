@@ -6,11 +6,11 @@ import vscode from 'vscode';
 import { RSTACK_CONFIG_NAMES } from '../../detection';
 import { resolveRstackShim } from './bridge';
 import { watchConfigValue } from './config';
-import { formatConfigDependencyMissingStatus } from '../../shared/notInstalled';
 import {
-  formatConfigDependencyMissingMessage,
-  ReportedRstestResolutionError,
-} from './coreResolution';
+  formatConfigDependencyMissingLog,
+  formatConfigDependencyMissingStatus,
+} from '../../shared/notInstalled';
+import { ReportedRstestResolutionError } from './coreResolution';
 import { logger } from './logger';
 import { RstestApi } from './master';
 import { type ChildProjectRef, computeCoveredConfigs } from './projectCoverage';
@@ -622,7 +622,7 @@ export class Project implements vscode.Disposable {
   private reportMissingDependency(cause: string): void {
     this.configLoadFailed = true;
     logger.warn(
-      formatConfigDependencyMissingMessage(this.sourceUri.fsPath, cause),
+      formatConfigDependencyMissingLog('rstest', this.sourceUri.fsPath, cause),
     );
     status.notInstalled(
       formatConfigDependencyMissingStatus(

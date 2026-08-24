@@ -3,10 +3,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from '@rstest/core';
 import {
-  formatConfigDependencyMissingMessage,
   formatConfiguredCoreNotFoundMessage,
-  isMissingDependencyError,
   isModuleNotFoundError,
+  missingDependencyCauseOf,
 } from '../../../src/stacks/test/coreResolution';
 
 // Resolve for real rather than hand-building an error object: the predicate
@@ -66,9 +65,9 @@ describe('core-not-found messages', () => {
   });
 });
 
-describe('isMissingDependencyError', () => {
-  // Same reasoning as `resolveError`: the predicate reads a code Node owns,
-  // so the errors come from Node's own loaders.
+describe('missingDependencyCauseOf', () => {
+  // Same reasoning as `resolveError`: the classifier reads a code and a
+  // message Node owns, so the errors come from Node's own loaders.
   const importError = async (specifier: string): Promise<unknown> => {
     try {
       await import(specifier);
@@ -78,42 +77,51 @@ describe('isMissingDependencyError', () => {
     throw new Error(`expected "${specifier}" not to import`);
   };
 
-  it('should detect a package an ESM config failed to import', async () => {
+  it('should name a package an ESM config failed to import', async () => {
     expect(
-      isMissingDependencyError(
+      missingDependencyCauseOf(
         await importError('@rstest/definitely-not-installed'),
       ),
-    ).toBe(true);
+    ).toContain("'@rstest/definitely-not-installed'");
   });
 
-  it('should detect a package a CJS config failed to require', () => {
+  it('should keep a CJS failure to one line, without the require stack', () => {
+    const cause = missingDependencyCauseOf(
+      resolveError('@rstest/definitely-not-installed', __dirname),
+    );
+    expect(cause).toContain("'@rstest/definitely-not-installed'");
+    // The not-installed warn is one line, no stack (AGENTS.md); Node's
+    // MODULE_NOT_FOUND message embeds a multi-line `Require stack:`.
+    expect(cause).not.toContain('\n');
+    expect(cause).not.toContain('Require stack');
+  });
+
+  it('should leave a missing relative or absolute import to the error report', () => {
+    // A typo'd `./helper` or a missing generated file is a source problem —
+    // installing dependencies cannot fix it, so it must not be classified as
+    // the not-installed state. The ESM loader reports relative imports as
+    // absolute paths, which the absolute case stands in for.
     expect(
-      isMissingDependencyError(
-        resolveError('@rstest/definitely-not-installed', __dirname),
+      missingDependencyCauseOf(resolveError('./definitely-missing', __dirname)),
+    ).toBe(undefined);
+    expect(
+      missingDependencyCauseOf(
+        resolveError(
+          path.join(os.tmpdir(), 'definitely-missing.js'),
+          os.tmpdir(),
+        ),
       ),
-    ).toBe(true);
+    ).toBe(undefined);
   });
 
   it('should leave every other failure to the full error report', () => {
-    expect(isMissingDependencyError(new SyntaxError('Unexpected token'))).toBe(
-      false,
+    expect(missingDependencyCauseOf(new SyntaxError('Unexpected token'))).toBe(
+      undefined,
     );
-    expect(isMissingDependencyError(new Error("Cannot find package 'x'"))).toBe(
-      false,
+    expect(missingDependencyCauseOf(new Error("Cannot find package 'x'"))).toBe(
+      undefined,
     );
-    expect(isMissingDependencyError("Cannot find package 'x'")).toBe(false);
-    expect(isMissingDependencyError(undefined)).toBe(false);
-  });
-});
-
-describe('formatConfigDependencyMissingMessage', () => {
-  it("should name the config, the loader's own words and the way out", () => {
-    const message = formatConfigDependencyMissingMessage(
-      '/repo/templates/app/rstack.config.ts',
-      "Cannot find package '@rsbuild/plugin-react' imported from /repo/templates/app/rstack.config.ts",
-    );
-    expect(message).toContain('/repo/templates/app/rstack.config.ts');
-    expect(message).toContain("Cannot find package '@rsbuild/plugin-react'");
-    expect(message).toContain('Install the project dependencies');
+    expect(missingDependencyCauseOf("Cannot find package 'x'")).toBe(undefined);
+    expect(missingDependencyCauseOf(undefined)).toBe(undefined);
   });
 });

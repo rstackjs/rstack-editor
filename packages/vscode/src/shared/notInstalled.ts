@@ -1,4 +1,9 @@
-import { COMMAND_CATEGORY, type StackId, stackCommandTitle } from '../types';
+import {
+  COMMAND_CATEGORY,
+  STACK_LABELS,
+  type StackId,
+  stackCommandTitle,
+} from '../types';
 
 /**
  * The not-installed policy's words, once for all three stacks (AGENTS.md
@@ -33,6 +38,18 @@ export const formatConfigDependencyMissingStatus = (
   configPath: string,
 ): string =>
   `${configPath} imports a package that is not installed — install the project dependencies, ${restartHint(stack)}`;
+
+/**
+ * The output-channel line for a config that imports a package that is not
+ * installed. `cause` is the loader's own first line, which names the
+ * specifier and the importer.
+ */
+export const formatConfigDependencyMissingLog = (
+  stack: StackId,
+  configPath: string,
+  cause: string,
+): string =>
+  `Cannot load ${configPath}: ${cause}. Install the project dependencies to enable ${STACK_LABELS[stack]} for this config.`;
 
 /**
  * The output-channel line: where the stack looked, plus the stack's own

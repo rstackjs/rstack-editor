@@ -117,12 +117,27 @@ class StatusHolder implements StatusReporter {
     this.#reporter?.running(detail);
   }
 
+  /**
+   * One source, one verdict: a newly observed failure kind replaces whatever
+   * other kind the same source had latched, so a raise site never has to know
+   * the other tables exist. Without this, a lower-ranked observation could
+   * not win — a root whose `rstack` was outdated and is now removed would
+   * keep painting the stale upgrade hint over "not installed".
+   */
+  #supersede(keep: Map<string, string>, source: string): void {
+    for (const latch of [this.#crashes, this.#mismatches, this.#notInstalled]) {
+      if (latch !== keep) latch.delete(source);
+    }
+  }
+
   crashed(detail: string, source = ''): void {
+    this.#supersede(this.#crashes, source);
     this.#crashes.set(source, detail);
     this.#paintOrRun();
   }
 
   versionMismatch(detail: string, source = ''): void {
+    this.#supersede(this.#mismatches, source);
     this.#mismatches.set(source, detail);
     this.#paintOrRun();
   }
@@ -147,6 +162,7 @@ class StatusHolder implements StatusReporter {
    */
   notInstalled(reason: string, source = ''): void {
     if (this.#notInstalled.get(source) === reason) return;
+    this.#supersede(this.#notInstalled, source);
     this.#notInstalled.set(source, reason);
     this.#paintOrRun();
   }

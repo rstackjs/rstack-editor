@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@rstest/core';
 import {
+  formatConfigDependencyMissingLog,
   formatConfigDependencyMissingStatus,
   formatNotInstalledLog,
   formatNotInstalledStatus,
@@ -35,6 +36,18 @@ describe('not-installed wording', () => {
   it('logs where the stack looked', () => {
     expect(formatNotInstalledLog('rstack', 'app', '/repo/app')).toBe(
       'rstack is not installed in app (node_modules missing); searched from /repo/app',
+    );
+  });
+
+  it("logs the config, the loader's own words and the way out", () => {
+    expect(
+      formatConfigDependencyMissingLog(
+        'rstest',
+        '/repo/templates/app/rstack.config.ts',
+        "Cannot find package '@rsbuild/plugin-react' imported from /repo/templates/app/rstack.config.ts",
+      ),
+    ).toBe(
+      "Cannot load /repo/templates/app/rstack.config.ts: Cannot find package '@rsbuild/plugin-react' imported from /repo/templates/app/rstack.config.ts. Install the project dependencies to enable Rstest for this config.",
     );
   });
 });

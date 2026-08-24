@@ -79,17 +79,14 @@ export function resolveRstackShim(
     }
     // Latched like the version mismatch below, under the same key, so the
     // status stays until this directory resolves or stops being a candidate.
+    // A stale mismatch from a previously-present install is superseded by
+    // the latch itself (one source, one verdict).
     status.notInstalled(
       formatNotInstalledStatus('rstest', 'rstack'),
       configDir,
     );
     return undefined;
   }
-
-  // The package exists, so the not-installed latch is over even when the
-  // install turns out to be unusable below (missing shim, unsupported
-  // version) — those states carry their own reports.
-  status.installed(configDir);
 
   const packageDirectory = path.dirname(packageJsonPath);
   const configFilePath = path.join(packageDirectory, SHIM_RELATIVE_PATH);
@@ -125,6 +122,9 @@ export function resolveRstackShim(
     packageDirectory,
     version,
   });
+  // At most one of the two latches can be live (one source, one verdict), so
+  // this repaints once, whichever failure the previous pass observed.
   status.versionOk(configDir);
+  status.installed(configDir);
   return { configFilePath, packageDirectory, version };
 }
