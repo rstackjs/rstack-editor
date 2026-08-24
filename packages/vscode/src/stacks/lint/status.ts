@@ -1,6 +1,10 @@
 import type { StackState } from '../../types';
 import { formatNotInstalledStatus } from '../../shared/notInstalled';
-import { RslintResolutionError } from './resolution';
+import type { SupportedPackage } from '../../shared/versionCheck';
+import {
+  RslintResolutionError,
+  type RslintResolutionErrorCode,
+} from './resolution';
 
 export class RslintVersionMismatchError extends Error {
   constructor(message: string) {
@@ -10,22 +14,39 @@ export class RslintVersionMismatchError extends Error {
 }
 
 /**
- * A bridged folder whose `rstack` is not installed — the not-installed state
- * the three stacks report uniformly (AGENTS.md): a `disabled` status and a
- * one-line warning, never a crash or a stack trace. `missing-core` is not it:
- * rstack is there but unusable, which is worth the full error.
+ * The package whose absence makes this failure the not-installed state the
+ * three stacks report uniformly (AGENTS.md) — a `disabled` status and a
+ * one-line warning, never a crash or a stack trace. `missing-rstack` is a
+ * bridged folder without `rstack`; `missing-core` is a native folder on a
+ * fresh clone (a bridged folder reaches it only when rstack's own dependency
+ * is gone — an interrupted install, where installing is still the fix).
+ * `missing-shim` stays an error: the package is there, its version is wrong.
+ * A misconfigured `corePath` is `invalid-package`, also an error: the fix is
+ * the setting, not an install.
  */
-export const isMissingRstackFailure = (error: unknown): boolean =>
-  error instanceof RslintResolutionError && error.code === 'missing-rstack';
+const NOT_INSTALLED_PACKAGE: Partial<
+  Record<RslintResolutionErrorCode, SupportedPackage>
+> = {
+  'missing-rstack': 'rstack',
+  'missing-core': '@rslint/core',
+};
+
+export const missingPackageOf = (
+  error: unknown,
+): SupportedPackage | undefined =>
+  error instanceof RslintResolutionError
+    ? NOT_INSTALLED_PACKAGE[error.code]
+    : undefined;
 
 export const statusForRslintStartFailure = (error: unknown): StackState => {
   if (error instanceof RslintVersionMismatchError) {
     return { kind: 'version-mismatch', detail: error.message };
   }
-  if (isMissingRstackFailure(error)) {
+  const missing = missingPackageOf(error);
+  if (missing !== undefined) {
     return {
       kind: 'disabled',
-      reason: formatNotInstalledStatus('rslint', 'rstack'),
+      reason: formatNotInstalledStatus('rslint', missing),
     };
   }
   return {
@@ -62,9 +83,10 @@ const RSLINT_IDLE_DETAIL = 'idle';
 /**
  * Complete on purpose: a new state cannot be added without ranking itself, so
  * nothing silently falls through to `running`. `disabled` outranks `running`
- * as in the fmt stack's table: at folder level it only ever means "no `rstack`
- * installed, this bridged folder will never lint", a fact worth showing over a
- * healthy runtime or sibling folder — unlike the shell's kill switch.
+ * as in the fmt stack's table: at folder level it only ever means "a package
+ * this folder needs is not installed, so it will not lint" (`missingPackageOf`),
+ * a fact worth showing over a healthy runtime or sibling folder — unlike the
+ * shell's kill switch.
  */
 const STATE_RANK: Readonly<Record<StackState['kind'], number>> = {
   crashed: 5,

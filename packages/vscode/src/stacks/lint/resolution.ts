@@ -79,8 +79,11 @@ function resolveConfiguredCore(
   try {
     if (!fs.statSync(packageJsonPath).isFile()) throw new Error('not a file');
   } catch (error) {
+    // Not `missing-core`: the user pointed `corePath` at this directory, so
+    // the fix is correcting the setting, not installing dependencies — it must
+    // not take the not-installed state (`missingPackageOf`).
     throw new RslintResolutionError(
-      'missing-core',
+      'invalid-package',
       `Could not access @rslint/core at ${directory}`,
       { cause: error },
     );

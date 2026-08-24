@@ -71,6 +71,14 @@ const createWorkspace = ({
   return configDir;
 };
 
+/** Hides the workspace's `node_modules/rstack`; returns the restore step. */
+const parkRstack = (configDir: string): (() => void) => {
+  const rstackDir = path.join(configDir, 'node_modules', 'rstack');
+  const parked = `${rstackDir}.parked`;
+  fs.renameSync(rstackDir, parked);
+  return () => fs.renameSync(parked, rstackDir);
+};
+
 beforeEach(() => {
   logged.length = 0;
   reported.length = 0;
@@ -122,14 +130,12 @@ describe('resolveRstackShim', () => {
 
   it('clears the disabled status once the directory resolves', () => {
     const configDir = createWorkspace();
-    const rstackDir = path.join(configDir, 'node_modules', 'rstack');
-    const parked = `${rstackDir}.parked`;
-    fs.renameSync(rstackDir, parked);
+    const restore = parkRstack(configDir);
 
     expect(resolveRstackShim(configDir)).toBeUndefined();
     expect(reported.map((state) => state.kind)).toEqual(['disabled']);
 
-    fs.renameSync(parked, rstackDir);
+    restore();
     expect(resolveRstackShim(configDir)).toBeDefined();
     expect(reported.map((state) => state.kind)).toEqual([
       'disabled',
@@ -149,6 +155,31 @@ describe('resolveRstackShim', () => {
 
     expect(resolveRstackShim(configDir)).toBeUndefined();
     expect(logged.join('\n')).toContain('rstestConfig.js');
+    // Unusable-but-present must not paint `running`: the missing shim is an
+    // upgrade problem, latched like the version floor below.
+    expect(reported.map((state) => state.kind)).toEqual(['version-mismatch']);
+  });
+
+  it('clears the not-installed latch once the package exists, even unusable', () => {
+    // First pass: no rstack at all. Second pass: a partial install without
+    // the shim — "not installed" would now be a lie, and the shim failure
+    // carries its own report.
+    const configDir = createWorkspace({ shim: false });
+    const restore = parkRstack(configDir);
+
+    expect(resolveRstackShim(configDir)).toBeUndefined();
+    expect(reported.map((state) => state.kind)).toEqual(['disabled']);
+
+    restore();
+    expect(resolveRstackShim(configDir)).toBeUndefined();
+    // The latch clears the moment the package resolves, then the shim verdict
+    // lands — all within one synchronous pass, so the middle `running` never
+    // reaches the (asynchronously rendered) status bar.
+    expect(reported.map((state) => state.kind)).toEqual([
+      'disabled',
+      'running',
+      'version-mismatch',
+    ]);
   });
 
   it('refuses an rstack older than the support matrix floor', () => {

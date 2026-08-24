@@ -18,7 +18,7 @@ import {
   attributeToCore,
   foldRslintFolderState,
   statusForRslintStartFailure,
-  isMissingRstackFailure,
+  missingPackageOf,
 } from './status';
 import { WorkspaceDocumentRouter } from './WorkspaceDocumentRouter';
 
@@ -208,19 +208,22 @@ class RslintController implements StackController {
           keeping,
         }) => {
           // The hook owns the report. The Output-channel line: a folder whose
-          // `rstack` is not installed is the not-installed state (AGENTS.md)
-          // — one warn line, no stack; anything else is upstream's error.
-          const suffix = keeping ? ` (keeping ${keeping} active)` : '';
-          if (isMissingRstackFailure(error)) {
+          // `rstack` or `@rslint/core` is not installed is the not-installed
+          // state (AGENTS.md) — one warn line, no stack; anything else is
+          // upstream's error. A document with a last-good runtime still
+          // lints, so its consequence says what it keeps, not "will not".
+          const missing = missingPackageOf(error);
+          if (missing !== undefined) {
             logger.warn(
               formatNotInstalledLog(
-                'rstack',
+                missing,
                 workspaceFolder.name,
                 workspaceFolder.uri.fsPath,
-                `${document.uri} will not lint until it is${suffix}`,
+                `${document.uri} ${keeping ? `keeps ${keeping}` : 'will not lint'} until it is installed`,
               ),
             );
           } else {
+            const suffix = keeping ? ` (keeping ${keeping} active)` : '';
             logger.error(
               `Could not select an Rslint core for ${document.uri}${suffix}`,
               error,

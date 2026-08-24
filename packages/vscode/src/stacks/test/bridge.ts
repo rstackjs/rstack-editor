@@ -86,14 +86,22 @@ export function resolveRstackShim(
     return undefined;
   }
 
+  // The package exists, so the not-installed latch is over even when the
+  // install turns out to be unusable below (missing shim, unsupported
+  // version) — those states carry their own reports.
+  status.installed(configDir);
+
   const packageDirectory = path.dirname(packageJsonPath);
   const configFilePath = path.join(packageDirectory, SHIM_RELATIVE_PATH);
   if (!existsSync(configFilePath)) {
+    const message = `The installed "rstack" package has no ${SHIM_RELATIVE_PATH} (looked in ${packageJsonPath}). Upgrade "rstack" to a version that ships the Rstest config shim.`;
     if (!silent) {
-      logger.error(
-        `The installed "rstack" package has no ${SHIM_RELATIVE_PATH} (looked in ${packageJsonPath}). Upgrade "rstack" to a version that ships the Rstest config shim.`,
-      );
+      logger.error(message);
     }
+    // Same latch as the floor check below: the fix is upgrading rstack, and
+    // without a report of its own this branch would paint `running` over an
+    // install that cannot drive Rstest.
+    status.versionMismatch(message, configDir);
     return undefined;
   }
 
@@ -117,7 +125,6 @@ export function resolveRstackShim(
     packageDirectory,
     version,
   });
-  status.installed(configDir);
   status.versionOk(configDir);
   return { configFilePath, packageDirectory, version };
 }

@@ -60,6 +60,11 @@ export class Worker {
   public async getNormalizedConfig(
     options: WorkerInitOptions,
   ): Promise<NormalizedConfigResult> {
+    // The core loads outside the classified region: a broken `@rstest/core`
+    // install failing to import is the real error to report, not "the config
+    // imports an uninstalled package". Once this import succeeds, `init()`'s
+    // own import of the same path is served from the module cache.
+    await import(normalizeImportPath(options.rstestPath));
     try {
       const { rstest, projects } = await this.init(options);
       return {
