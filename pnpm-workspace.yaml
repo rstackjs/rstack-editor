@@ -15,19 +15,7 @@ minimumReleaseAgeExclude:
   - rstack
   - '@rslint/core'
   - '@rstest/core'
-  - '@rsbuild/core@2.2.0-rc.0'
-  - '@rslib/core@1.0.0-rc.1'
-  - '@rstackjs/cli-darwin-arm64@0.6.4'
-  - '@rstackjs/cli-darwin-x64@0.6.4'
-  - '@rstackjs/cli-linux-arm64-gnu@0.6.4'
-  - '@rstackjs/cli-linux-arm64-musl@0.6.4'
-  - '@rstackjs/cli-linux-ppc64-gnu@0.6.4'
-  - '@rstackjs/cli-linux-riscv64-gnu@0.6.4'
-  - '@rstackjs/cli-linux-riscv64-musl@0.6.4'
-  - '@rstackjs/cli-linux-s390x-gnu@0.6.4'
-  - '@rstackjs/cli-linux-x64-gnu@0.6.4'
-  - '@rstackjs/cli-linux-x64-musl@0.6.4'
-  - '@rstackjs/cli-win32-arm64-msvc@0.6.4'
-  - '@rstackjs/cli-win32-ia32-msvc@0.6.4'
-  - '@rstackjs/cli-win32-x64-msvc@0.6.4'
-  - rsbuild-plugin-dts@1.0.0-rc.1
+  - '@rsbuild/core'
+  - '@rslib/core'
+  - '@rstackjs/*'
+  - rsbuild-plugin-dts
