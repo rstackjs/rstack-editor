@@ -1,3 +1,4 @@
+import type { ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
@@ -11,7 +12,7 @@ import {
   resetUserNodeCaches,
 } from '../../../src/shared/nodeResolution';
 import { status } from '../../../src/stacks/test/status';
-import type { StatusReporter } from '../../../src/types';
+import type { StackState, StatusReporter } from '../../../src/types';
 import { createStatusRecorder } from './statusRecorder';
 
 // The Rstest runner injects its own `@rstest/core` into every resolution path so
@@ -116,6 +117,18 @@ rs.mock('vscode', () => {
 // A directory outside the repository, so Node's upward resolution cannot reach
 // the workspace `node_modules` and `@rstest/core` is genuinely missing.
 const noCoreDir = os.tmpdir();
+
+// The opposite fixture: a cwd where `@rstest/core` resolves, for suites whose
+// case under test sits past the resolution step.
+const packageDir = path.resolve(__dirname, '../../..');
+
+// Seeding the memo is how the probe is injected: `resolveWorkerNodeCommand`
+// takes no probe option (it is called from deep inside a spawn path), and the
+// memo is keyed by executable path, so a seeded entry is the answer it gets.
+const seedNodeProbe = (executable: string, probe: NodeProbe) =>
+  configuredNodeBelowFloor(executable, {
+    probe: () => Promise.resolve(probe),
+  });
 
 // Settings are a module-level bag every suite writes into; clearing them per
 // test keeps one suite's configuration from leaking into the next.
@@ -357,13 +370,7 @@ describe('RstestApi with a configured nodeExecutable', () => {
     versionMismatch: (detail) => mismatches.push(detail),
   };
 
-  // Seeding the memo is how the probe is injected: `resolveWorkerNodeCommand`
-  // takes no probe option (it is called from deep inside a spawn path), and the
-  // memo is keyed by executable path, so a seeded entry is the answer it gets.
-  const seedProbe = (probe: NodeProbe) =>
-    configuredNodeBelowFloor(configuredNode, {
-      probe: () => Promise.resolve(probe),
-    });
+  const seedProbe = (probe: NodeProbe) => seedNodeProbe(configuredNode, probe);
 
   // Reaching the private method keeps these cases on the decision under test
   // instead of spawning a real worker process for each one.
@@ -438,13 +445,98 @@ describe('RstestApi with a configured nodeExecutable', () => {
 
   it('should refuse to spawn a worker after dispose', async () => {
     // The seed keeps the configured executable's probe off the real spawn
-    // path; the package dir (not `process.cwd()`) is a cwd where
-    // `@rstest/core` resolves, so the abort observed is the disposed check
-    // and not an earlier resolution failure.
+    // path, so the abort observed is the disposed check and not an earlier
+    // resolution failure.
     await seedProbe({ kind: 'ok', version: '24.0.0' });
-    const api = createApi(path.resolve(__dirname, '../../..'));
+    const api = createApi(packageDir);
     const spawning = api.createChildProcess();
     api.dispose();
     await expect(spawning).rejects.toThrow('disposed');
+  });
+});
+
+// Worker spawn failures: only the wrong-executable case is the user's to fix
+// (and keeps its notification); the rest is absorbed — the rationale lives on
+// the guard and the 'error' handler in `master.ts`.
+describe('RstestApi worker spawn failures', () => {
+  let api: RstestApi | undefined;
+  let reported: StackState[];
+
+  const crashes = () => reported.filter((state) => state.kind === 'crashed');
+
+  const seedConfiguredNode = (executable: string) => {
+    settings['rstack.nodeExecutable'] = executable;
+    return seedNodeProbe(executable, { kind: 'ok', version: '24.0.0' });
+  };
+
+  beforeEach(() => {
+    shownMessages.length = 0;
+    loggedWarnings.length = 0;
+    resetUserNodeCaches();
+    const recorder = createStatusRecorder();
+    reported = recorder.reported;
+    status.bind(recorder.reporter);
+  });
+
+  afterEach(() => {
+    api?.dispose();
+    api = undefined;
+    status.unbind();
+    resetUserNodeCaches();
+  });
+
+  it('should log, not notify, when the spawn cwd no longer exists', async () => {
+    await seedConfiguredNode(process.execPath);
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'rstest-gone-'));
+    // Default resolution anchors at the (deleted) cwd on purpose: the guard
+    // must fire before package resolution, which would otherwise misread the
+    // deleted directory as "@rstest/core is not installed".
+    api = createApi(cwd);
+    fs.rmSync(cwd, { recursive: true, force: true });
+
+    await expect(api.createChildProcess()).rejects.toThrow('no longer exists');
+
+    expect(shownMessages).toEqual([]);
+    expect(reported).toEqual([]);
+    expect(loggedWarnings.join('\n')).toContain(cwd);
+  });
+
+  it('should keep notifying when the executable itself fails to spawn', async () => {
+    await seedConfiguredNode(path.join(os.tmpdir(), 'no-such-node-xyz'));
+    api = createApi(packageDir);
+
+    await api.createChildProcess();
+    await expect
+      .poll(() => shownMessages[0] ?? '', { timeout: 5000 })
+      .toContain('Rstest worker process failed');
+
+    expect(crashes()).toHaveLength(1);
+  });
+
+  it('should absorb a post-spawn error instead of notifying', async () => {
+    await seedConfiguredNode(process.execPath);
+    // `--eval` wins over the worker script path, so the child is a plain
+    // long-lived node — the point is the handler, not the worker protocol.
+    settings.nodeExecArgs = [
+      '--eval',
+      'console.log("worker-up"); setInterval(() => {}, 1000)',
+    ];
+    api = createApi(packageDir);
+
+    await api.createChildProcess();
+    const child = [...((api as any).childProcesses as Set<ChildProcess>)][0]!;
+    // Await the child's first stdout chunk, not the 'spawn' event: Node gives
+    // no timing guarantee for 'spawn' relative to this continuation, while
+    // stream data is buffered until a listener attaches — and 'spawn' (which
+    // precedes all other events, setting the handler's latch) is guaranteed
+    // delivered by the time data flows.
+    await new Promise<void>((resolve) => {
+      child.stdout?.on('data', () => resolve());
+    });
+
+    child.emit('error', new Error('write EPIPE'));
+
+    expect(shownMessages).toEqual([]);
+    expect(crashes()).toEqual([]);
   });
 });
