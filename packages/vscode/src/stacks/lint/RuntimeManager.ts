@@ -16,6 +16,8 @@
 // - The extra hooks (`onDocumentFailure` / `onDocumentSettled` /
 //   `onRuntimeClosed`) exist only so the controller can keep its per-folder
 //   status fold in step; they carry no lifecycle decisions.
+// - One ahead-of-upstream fix: `reconcile` resolves before sweeping pending
+//   uses (`planDocumentCore`) — see AGENTS.md ("Ahead of upstream").
 
 import { workspace, type TextDocument, type WorkspaceFolder } from 'vscode';
 import type {
@@ -76,6 +78,21 @@ export interface RuntimeManagerOptions {
   readonly onDocumentSettled?: (document: TextDocument) => void;
   readonly onRuntimeClosed?: (resolved: ResolvedCoreRuntime) => void;
 }
+
+/** What one reconcile decided for its document, shared by the pending-use
+ * sweep and the queued operation (see `planDocumentCore`). */
+type DocumentCorePlan =
+  | { readonly action: 'detach' }
+  | {
+      readonly action: 'bind';
+      readonly workspaceFolder: WorkspaceFolder;
+      readonly resolved: ResolvedCoreRuntime;
+    }
+  | {
+      readonly action: 'report';
+      readonly workspaceFolder: WorkspaceFolder;
+      readonly error: unknown;
+    };
 
 interface RuntimeEntry {
   readonly resolved: ResolvedCoreRuntime;
@@ -159,10 +176,23 @@ export class RuntimeManager {
     if (this.closing) return;
     const key = documentKey(document);
     const epoch = this.nextDocumentEpoch(key);
-    this.releasePendingDocumentUses(key);
+    // Resolve before touching pending uses: a reconcile landing on the key a
+    // pending start is already producing must adopt that start, not tear it
+    // down mid-initialize — vscode-languageclient force-notifies ("couldn't
+    // create connection to server") when its in-flight initialize is severed,
+    // and the register-time pass, a detection change and `onDidOpen` routinely
+    // land inside one worker startup window. A key change still cancels the
+    // pending start immediately, so a hung start cannot block the tail
+    // (assumes the resolver settles — a bounded fs walk).
+    const plan = await this.planDocumentCore(document);
+    if (!this.isCurrentDocument(document, epoch)) return;
+    this.releasePendingDocumentUses(
+      key,
+      plan.action === 'bind' ? plan.resolved.key : undefined,
+    );
     await this.enqueueDocument(key, async () => {
       if (!this.isCurrentDocument(document, epoch)) return;
-      await this.reconcileCurrentDocument(document, epoch);
+      await this.reconcileCurrentDocument(document, epoch, plan);
     });
   }
 
@@ -186,12 +216,14 @@ export class RuntimeManager {
     await (this.closePromise ??= this.closeImpl());
   }
 
-  private async reconcileCurrentDocument(
+  /**
+   * The document's target, decided before the per-document tail is entered so
+   * `reconcile` can spare a pending same-key start from the pending-use sweep;
+   * the queued operation consumes the same plan so the two never disagree.
+   */
+  private async planDocumentCore(
     document: TextDocument,
-    epoch: number,
-  ): Promise<void> {
-    const key = documentKey(document);
-    const existing = this.bindings.get(key);
+  ): Promise<DocumentCorePlan> {
     const workspaceFolder = workspace.getWorkspaceFolder(document.uri);
     const mode = workspaceFolder
       ? this.options.folderMode(workspaceFolder)
@@ -201,27 +233,39 @@ export class RuntimeManager {
       !workspaceFolder ||
       mode === undefined
     ) {
-      await this.detachDocument(document);
-      return;
+      return { action: 'detach' };
     }
     const configuration = workspace.getConfiguration(
       'rstack.rslint',
       document.uri,
     );
-
-    let resolved: ResolvedCoreRuntime;
     try {
-      resolved = await this.resolver.resolve(document, workspaceFolder, {
+      const resolved = await this.resolver.resolve(document, workspaceFolder, {
         mode,
         corePath: configuration.get<string>('corePath'),
       });
+      return { action: 'bind', workspaceFolder, resolved };
     } catch (error) {
-      if (this.isCurrentDocument(document, epoch)) {
-        this.reportFailure(document, workspaceFolder, error, existing);
-      }
+      return { action: 'report', workspaceFolder, error };
+    }
+  }
+
+  private async reconcileCurrentDocument(
+    document: TextDocument,
+    epoch: number,
+    plan: DocumentCorePlan,
+  ): Promise<void> {
+    const key = documentKey(document);
+    const existing = this.bindings.get(key);
+    if (plan.action === 'detach') {
+      await this.detachDocument(document);
       return;
     }
-    if (!this.isCurrentDocument(document, epoch)) return;
+    if (plan.action === 'report') {
+      this.reportFailure(document, plan.workspaceFolder, plan.error, existing);
+      return;
+    }
+    const { workspaceFolder, resolved } = plan;
     if (existing?.resolved.key === resolved.key) {
       this.options.onDocumentSettled?.(document);
       return;
@@ -233,7 +277,9 @@ export class RuntimeManager {
       replacement = this.acquireRuntime(resolved, key);
       await replacement.startPromise;
       if (!this.isCurrentDocument(document, epoch)) {
-        await this.releaseRuntimeAfterFailure(replacement, key);
+        // A newer reconcile owns this document; its sweep already decided this
+        // entry's fate (kept for same-key adoption, released otherwise).
+        // Releasing again would tear down what the successor is binding.
         return;
       }
       await this.router.assign(document, resolved.key);
@@ -382,10 +428,15 @@ export class RuntimeManager {
     }
   }
 
-  private releasePendingDocumentUses(documentUri: string): void {
+  private releasePendingDocumentUses(
+    documentUri: string,
+    keepKey?: string,
+  ): void {
     const bound = this.bindings.get(documentUri);
     for (const entry of [...this.entries.values()]) {
       if (entry === bound || !entry.users.has(documentUri)) continue;
+      // Same key as the sweep's plan: adopt the pending start, don't restart.
+      if (entry.resolved.key === keepKey) continue;
       void this.releaseRuntime(entry, documentUri).catch((error: unknown) => {
         this.logger.error(
           `Failed to cancel pending Rslint core ${entry.resolved.installation.packageDirectory}`,
