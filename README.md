@@ -43,7 +43,7 @@ Rstack Editor is where Rstack's editor support converges: it replaces the standa
 
 | Milestone | Status |
 | --- | --- |
-| Unified `rstack.rstack` extension on VS Code Marketplace and Open VSX | ✅ Shipped |
+| Unified [`rstack.rstack`](#install) extension on VS Code Marketplace and Open VSX | ✅ Shipped |
 | Core features: linting (Rslint), testing (Rstest), formatting (`rs fmt`) | ✅ Shipped |
 | Deprecation notices on the standalone extensions' marketplace listings | 🚧 Planned |
 | Sunset of the standalone extensions (final releases, listings pointing here) | 🚧 Planned |
@@ -52,7 +52,7 @@ Rstack Editor is where Rstack's editor support converges: it replaces the standa
 
 ### About the standalone extensions
 
-The standalone extensions are retired: all new editor features land in Rstack Editor. They remain published and keep working while the transition is underway, but we recommend switching now — install `rstack.rstack` and disable or uninstall the standalone extensions so only one copy of each tool runs.
+The standalone extensions are retired: all new editor features land in Rstack Editor. They remain published and keep working while the transition is underway, but we recommend switching now — install [`rstack.rstack`](#install) and disable or uninstall the standalone extensions so only one copy of each tool runs.
 
 Settings and keybindings are **not** migrated automatically: re-enter them under the `rstack.*` keys following the [migration notes](./packages/vscode/README.md#coming-from-the-standalone-extensions).
 
