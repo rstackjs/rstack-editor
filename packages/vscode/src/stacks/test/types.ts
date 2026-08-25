@@ -23,4 +23,4 @@ export type NormalizedConfigResult =
       exclude: string[];
       childProjects: { configFilePath: string | null; root: string | null }[];
     }
-  | { ok: false; reason: 'missing-dependency'; message: string };
+  | { ok: false; message: string };

@@ -19,7 +19,7 @@ import {
  * where it has to be named (ADR 0002).
  */
 const restartHint = (stack: StackId): string =>
-  `then run "${COMMAND_CATEGORY}: ${stackCommandTitle(stack, 'restart')}" if this status stays`;
+  `then run "${COMMAND_CATEGORY}: ${stackCommandTitle(stack)}" if this status stays`;
 
 /** The `disabled` reason for a package the stack needs and cannot find. */
 export const formatNotInstalledStatus = (

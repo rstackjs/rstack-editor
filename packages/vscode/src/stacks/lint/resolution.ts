@@ -20,13 +20,23 @@ export type RslintResolutionErrorCode =
   'missing-rstack' | 'missing-core' | 'invalid-package' | 'missing-shim';
 
 export class RslintResolutionError extends Error {
+  /**
+   * The package whose absence caused this failure — set only by the
+   * not-installed throws (`resolveInstalledPackage`), the state the three
+   * stacks report uniformly (AGENTS.md). `missing-shim` and
+   * `invalid-package` leave it unset on purpose: there the package is
+   * present and the fix is an upgrade or the setting, not an install.
+   */
+  readonly missingPackage?: 'rstack' | '@rslint/core';
+
   constructor(
     readonly code: RslintResolutionErrorCode,
     message: string,
-    options?: { cause?: unknown },
+    options?: { cause?: unknown; missingPackage?: 'rstack' | '@rslint/core' },
   ) {
-    super(message, options);
+    super(message, { cause: options?.cause });
     this.name = 'RslintResolutionError';
+    this.missingPackage = options?.missingPackage;
   }
 }
 
@@ -101,6 +111,7 @@ function resolveInstalledPackage(
     throw new RslintResolutionError(
       code,
       `Could not resolve ${packageName} from ${searchRoot}`,
+      { missingPackage: packageName },
     );
   }
   return readPackageLocation(packageName, packageJsonPath);

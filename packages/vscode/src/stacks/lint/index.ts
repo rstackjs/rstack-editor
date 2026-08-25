@@ -12,7 +12,7 @@ import { Logger } from './logger';
 import { Rslint } from './Rslint';
 import type { RslintMode } from './resolution';
 import { registerRuleDocumentationProviders } from './ruleDocumentationProviders';
-import { RuntimeManager } from './RuntimeManager';
+import { formatCoreSelectionFailure, RuntimeManager } from './RuntimeManager';
 import {
   aggregateFolderStates,
   attributeToCore,
@@ -223,9 +223,8 @@ class RslintController implements StackController {
               ),
             );
           } else {
-            const suffix = keeping ? ` (keeping ${keeping} active)` : '';
             logger.error(
-              `Could not select an Rslint core for ${document.uri}${suffix}`,
+              formatCoreSelectionFailure(document.uri.toString(), keeping),
               error,
             );
           }

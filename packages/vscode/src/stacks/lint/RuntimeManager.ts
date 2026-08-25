@@ -91,6 +91,19 @@ function documentKey(document: TextDocument): string {
   return document.uri.toString();
 }
 
+/**
+ * The one wording for a document whose core selection failed, shared with
+ * the `onDocumentFailure` hook (`index.ts`), which owns the report but must
+ * not drift from the hook-less fallback below.
+ */
+export function formatCoreSelectionFailure(
+  documentUri: string,
+  keeping?: string,
+): string {
+  const suffix = keeping ? ` (keeping ${keeping} active)` : '';
+  return `Could not select an Rslint core for ${documentUri}${suffix}`;
+}
+
 function cancellationError(key: string): Error {
   const error = new Error(`Rslint runtime ${JSON.stringify(key)} was released`);
   error.name = 'AbortError';
@@ -418,9 +431,8 @@ export class RuntimeManager {
       });
       return;
     }
-    const suffix = keeping ? ` (keeping ${keeping} active)` : '';
     this.logger.error(
-      `Could not select an Rslint core for ${document.uri}${suffix}`,
+      formatCoreSelectionFailure(document.uri.toString(), keeping),
       error,
     );
   }

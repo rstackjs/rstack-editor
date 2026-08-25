@@ -30,14 +30,16 @@ export const stackCommand = (
 export const COMMAND_CATEGORY = 'Rstack';
 
 /**
- * The title side of `stackCommand`, spelled once for the same reason: a
- * status that tells the user which command to run has to say what the
- * Command Palette shows (`<category>: <title>`), and a status naming a
- * command that was renamed is not a type error. `tests/extension.test.ts`
- * checks the manifest against this.
+ * The title side of `stackCommand(stack, 'restart')`, spelled once for the
+ * same reason: a status that tells the user which command to run has to say
+ * what the Command Palette shows (`<category>: <title>`), and a status
+ * naming a command that was renamed is not a type error.
+ * `tests/extension.test.ts` checks the manifest against this. Restart is the
+ * only command a status ever points at, so there is no verb parameter until
+ * a second one exists.
  */
-export const stackCommandTitle = (stack: StackId, verb: 'restart'): string =>
-  `${verb === 'restart' ? 'Restart' : verb} ${STACK_LABELS[stack]}`;
+export const stackCommandTitle = (stack: StackId): string =>
+  `Restart ${STACK_LABELS[stack]}`;
 
 /**
  * Per-stack state machine surfaced by the status bar hover.

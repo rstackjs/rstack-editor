@@ -38,6 +38,7 @@ import {
   resolveUserNodeOnce,
 } from '../../shared/nodeResolution';
 import type { Project } from './project';
+import { injectForceColor } from './shared/colorEnv';
 import { NODE_RUNTIME_STATUS_SOURCE, status } from './status';
 import { runInTerminal as sendToTerminal, shellQuote } from './terminal';
 import { TestRunReporter } from './testRunReporter';
@@ -410,8 +411,6 @@ export class RstestApi {
       // and a mismatch re-latched now — for a root that may never come back —
       // would have nothing left to clear it.
       if (!this.disposed) {
-        // The core resolved: this root's missing install, if any, is over.
-        status.installed(this.statusSource);
         if (
           !reportVersionCheck(
             status,
@@ -466,9 +465,9 @@ export class RstestApi {
   }
 
   public async getNormalizedConfig() {
-    const worker = await this.createChildProcess();
+    const { worker, rstestPath } = await this.createChildProcess();
     const result = await worker.getNormalizedConfig({
-      rstestPath: this.resolveRstestPath(),
+      rstestPath,
       configFilePath: this.configFilePath,
     });
     worker.$close();
@@ -476,9 +475,9 @@ export class RstestApi {
   }
 
   public async listTests(include?: string[]) {
-    const worker = await this.createChildProcess();
+    const { worker, rstestPath } = await this.createChildProcess();
     const tests = await worker.listTests({
-      rstestPath: this.resolveRstestPath(),
+      rstestPath,
       configFilePath: this.configFilePath,
       include,
       includeTaskLocation: true,
@@ -539,7 +538,7 @@ export class RstestApi {
       errorStore,
     );
 
-    const worker = await this.createChildProcess(
+    const { worker, rstestPath } = await this.createChildProcess(
       testRunReporter,
       kind === vscode.TestRunProfileKind.Debug,
       run,
@@ -558,7 +557,7 @@ export class RstestApi {
           : undefined,
         update: updateSnapshot,
         configFilePath: this.configFilePath,
-        rstestPath: this.resolveRstestPath(),
+        rstestPath,
         coverage: coverageEnabled ? { enabled: true } : undefined,
         includeTaskLocation: true,
       })
@@ -688,6 +687,9 @@ export class RstestApi {
       logger.warn(message);
       throw new Error(message);
     }
+    // Resolved once per spawn and handed back to the caller: the callers'
+    // worker requests need the same path, and re-resolving would repeat the
+    // uncached `node_modules` walk (and its status reporting).
     const rstestPath = this.resolveRstestPath();
     if (!rstestPath) {
       throw new ReportedRstestResolutionError();
@@ -732,6 +734,20 @@ export class RstestApi {
       nodeExecutable,
       nodeExecArgs,
     });
+    const workerEnv: NodeJS.ProcessEnv = {
+      // same as packages/core/src/cli/prepare.ts
+      // if (!process.env.NODE_ENV) process.env.NODE_ENV = 'test'
+      NODE_ENV: 'test',
+      ...process.env,
+      ...nodeEnv,
+      ...debugNodeEnv,
+      // process.env.RSTEST = 'true';
+      RSTEST: 'true',
+    };
+    // Upstream sets FORCE_COLOR: '1' unconditionally; ours is conditional and
+    // the worker retracts it when the config disables color (adaptation #9,
+    // shared/colorEnv.ts).
+    injectForceColor(workerEnv);
     const rstestProcess = spawn(
       nodeExecutable,
       [...nodeExecArgs, ...execArgv, workerPath],
@@ -739,17 +755,7 @@ export class RstestApi {
         cwd: this.cwd,
         stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
         serialization: 'advanced',
-        env: {
-          // same as packages/core/src/cli/prepare.ts
-          // if (!process.env.NODE_ENV) process.env.NODE_ENV = 'test'
-          NODE_ENV: 'test',
-          ...process.env,
-          ...nodeEnv,
-          ...debugNodeEnv,
-          // process.env.RSTEST = 'true';
-          RSTEST: 'true',
-          FORCE_COLOR: '1',
-        },
+        env: workerEnv,
       },
     );
     this.childProcesses.add(rstestProcess);
@@ -764,6 +770,11 @@ export class RstestApi {
       logger.error('[worker stderr]', content.trimEnd());
     });
 
+    // One shared send callback rather than a fresh closure per message: birpc
+    // answers every reporter call, so a large run sends thousands of times.
+    const onSendError = (error: Error | null) => {
+      if (error) logger.debug('IPC send to worker failed', error);
+    };
     const worker = createBirpc<Worker, TestRunReporter>(testRunReporter, {
       // Target the local process rather than the shared field, which is
       // reassigned on every spawn; skip once the IPC channel is gone. The
@@ -771,10 +782,7 @@ export class RstestApi {
       // message losing the race against the worker's death — as a process
       // 'error' event instead.
       post: (data) => {
-        if (rstestProcess.connected)
-          rstestProcess.send(data, (error) => {
-            if (error) logger.debug('IPC send to worker failed', error);
-          });
+        if (rstestProcess.connected) rstestProcess.send(data, onSendError);
       },
       on: (fn) => rstestProcess.on('message', fn),
       bind: 'functions',
@@ -884,7 +892,7 @@ export class RstestApi {
       }
     }
 
-    return worker;
+    return { worker, rstestPath };
   }
 
   public dispose() {

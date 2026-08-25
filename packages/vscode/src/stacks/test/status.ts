@@ -138,7 +138,10 @@ class StatusHolder implements StatusReporter {
     }
   }
 
+  // Like `notInstalled`, re-raised on every refresh pass with the same words
+  // (the bridge re-resolves per pass), so an unchanged entry is not restated.
   versionMismatch(detail: string, source = ''): void {
+    if (this.#mismatches.get(source) === detail) return;
     this.#restatePackageState(this.#mismatches, source);
     this.#mismatches.set(source, detail);
     this.#paintOrRun();
@@ -150,10 +153,19 @@ class StatusHolder implements StatusReporter {
     this.#paintOrRun();
   }
 
-  /** A package version check passed: that root's previous mismatch is resolved. */
+  /**
+   * A package version check passed. A version was read, so the package is
+   * necessarily installed: this one observation ends both a previous
+   * mismatch and a previous missing install — the recovery-side restatement
+   * mirroring `#restatePackageState`, so a success site cannot forget half
+   * the clearing (`crashed` stays: it is a fact about the worker, not the
+   * package). `installed` below survives for the `config-deps:` namespace,
+   * which has no version verdict.
+   */
   versionOk(source = ''): void {
-    if (!this.#mismatches.delete(source)) return;
-    this.#paintOrRun();
+    const hadMismatch = this.#mismatches.delete(source);
+    const hadNotInstalled = this.#notInstalled.delete(source);
+    if (hadMismatch || hadNotInstalled) this.#paintOrRun();
   }
 
   /**

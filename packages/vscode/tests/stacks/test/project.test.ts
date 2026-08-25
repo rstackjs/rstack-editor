@@ -226,7 +226,6 @@ describe('Project config/cwd/package-resolution decoupling', () => {
     // error's `code` still existed.
     normalizedConfigResult = {
       ok: false,
-      reason: 'missing-dependency',
       message: `Cannot find package '@rsbuild/plugin-react' imported from ${rstackConfig.fsPath}`,
     };
     const { reporter, reported } = createStatusRecorder();

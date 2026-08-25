@@ -43,6 +43,14 @@ import { status } from './status';
 /** Relative to the `rstack` package root. Same file `rs test` injects. */
 const SHIM_RELATIVE_PATH = path.join('dist', 'rstestConfig.js');
 
+// Both arguments are literals (`CORE_NOT_INSTALLED_STATUS` in master.ts is
+// the same shape), so the status is one string instead of one per refresh
+// pass.
+const RSTACK_NOT_INSTALLED_STATUS = formatNotInstalledStatus(
+  'rstest',
+  'rstack',
+);
+
 export type RstackShim = {
   /** Absolute path of `<rstack>/dist/rstestConfig.js`. */
   readonly configFilePath: string;
@@ -89,10 +97,7 @@ export function resolveRstackShim(
     // status stays until this directory resolves or stops being a candidate.
     // A stale mismatch from a previously-present install is retired by the
     // latch itself (a package-state observation restates its root).
-    status.notInstalled(
-      formatNotInstalledStatus('rstest', 'rstack'),
-      configDir,
-    );
+    status.notInstalled(RSTACK_NOT_INSTALLED_STATUS, configDir);
     return undefined;
   }
 
@@ -130,10 +135,9 @@ export function resolveRstackShim(
     packageDirectory,
     version,
   });
-  // At most one of the two latches can be live (a package-state observation
-  // restates its root), so this repaints once, whichever failure the
-  // previous pass observed.
+  // One recovery observation: a passed version check proves the package is
+  // installed, so `versionOk` retires whichever of the two latches the
+  // previous pass left.
   status.versionOk(configDir);
-  status.installed(configDir);
   return { configFilePath, packageDirectory, version };
 }
