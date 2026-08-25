@@ -517,15 +517,21 @@ describe('RstestApi worker spawn failures', () => {
     await seedConfiguredNode(process.execPath);
     // `--eval` wins over the worker script path, so the child is a plain
     // long-lived node — the point is the handler, not the worker protocol.
-    settings.nodeExecArgs = ['--eval', 'setInterval(() => {}, 1000)'];
+    settings.nodeExecArgs = [
+      '--eval',
+      'console.log("worker-up"); setInterval(() => {}, 1000)',
+    ];
     api = createApi(packageDir);
 
     await api.createChildProcess();
     const child = [...((api as any).childProcesses as Set<ChildProcess>)][0]!;
-    // The handler's spawned latch is set by the master's own 'spawn'
-    // listener, which registered first and therefore runs first.
+    // Await the child's first stdout chunk, not the 'spawn' event: Node gives
+    // no timing guarantee for 'spawn' relative to this continuation, while
+    // stream data is buffered until a listener attaches — and 'spawn' (which
+    // precedes all other events, setting the handler's latch) is guaranteed
+    // delivered by the time data flows.
     await new Promise<void>((resolve) => {
-      child.once('spawn', () => resolve());
+      child.stdout?.on('data', () => resolve());
     });
 
     child.emit('error', new Error('write EPIPE'));
