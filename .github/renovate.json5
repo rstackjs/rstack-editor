@@ -26,9 +26,11 @@
     // The Rstack toolchain is what this repo exists to support and it ships
     // every few days, so it opts out of the weekly window entirely: a PR is
     // opened on the next run after a release. `schedule:weekly` still governs
-    // everything else, and `github>rstackjs/renovate:security` already waives
-    // the release-age cooldown for the same set. Listed after `all-patch` so
-    // these land in their own PR instead of the weekly patch roll-up.
+    // everything else. This group owns its cooldown policy end-to-end:
+    // `minimumReleaseAge: null` waives the security preset's 1-day cooldown
+    // for every package listed here, rather than relying on the preset's own
+    // waiver list staying in sync. Listed after `all-patch` so these land in
+    // their own PR instead of the weekly patch roll-up.
     //
     // This includes `@rslint/core`, `@rstest/core` and `rstack`, whose ranges
     // sit alongside the runtime `SUPPORT_MATRIX` (shared/versionCheck.ts).
@@ -50,6 +52,7 @@
         'rstack',
       ],
       schedule: ['at any time'],
+      minimumReleaseAge: null,
     },
   ],
 }
