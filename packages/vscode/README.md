@@ -42,8 +42,6 @@ The project-resolved packages are checked against a support matrix at runtime; a
 | `@rstest/core` | `>=0.6.0` |
 | `rstack`       | `>=0.6.1` |
 
-`rstack` 0.6.1 and `@rslint/core` 0.8.0 provide the explicit lint config protocol used by the Rstack bridge. Older releases report `version mismatch`.
-
 ## Auto-fix on save (Rslint)
 
 To automatically fix lint issues when saving, add this to your VS Code settings (`.vscode/settings.json`):
@@ -106,7 +104,7 @@ Formatting runs one `rs fmt` language server per workspace folder, which loads `
 
 ## Coming from the standalone extensions
 
-Settings and keybindings are not carried over from the retired `rstack.rslint` / `rstack.rstest` extensions: re-enter your settings under the `rstack.*` keys listed above and re-bind any keybinding to the new `rstack.*` command ids. Legacy `rslint.binPath` / `rslint.customBinPath` have no equivalent — use `rstack.rslint.corePath` to point at an `@rslint/core` package directory if you still need an override.
+Disable or uninstall the retired `rstack.rslint` / `rstack.rstest` extensions so only one copy of each tool runs. Settings and keybindings are not carried over from them: re-enter your settings under the `rstack.*` keys listed above and re-bind any keybinding to the new `rstack.*` command ids. Legacy `rslint.binPath` / `rslint.customBinPath` have no equivalent — use `rstack.rslint.corePath` to point at an `@rslint/core` package directory if you still need an override.
 
 ## Community
 
