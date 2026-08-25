@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import net from 'node:net';
 import path, { dirname } from 'node:path';
 import { type BirpcReturn, createBirpc } from 'birpc';
@@ -650,6 +650,19 @@ export class RstestApi {
     return `worker spawn skipped: project directory ${this.cwd} no longer exists; the project will be re-detected if it comes back`;
   }
 
+  // Deliberately narrower than `!existsSync`: a cwd hidden by a permission
+  // failure (EACCES on it or an ancestor) is a state the user must fix, so it
+  // has to keep failing loudly — only "really not there" may be absorbed.
+  private cwdIsGone(): boolean {
+    try {
+      statSync(this.cwd);
+      return false;
+    } catch (error) {
+      const { code } = error as NodeJS.ErrnoException;
+      return code === 'ENOENT' || code === 'ENOTDIR';
+    }
+  }
+
   public async createChildProcess(
     testRunReporter = new TestRunReporter(),
     startDebugging?: boolean,
@@ -660,6 +673,20 @@ export class RstestApi {
     // just spares a retired master the package resolution and probe costs.
     if (this.disposed) {
       throw new Error('worker spawn aborted: this master is disposed');
+    }
+    // A project directory deleted under a live master (branch switch,
+    // `git clean`, a build wiping fixtures) is a stale-project state, not a
+    // runtime the user must fix: detection watches the config file and will
+    // drop or re-add the project. Refusing here — before package resolution,
+    // which would misread the deleted directory as "@rstest/core is not
+    // installed" (or notify for a `rstestPackagePath` inside it) — spares
+    // the caller a worker whose every call rejects with an opaque
+    // "[birpc] rpc is closed", and spares the user Node's misreading of a
+    // missing cwd as "spawn node ENOENT".
+    if (this.cwdIsGone()) {
+      const message = this.missingCwdMessage();
+      logger.warn(message);
+      throw new Error(message);
     }
     const rstestPath = this.resolveRstestPath();
     if (!rstestPath) {
@@ -695,18 +722,6 @@ export class RstestApi {
       throw new Error(
         'worker spawn aborted: this master was disposed while its Node runtime was being resolved',
       );
-    }
-    // A project directory deleted under a live master (branch switch,
-    // `git clean`, a build wiping fixtures) is a stale-project state, not a
-    // runtime the user must fix: detection watches the config file and will
-    // drop or re-add the project. Refusing here, before the spawn, spares
-    // the caller a worker whose every call rejects with an opaque
-    // "[birpc] rpc is closed" — and spares the user Node's misreading of a
-    // missing cwd as "spawn node ENOENT".
-    if (!existsSync(this.cwd)) {
-      const message = this.missingCwdMessage();
-      logger.warn(message);
-      throw new Error(message);
     }
     const nodeEnv = getConfigValue('nodeEnv', this.workspace);
     const debugNodeEnv = startDebugging
@@ -792,7 +807,7 @@ export class RstestApi {
         // the user to fix; the 'exit' handler already reports an exit nobody
         // asked for. Same shape as `LanguageServerProcessOwner`'s handler.
         logger.debug('Worker process error after spawn', error);
-      } else if (!existsSync(this.cwd)) {
+      } else if (this.cwdIsGone()) {
         // The cwd was deleted between the pre-spawn guard and the spawn —
         // Node blames the executable ("spawn node ENOENT") when it is the
         // cwd that is gone. Same stale-project state, same quiet report.

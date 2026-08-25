@@ -488,13 +488,16 @@ describe('RstestApi worker spawn failures', () => {
   it('should log, not notify, when the spawn cwd no longer exists', async () => {
     await seedConfiguredNode(process.execPath);
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'rstest-gone-'));
-    api = createApi(cwd, packageDir);
+    // Default resolution anchors at the (deleted) cwd on purpose: the guard
+    // must fire before package resolution, which would otherwise misread the
+    // deleted directory as "@rstest/core is not installed".
+    api = createApi(cwd);
     fs.rmSync(cwd, { recursive: true, force: true });
 
     await expect(api.createChildProcess()).rejects.toThrow('no longer exists');
 
     expect(shownMessages).toEqual([]);
-    expect(crashes()).toEqual([]);
+    expect(reported).toEqual([]);
     expect(loggedWarnings.join('\n')).toContain(cwd);
   });
 
