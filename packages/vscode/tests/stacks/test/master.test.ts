@@ -494,7 +494,12 @@ describe('RstestApi worker spawn failures', () => {
     api = createApi(cwd);
     fs.rmSync(cwd, { recursive: true, force: true });
 
-    await expect(api.createChildProcess()).rejects.toThrow('no longer exists');
+    // The reported-error class keeps the quiet classification through the
+    // callers — `logUnlessReported` must not re-log this as a failure.
+    await expect(api.createChildProcess()).rejects.toMatchObject({
+      name: 'ReportedRstestResolutionError',
+      message: expect.stringContaining('no longer exists'),
+    });
 
     expect(shownMessages).toEqual([]);
     expect(reported).toEqual([]);

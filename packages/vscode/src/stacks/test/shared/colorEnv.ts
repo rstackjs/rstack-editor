@@ -42,11 +42,14 @@ export function injectForceColor(env: NodeJS.ProcessEnv): void {
 
 /**
  * Retract an earlier injection if the loaded config set `NO_COLOR`. Call in
- * the worker, right after the config has been evaluated.
+ * the worker, right after the config has been evaluated. The marker is
+ * removed either way: the decision is complete, and pool processes, user
+ * test code and their children must not observe an extension-only variable
+ * the bare CLI never supplies.
  */
 export function retractForceColorIfDisabled(env: NodeJS.ProcessEnv): void {
   if (env[INJECTED_MARKER] === '1' && env.NO_COLOR !== undefined) {
     delete env.FORCE_COLOR;
-    delete env[INJECTED_MARKER];
   }
+  delete env[INJECTED_MARKER];
 }

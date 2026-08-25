@@ -685,7 +685,7 @@ export class RstestApi {
     if (this.cwdIsGone()) {
       const message = this.missingCwdMessage();
       logger.warn(message);
-      throw new Error(message);
+      throw new ReportedRstestResolutionError(message);
     }
     // Resolved once per spawn and handed back to the caller: the callers'
     // worker requests need the same path, and re-resolving would repeat the

@@ -63,6 +63,31 @@ describe('StatusHolder failure latches', () => {
     expect(calls.slice(2)).toEqual(['mismatch:rstack too old']);
   });
 
+  it('retires a stale crash even when the re-raised verdict is unchanged', () => {
+    // A re-raise means a fresh resolution pass ran, so the crashed worker is
+    // gone — e.g. a retry that aborts before spawning (occupied debug port)
+    // never reaches `workerSpawned`, and only the restatement can clear the
+    // old spawn failure. The dedupe must not short-circuit past it.
+    const calls = bindRecorder();
+    status.versionMismatch('core too old', '/a');
+    status.crashed('spawn ENOENT', '/a');
+    status.versionMismatch('core too old', '/a');
+    expect(calls).toEqual([
+      'mismatch:core too old',
+      'crashed:spawn ENOENT',
+      'mismatch:core too old',
+    ]);
+  });
+
+  it('stays silent on an identical re-raise with nothing else latched', () => {
+    const calls = bindRecorder();
+    status.notInstalled('core missing', '/a');
+    status.notInstalled('core missing', '/a');
+    status.versionMismatch('core too old', '/b');
+    status.versionMismatch('core too old', '/b');
+    expect(calls).toEqual(['report:disabled', 'mismatch:core too old']);
+  });
+
   it('lets a package-state observation retire a stale crash', () => {
     // The crash's only other exit is `workerSpawned`, which cannot happen
     // while the package is unusable — a fresh resolution verdict restates

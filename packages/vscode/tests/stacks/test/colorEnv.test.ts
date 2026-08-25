@@ -29,6 +29,9 @@ describe('injectForceColor', () => {
 });
 
 describe('retractForceColorIfDisabled', () => {
+  // Both paths also assert the internal marker is gone: pool processes and
+  // user test code must not observe an extension-only variable the bare CLI
+  // never supplies.
   it('retracts the injection when the config set NO_COLOR', () => {
     const env: NodeJS.ProcessEnv = {};
     injectForceColor(env);
@@ -36,6 +39,7 @@ describe('retractForceColorIfDisabled', () => {
     retractForceColorIfDisabled(env);
     expect(env.FORCE_COLOR).toBeUndefined();
     expect(env.NO_COLOR).toBe('1');
+    expect(env.RSTACK_FORCE_COLOR_INJECTED).toBeUndefined();
   });
 
   it('leaves the injection alone when the config set nothing', () => {
@@ -43,6 +47,7 @@ describe('retractForceColorIfDisabled', () => {
     injectForceColor(env);
     retractForceColorIfDisabled(env);
     expect(env.FORCE_COLOR).toBe('1');
+    expect(env.RSTACK_FORCE_COLOR_INJECTED).toBeUndefined();
   });
 
   it('never touches a user-set FORCE_COLOR (that conflict warns in the bare CLI too)', () => {

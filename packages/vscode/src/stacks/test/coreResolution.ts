@@ -1,7 +1,9 @@
 /**
- * Classifying and reporting failed Rstest resolutions — the host-side helpers
- * for a `@rstest/core` that cannot be resolved. (The worker-side classifier
- * for a config whose own import failed is `shared/missingDependency.ts`.)
+ * Classifying and reporting failed Rstest worker setups — the host-side
+ * helpers for a `@rstest/core` that cannot be resolved, and the
+ * already-reported marker for any setup failure whose actionable state was
+ * logged where it was observed. (The worker-side classifier for a config
+ * whose own import failed is `shared/missingDependency.ts`.)
  *
  * Every message here replaces Node's own `MODULE_NOT_FOUND` text, which
  * embeds a multi-line require stack and says nothing about what to do. An
@@ -11,16 +13,26 @@
  * has to fix, so it is notified.
  */
 
+import { logger } from './logger';
+
 /**
- * Resolution failed after the actionable error was already logged or shown.
- * Callers still reject so project initialization stops, but must not report the
- * same failure again.
+ * The worker could not be set up, and the actionable state was already logged
+ * or shown — a core that did not resolve, or a spawn refused because the
+ * project directory is gone. Callers still reject so the operation stops, but
+ * must not report the same failure again: catch sites log through
+ * `logUnlessReported` below instead of re-deciding.
  */
 export class ReportedRstestResolutionError extends Error {
-  constructor() {
-    super('Failed to resolve rstest path');
+  constructor(message = 'Failed to resolve rstest path') {
+    super(message);
     this.name = 'ReportedRstestResolutionError';
   }
+}
+
+/** The catch-site half of the contract above. */
+export function logUnlessReported(message: string, error: unknown): void {
+  if (error instanceof ReportedRstestResolutionError) return;
+  logger.error(message, error);
 }
 
 // Whether `specifier` itself is what could not be found. `MODULE_NOT_FOUND`
