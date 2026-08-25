@@ -8,7 +8,7 @@ Thanks for your interest in contributing to Rstack Editor!
 - pnpm: pinned via the `packageManager` field — run `corepack enable pnpm` once and the right version is used automatically.
 
 ```bash
-pnpm install   # also installs the git hooks (rs setup)
+pnpm install   # also installs the git hooks (rs hooks)
 ```
 
 ## Development

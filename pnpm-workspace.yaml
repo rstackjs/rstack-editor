@@ -15,3 +15,7 @@ minimumReleaseAgeExclude:
   - rstack
   - '@rslint/core'
   - '@rstest/core'
+  - '@rsbuild/core'
+  - '@rslib/core'
+  - '@rstackjs/*'
+  - rsbuild-plugin-dts
