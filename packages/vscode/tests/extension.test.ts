@@ -482,7 +482,7 @@ describe('the shell restart command', () => {
           (entry) => entry.command === command,
         ),
       ).toMatchObject({
-        title: stackCommandTitle(stack, 'restart'),
+        title: stackCommandTitle(stack),
         category: COMMAND_CATEGORY,
       });
     }

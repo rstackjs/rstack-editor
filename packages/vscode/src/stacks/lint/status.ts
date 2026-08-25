@@ -1,10 +1,7 @@
 import type { StackState } from '../../types';
 import { formatNotInstalledStatus } from '../../shared/notInstalled';
 import type { SupportedPackage } from '../../shared/versionCheck';
-import {
-  RslintResolutionError,
-  type RslintResolutionErrorCode,
-} from './resolution';
+import { RslintResolutionError } from './resolution';
 
 export class RslintVersionMismatchError extends Error {
   constructor(message: string) {
@@ -16,27 +13,15 @@ export class RslintVersionMismatchError extends Error {
 /**
  * The package whose absence makes this failure the not-installed state the
  * three stacks report uniformly (AGENTS.md) — a `disabled` status and a
- * one-line warning, never a crash or a stack trace. `missing-rstack` is a
- * bridged folder without `rstack`; `missing-core` is a native folder on a
- * fresh clone (a bridged folder reaches it only when rstack's own dependency
- * is gone — an interrupted install, where installing is still the fix).
- * `missing-shim` stays an error: the package is there, its version is wrong.
- * A misconfigured `corePath` is `invalid-package`, also an error: the fix is
- * the setting, not an install.
+ * one-line warning, never a crash or a stack trace. The verdict is the throw
+ * site's, carried on the error (`RslintResolutionError.missingPackage`), so
+ * a new resolution failure cannot silently fall through to `crashed` here by
+ * missing a mapping.
  */
-const NOT_INSTALLED_PACKAGE: Partial<
-  Record<RslintResolutionErrorCode, SupportedPackage>
-> = {
-  'missing-rstack': 'rstack',
-  'missing-core': '@rslint/core',
-};
-
 export const missingPackageOf = (
   error: unknown,
 ): SupportedPackage | undefined =>
-  error instanceof RslintResolutionError
-    ? NOT_INSTALLED_PACKAGE[error.code]
-    : undefined;
+  error instanceof RslintResolutionError ? error.missingPackage : undefined;
 
 export const statusForRslintStartFailure = (error: unknown): StackState => {
   if (error instanceof RslintVersionMismatchError) {

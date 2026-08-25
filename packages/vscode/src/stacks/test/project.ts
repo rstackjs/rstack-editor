@@ -10,7 +10,7 @@ import {
   formatConfigDependencyMissingLog,
   formatConfigDependencyMissingStatus,
 } from '../../shared/notInstalled';
-import { ReportedRstestResolutionError } from './coreResolution';
+import { logUnlessReported } from './coreResolution';
 import { logger } from './logger';
 import { RstestApi } from './master';
 import { type ChildProjectRef, computeCoveredConfigs } from './projectCoverage';
@@ -606,9 +606,7 @@ export class Project implements vscode.Disposable {
       .catch((error) => {
         if (this.cancellationSource.token.isCancellationRequested) return;
         this.configLoadFailed = true;
-        if (!(error instanceof ReportedRstestResolutionError)) {
-          logger.error('Failed to initialize project config', error);
-        }
+        logUnlessReported('Failed to initialize project config', error);
         // Let the manager settle its tree even when a config fails to load.
         this.onConfigResolved?.();
       });
@@ -788,7 +786,10 @@ export class Project implements vscode.Disposable {
               })
               .catch((error) => {
                 if (!token.isCancellationRequested) {
-                  logger.error('Failed to update runtime test list', error);
+                  logUnlessReported(
+                    'Failed to update runtime test list',
+                    error,
+                  );
                 }
               });
           };
@@ -821,7 +822,7 @@ export class Project implements vscode.Disposable {
           });
         } catch (error) {
           if (!token.isCancellationRequested) {
-            logger.error('Failed to collect test files', error);
+            logUnlessReported('Failed to collect test files', error);
           }
         } finally {
           if (this.testItem) {

@@ -1,8 +1,9 @@
 import { pathToFileURL } from 'node:url';
 import { createBirpc } from 'birpc';
 import type { TestRunReporter } from '../testRunReporter';
-import { missingDependencyCauseOf } from '../coreResolution';
+import { missingDependencyCauseOf } from '../../../shared/missingDependency';
 import type { NormalizedConfigResult, WorkerInitOptions } from '../types';
+import { retractForceColorIfDisabled } from '../shared/colorEnv';
 import { logger } from './logger';
 import { CoverageReporter, ProgressLogger, ProgressReporter } from './reporter';
 
@@ -30,6 +31,9 @@ export class Worker {
       config: configFilePath,
     });
     const { projects, config: initializedConfig } = initializedOptions;
+    // The config may have set NO_COLOR just now — the CLI's own decision
+    // point is also right after config load (adaptation #9, colorEnv.ts).
+    retractForceColorIfDisabled(process.env);
     logger.debug('initializedOptions', initializedOptions);
 
     const rstest = createRstest(
@@ -92,7 +96,7 @@ export class Worker {
       // where the config's dependencies are installed.
       const cause = missingDependencyCauseOf(error, process.cwd());
       if (cause !== undefined) {
-        return { ok: false, reason: 'missing-dependency', message: cause };
+        return { ok: false, message: cause };
       }
       throw error;
     }

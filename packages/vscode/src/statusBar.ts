@@ -6,6 +6,7 @@ import {
   STACK_IDS,
   STACK_LABELS,
   stackCommand,
+  stackCommandTitle,
 } from './types';
 
 /** The item's resting look: no stack is in a state worth colouring for. */
@@ -373,7 +374,7 @@ export class StatusBar implements vscode.Disposable {
           anchor(
             stackCommand(stack, 'restart'),
             '$(refresh)',
-            `Restart ${label}`,
+            stackCommandTitle(stack),
           ),
         );
       }

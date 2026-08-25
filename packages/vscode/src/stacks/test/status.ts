@@ -131,17 +131,29 @@ class StatusHolder implements StatusReporter {
    * exit, `workerSpawned`, cannot happen while the package is unusable.
    * `crashed` above supersedes nothing: it is a fact about the worker,
    * arriving while the package state stays whatever it was.
+   *
+   * Both observations are re-raised on every refresh pass with the same
+   * words (the bridge re-resolves per pass), so an unchanged observation is
+   * not repainted. The restatement still runs first: a re-raise means a
+   * fresh resolution pass ran, so a crash latched in between — whose worker
+   * is gone — is retired even when the verdict itself did not change.
    */
-  #restatePackageState(keep: Map<string, string>, source: string): void {
-    for (const latch of [this.#crashes, this.#mismatches, this.#notInstalled]) {
-      if (latch !== keep) latch.delete(source);
+  #observePackageState(
+    latch: Map<string, string>,
+    detail: string,
+    source: string,
+  ): void {
+    let retired = false;
+    for (const other of [this.#crashes, this.#mismatches, this.#notInstalled]) {
+      if (other !== latch && other.delete(source)) retired = true;
     }
+    if (!retired && latch.get(source) === detail) return;
+    latch.set(source, detail);
+    this.#paintOrRun();
   }
 
   versionMismatch(detail: string, source = ''): void {
-    this.#restatePackageState(this.#mismatches, source);
-    this.#mismatches.set(source, detail);
-    this.#paintOrRun();
+    this.#observePackageState(this.#mismatches, detail, source);
   }
 
   /** A worker process came up: that root's previous spawn failure is over. */
@@ -150,23 +162,24 @@ class StatusHolder implements StatusReporter {
     this.#paintOrRun();
   }
 
-  /** A package version check passed: that root's previous mismatch is resolved. */
+  /**
+   * A package version check passed. A version was read, so the package is
+   * necessarily installed: this one observation ends both a previous
+   * mismatch and a previous missing install — the recovery-side restatement
+   * mirroring `#observePackageState`, so a success site cannot forget half
+   * the clearing (`crashed` stays: it is a fact about the worker, not the
+   * package). `installed` below survives for the `config-deps:` namespace,
+   * which has no version verdict.
+   */
   versionOk(source = ''): void {
-    if (!this.#mismatches.delete(source)) return;
-    this.#paintOrRun();
+    const hadMismatch = this.#mismatches.delete(source);
+    const hadNotInstalled = this.#notInstalled.delete(source);
+    if (hadMismatch || hadNotInstalled) this.#paintOrRun();
   }
 
-  /**
-   * A root's dependencies are not installed: `disabled`, with the way out.
-   * Unlike the crash and mismatch latches this one is re-raised on every
-   * refresh pass and worker spawn with the same words, so an unchanged entry
-   * is not repainted.
-   */
+  /** A root's dependencies are not installed: `disabled`, with the way out. */
   notInstalled(reason: string, source = ''): void {
-    if (this.#notInstalled.get(source) === reason) return;
-    this.#restatePackageState(this.#notInstalled, source);
-    this.#notInstalled.set(source, reason);
-    this.#paintOrRun();
+    this.#observePackageState(this.#notInstalled, reason, source);
   }
 
   /** A resolution under that root succeeded: its missing install is over. */

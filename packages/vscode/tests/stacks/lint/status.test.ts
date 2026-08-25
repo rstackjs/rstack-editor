@@ -13,30 +13,40 @@ import {
 describe('Rslint status classification', () => {
   it('disables a folder whose package is not installed', () => {
     // Both not-installed shapes take the uniform disabled state (AGENTS.md):
-    // a bridged folder without rstack, a fresh clone without the core.
+    // a bridged folder without rstack, a fresh clone without the core. The
+    // verdict rides on the error (`missingPackage`), set by the throw site.
     expect(
       statusForRslintStartFailure(
-        new RslintResolutionError('missing-rstack', 'missing rstack'),
+        new RslintResolutionError('missing-rstack', 'missing rstack', {
+          missingPackage: 'rstack',
+        }),
       ),
     ).toMatchObject({ kind: 'disabled' });
     expect(
       statusForRslintStartFailure(
-        new RslintResolutionError('missing-core', 'missing core'),
+        new RslintResolutionError('missing-core', 'missing core', {
+          missingPackage: '@rslint/core',
+        }),
       ),
     ).toMatchObject({ kind: 'disabled' });
   });
 
   it('names the package a not-installed failure is missing', () => {
     // The same boundary the status and the warn line use: a missing package
-    // is the disabled state; a present-but-broken install is an error.
+    // is the disabled state; a present-but-broken install is an error, so
+    // the not-installed throws carry `missingPackage` and the rest do not.
     expect(
       missingPackageOf(
-        new RslintResolutionError('missing-rstack', 'missing rstack'),
+        new RslintResolutionError('missing-rstack', 'missing rstack', {
+          missingPackage: 'rstack',
+        }),
       ),
     ).toBe('rstack');
     expect(
       missingPackageOf(
-        new RslintResolutionError('missing-core', 'missing core'),
+        new RslintResolutionError('missing-core', 'missing core', {
+          missingPackage: '@rslint/core',
+        }),
       ),
     ).toBe('@rslint/core');
     expect(

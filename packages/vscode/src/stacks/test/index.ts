@@ -4,6 +4,7 @@ import type {
   StackContext,
   StackController,
 } from '../../types';
+import { logUnlessReported } from './coreResolution';
 import { RstestDiagnostics } from './diagnostics';
 import { TestErrorStore, testMessageText } from './errorStore';
 import { logger } from './logger';
@@ -486,7 +487,7 @@ class Rstest implements vscode.Disposable {
         request.include ?? gatherTestItems(this.ctrl.items, false),
       );
     } catch (error) {
-      logger.error('Error running tests:', error);
+      logUnlessReported('Error running tests:', error);
     } finally {
       run.end();
     }
