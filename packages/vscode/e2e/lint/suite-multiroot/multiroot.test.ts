@@ -1,5 +1,6 @@
-// Ported verbatim from web-infra-dev/rslint
-// `packages/vscode-extension/__tests__/suite-multiroot/multiroot.test.ts` (origin/main).
+// Ported from web-infra-dev/rslint
+// `packages/vscode-extension/__tests__/suite-multiroot/multiroot.test.ts` (origin/main),
+// with timing deviations documented inline (assertion semantics unchanged).
 import * as assert from 'node:assert';
 import path from 'node:path';
 import * as vscode from 'vscode';
@@ -31,7 +32,11 @@ function rslintDiagnostics(document: vscode.TextDocument): vscode.Diagnostic[] {
 async function waitForSingleRslintDiagnostic(
   document: vscode.TextDocument,
 ): Promise<vscode.Diagnostic[]> {
-  const deadline = Date.now() + 30_000;
+  // Deviation from upstream (30s): an ownership handoff spawns a fresh lint
+  // worker for the new owning folder, and that cold start has exceeded 30s on
+  // GitHub's windows runners (CI run 32718392387). The assertion semantics are
+  // unchanged — only the deadline is wider.
+  const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     const diagnostics = rslintDiagnostics(document);
     if (
@@ -63,7 +68,9 @@ async function waitForSingleRslintDiagnostic(
 }
 
 suite('VS Code multi-root ownership', function () {
-  this.timeout(60_000);
+  // Deviation from upstream (60s): the dynamic-ownership test below waits for
+  // up to three diagnostic publications, each with the widened 60s deadline.
+  this.timeout(240_000);
 
   test('keeps same-name roots independent', async function () {
     const appFolders = (vscode.workspace.workspaceFolders ?? []).filter(
