@@ -809,6 +809,7 @@ export class RstestApi {
     });
 
     rstestProcess.on('error', (error) => {
+      let closeError: Error | undefined;
       if (spawned) {
         // Post-spawn errors (a failed kill(), an IPC write losing the race
         // against the worker's death) are teardown noise with nothing for
@@ -818,8 +819,13 @@ export class RstestApi {
       } else if (this.cwdIsGone()) {
         // The cwd was deleted between the pre-spawn guard and the spawn —
         // Node blames the executable ("spawn node ENOENT") when it is the
-        // cwd that is gone. Same stale-project state, same quiet report.
-        logger.warn(this.missingCwdMessage());
+        // cwd that is gone. Same stale-project state, same quiet report —
+        // including the pending RPCs: without the reported-error class they
+        // would reject with a bare birpc error, which the callers' catches
+        // (`logUnlessReported`) re-log as a real failure.
+        const message = this.missingCwdMessage();
+        logger.warn(message);
+        closeError = new ReportedRstestResolutionError(message);
       } else {
         logger.error('Worker process error', error);
         // The status-aggregation adaptation: a worker that never came up is the
@@ -836,7 +842,7 @@ export class RstestApi {
       }
       // Reject any in-flight birpc calls instead of letting them hang; $close
       // runs the `off` handler, which removes the process from the Set.
-      if (!worker.$closed) worker.$close();
+      if (!worker.$closed) worker.$close(closeError);
     });
 
     rstestProcess.on('exit', (code, signal) => {
