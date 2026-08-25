@@ -48,6 +48,13 @@ import {
   type WorkspaceDocumentRouter,
 } from './WorkspaceDocumentRouter';
 
+/**
+ * Bound for each wait inside `close()`. Covers a warm worker boot (~1s), and
+ * is what a changed-key replacement or deactivation pays, worst case, for a
+ * hung start (the superseded close is awaited on the per-document tail).
+ */
+const CLOSE_SETTLEMENT_TIMEOUT_MS = 2_000;
+
 const LOCKFILE_NAMES = [
   'package-lock.json',
   'pnpm-lock.yaml',
@@ -362,13 +369,14 @@ export class Rslint implements Disposable {
     await this.startPromise;
   }
 
+  private isPlannedStartAbort(error: unknown): boolean {
+    return (
+      this.closing || (error instanceof Error && error.name === 'AbortError')
+    );
+  }
+
   private reportStartFailure(error: unknown): void {
-    if (
-      this.closing ||
-      (error instanceof Error && error.name === 'AbortError')
-    ) {
-      return;
-    }
+    if (this.isPlannedStartAbort(error)) return;
     this.report(statusForRslintStartFailure(error));
   }
 
@@ -519,7 +527,11 @@ export class Rslint implements Disposable {
       this.logger.info('Rslint language client started successfully');
       this.reportRunning();
     } catch (error: unknown) {
-      this.logger.error('Failed to start Rslint language client', error);
+      // A close or supersede during start is a planned abort, not a failure;
+      // logging it as an error made every teardown race look like a crash.
+      if (!this.isPlannedStartAbort(error)) {
+        this.logger.error('Failed to start Rslint language client', error);
+      }
       throw error;
     }
   }
@@ -654,6 +666,18 @@ export class Rslint implements Disposable {
     this.client = undefined;
     const clientStartPromise = this.clientStartPromise;
     this.clientStartPromise = undefined;
+    // Severing the transport under an in-flight initialize makes
+    // vscode-languageclient force-notify ("couldn't create connection to
+    // server" / "Server initialization failed"), so a Starting client gets a
+    // bounded chance to settle first — a successful start then stops cleanly,
+    // a hung one falls through to the hard teardown.
+    if (client?.state === State.Starting && clientStartPromise) {
+      await waitForPromiseSettlement(
+        clientStartPromise,
+        CLOSE_SETTLEMENT_TIMEOUT_MS,
+        'language client start before teardown',
+      ).catch(() => undefined);
+    }
     const clientStopped =
       client?.state === State.Starting
         ? observeClientStopped(client)
@@ -677,22 +701,11 @@ export class Rslint implements Disposable {
           } catch (error) {
             clientErrors.push(error);
           }
-          if (clientStartPromise) {
-            try {
-              await waitForPromiseSettlement(
-                clientStartPromise,
-                2_000,
-                'language client start',
-              );
-            } catch (error) {
-              clientErrors.push(error);
-            }
-          }
           if (clientStopped) {
             try {
               await waitForPromiseSettlement(
                 clientStopped.promise,
-                2_000,
+                CLOSE_SETTLEMENT_TIMEOUT_MS,
                 'language client terminal state',
               );
             } catch (error) {
