@@ -9,14 +9,14 @@
     "fmt:check": "rs fmt --check",
     "lint": "rs lint --type-check",
     "package": "pnpm -r run package",
-    "prepare": "rs setup",
+    "prepare": "rs hooks",
     "test": "pnpm -r run test",
     "test:e2e": "pnpm -r run test:e2e",
     "test:unit": "pnpm -r run test:unit"
   },
   "devDependencies": {
     "bumpp": "^11.1.0",
-    "rstack": "^0.3.2"
+    "rstack": "^0.6.4"
   },
   "packageManager": "pnpm@11.20.0",
   "engines": {
