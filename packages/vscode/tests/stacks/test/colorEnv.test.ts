@@ -50,6 +50,18 @@ describe('retractForceColorIfDisabled', () => {
     expect(env.RSTACK_FORCE_COLOR_INJECTED).toBeUndefined();
   });
 
+  it('preserves a FORCE_COLOR the config overwrote, even beside its NO_COLOR', () => {
+    // The config owns the value now; the bare CLI — deciding after config
+    // load — would leave both intact. Only the injected '1' may be removed.
+    const env: NodeJS.ProcessEnv = {};
+    injectForceColor(env);
+    env.FORCE_COLOR = '3'; // config load
+    env.NO_COLOR = '1'; // config load
+    retractForceColorIfDisabled(env);
+    expect(env.FORCE_COLOR).toBe('3');
+    expect(env.RSTACK_FORCE_COLOR_INJECTED).toBeUndefined();
+  });
+
   it('never touches a user-set FORCE_COLOR (that conflict warns in the bare CLI too)', () => {
     const env: NodeJS.ProcessEnv = { FORCE_COLOR: '1' };
     injectForceColor(env);

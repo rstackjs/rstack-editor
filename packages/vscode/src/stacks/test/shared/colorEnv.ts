@@ -42,13 +42,19 @@ export function injectForceColor(env: NodeJS.ProcessEnv): void {
 
 /**
  * Retract an earlier injection if the loaded config set `NO_COLOR`. Call in
- * the worker, right after the config has been evaluated. The marker is
- * removed either way: the decision is complete, and pool processes, user
- * test code and their children must not observe an extension-only variable
- * the bare CLI never supplies.
+ * the worker, right after the config has been evaluated. Only the injected
+ * value is retracted: a config that overwrote `FORCE_COLOR` owns it now, and
+ * the bare CLI — deciding after config load — would leave such a value
+ * intact. The marker is removed either way: the decision is complete, and
+ * pool processes, user test code and their children must not observe an
+ * extension-only variable the bare CLI never supplies.
  */
 export function retractForceColorIfDisabled(env: NodeJS.ProcessEnv): void {
-  if (env[INJECTED_MARKER] === '1' && env.NO_COLOR !== undefined) {
+  if (
+    env[INJECTED_MARKER] === '1' &&
+    env.NO_COLOR !== undefined &&
+    env.FORCE_COLOR === '1'
+  ) {
     delete env.FORCE_COLOR;
   }
   delete env[INJECTED_MARKER];
