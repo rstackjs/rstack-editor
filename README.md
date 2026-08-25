@@ -22,10 +22,39 @@ Rstack Editor provides unified editor support for [Rstack](https://rstack.rs), t
 
 Or search for `rstack.rstack` in the editor's Extensions view.
 
+## Supported versions
+
+The extension resolves the tools from your project's `node_modules` and checks them against a support matrix at runtime:
+
+| Package        | Required  |
+| -------------- | --------- |
+| `@rslint/core` | `>=0.8.0` |
+| `@rstest/core` | `>=0.6.0` |
+| `rstack`       | `>=0.6.1` |
+
 ## Documentation
 
 - [VS Code extension](./packages/vscode/README.md) — installation, features, detection and settings
 - [Rstack](https://rstack.rs) · [Rslint](https://rslint.rs) · [Rstest](https://rstest.rs) — the tools the extension integrates
+
+## Roadmap
+
+Rstack Editor is where Rstack's editor support converges: it replaces the standalone [`rstack.rslint`](https://marketplace.visualstudio.com/items?itemName=rstack.rslint) and [`rstack.rstest`](https://marketplace.visualstudio.com/items?itemName=rstack.rstest) extensions with a single install. Where that migration stands:
+
+| Milestone | Status |
+| --- | --- |
+| Unified `rstack.rstack` extension on VS Code Marketplace and Open VSX | ✅ Shipped |
+| Core features: linting (Rslint), testing (Rstest), formatting (`rs fmt`) | ✅ Shipped |
+| Deprecation notices on the standalone extensions' marketplace listings | 🚧 Planned |
+| Sunset of the standalone extensions (final releases, listings pointing here) | 🚧 Planned |
+| 1.0: stable settings and command ids | 🚧 Planned |
+| Support for other editors (e.g. Zed) | 💡 Exploring |
+
+### About the standalone extensions
+
+The standalone extensions are retired: all new editor features land in Rstack Editor. They remain published and keep working while the transition is underway, but we recommend switching now — install `rstack.rstack` and disable or uninstall the standalone extensions so only one copy of each tool runs.
+
+Settings and keybindings are **not** migrated automatically: re-enter them under the `rstack.*` keys following the [migration notes](./packages/vscode/README.md#coming-from-the-standalone-extensions).
 
 ## Packages
 
