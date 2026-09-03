@@ -9,11 +9,10 @@ import { readPackageJson } from './packageResolve';
  *
  * Launch floors (verified against npm):
  * - `@rslint/core >= 0.9.0` — the latest released core and protocol surface.
- * - `@rstest/core >= 0.11.11` — the latest released core.
+ * - `@rstest/core >= 0.6.0` — the existing `MIN_CORE_VERSION` upstream.
  * - `rstack >= 0.7.2` — the latest release, including its current lint and
  *   Rstest shims and `rs fmt --lsp`.
  *
- * The extension is pre-1.0 and supports only the latest released toolchain.
  * The rstack floor is **uniform across consumers by decision**: lint, Rstest
  * and fmt all check the same entry, so "which rstack does the extension
  * support?" has one answer. Per-stack floors were considered and rejected;
@@ -21,7 +20,7 @@ import { readPackageJson } from './packageResolve';
  */
 export const SUPPORT_MATRIX = {
   '@rslint/core': '>=0.9.0',
-  '@rstest/core': '>=0.11.11',
+  '@rstest/core': '>=0.6.0',
   rstack: '>=0.7.2',
 } as const;
 
