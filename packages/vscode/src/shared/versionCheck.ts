@@ -8,11 +8,11 @@ import { readPackageJson } from './packageResolve';
  * status bar state with actual vs required versions.
  *
  * Launch floors (verified against npm):
- * - `@rslint/core >= 0.9.0` — supplies the `basePath` support required by
- *   rstack 0.7.x's lint shim.
+ * - `@rslint/core >= 0.8.0` — explicit protocol-2 config selection.
  * - `@rstest/core >= 0.6.0` — the existing `MIN_CORE_VERSION` upstream.
  * - `rstack >= 0.7.0` — the first release whose lint shim sets `basePath` and
- *   pins `@rslint/core` 0.9.0, preserving project-relative config paths (#431).
+ *   itself pins `@rslint/core` 0.9.0, preserving project-relative config
+ *   paths (#431).
  *
  * The rstack floor is **uniform across consumers by decision**: lint, Rstest
  * and fmt all check the same entry, so "which rstack does the extension
@@ -20,7 +20,7 @@ import { readPackageJson } from './packageResolve';
  * the status message names the required version either way.
  */
 export const SUPPORT_MATRIX = {
-  '@rslint/core': '>=0.9.0',
+  '@rslint/core': '>=0.8.0',
   '@rstest/core': '>=0.6.0',
   rstack: '>=0.7.0',
 } as const;

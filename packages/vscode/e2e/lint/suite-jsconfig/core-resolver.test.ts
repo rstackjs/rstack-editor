@@ -116,7 +116,7 @@ suite('local core resolver', () => {
 
   /**
    * Upstream's `createPackageDirectory` — a manifest is all the host reads.
-   * Versions must clear the SUPPORT_MATRIX floor (`@rslint/core >= 0.9.0`)
+   * Versions must clear the SUPPORT_MATRIX floor (`@rslint/core >= 0.8.0`)
    * wherever the test expects resolution to succeed.
    */
   async function createCore(

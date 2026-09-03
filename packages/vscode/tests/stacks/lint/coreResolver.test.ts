@@ -109,10 +109,10 @@ describe('CoreResolver', () => {
   });
 
   it('refuses a core below the floor and names its directory', async () => {
-    // With several cores in one folder, "0.8.2 is not supported" alone would
+    // With several cores in one folder, "0.7.3 is not supported" alone would
     // not say which one to fix.
     const root = temporaryDirectory();
-    const core = installPackage(root, '@rslint/core', '0.8.2');
+    const core = installPackage(root, '@rslint/core', '0.7.3');
     const resolve = () =>
       new CoreResolver().resolve(
         documentAt(path.join(root, 'src', 'index.ts')),

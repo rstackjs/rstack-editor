@@ -28,7 +28,7 @@ The extension resolves the tools from your project's `node_modules` and checks t
 
 | Package        | Required  |
 | -------------- | --------- |
-| `@rslint/core` | `>=0.9.0` |
+| `@rslint/core` | `>=0.8.0` |
 | `@rstest/core` | `>=0.6.0` |
 | `rstack`       | `>=0.7.0` |
 
