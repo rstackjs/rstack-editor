@@ -43,7 +43,7 @@ const makeTmpDir = (): string => {
  * `dist/rstestConfig.js`.
  */
 const createWorkspace = ({
-  version = '0.6.1',
+  version = '0.7.2',
   shim = true,
 }: { version?: string | null; shim?: boolean } = {}): string => {
   const root = makeTmpDir();
@@ -101,7 +101,7 @@ describe('resolveRstackShim', () => {
     const shim = resolveRstackShim(configDir);
 
     expect(shim).toBeDefined();
-    expect(shim?.version).toBe('0.6.1');
+    expect(shim?.version).toBe('0.7.2');
     // The same file `rs test` injects with `--config`.
     expect(shim?.configFilePath).toBe(
       path.join(configDir, 'node_modules', 'rstack', 'dist', 'rstestConfig.js'),
@@ -197,14 +197,14 @@ describe('resolveRstackShim', () => {
   });
 
   it('refuses an rstack older than the support matrix floor', () => {
-    const configDir = createWorkspace({ version: '0.6.0' });
+    const configDir = createWorkspace({ version: '0.7.1' });
 
     expect(resolveRstackShim(configDir)).toBeUndefined();
     expect(reported).toEqual([
       {
         kind: 'version-mismatch',
         detail:
-          'rstack 0.6.0 is not supported, this extension requires >=0.6.1',
+          'rstack 0.7.1 is not supported, this extension requires >=0.7.2',
       },
     ]);
   });

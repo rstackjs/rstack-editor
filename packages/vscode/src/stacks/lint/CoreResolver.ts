@@ -40,7 +40,7 @@ import { RslintVersionMismatchError } from './status';
  * One **Rslint core** the extension is willing to run, plus the folder-level
  * config choice the Lint worker needs on its command line.
  *
- * `shimPath` is part of the runtime's identity, not decoration: protocol 2
+ * `shimPath` is part of the runtime's identity, not decoration: protocol 3
  * locks `configPath` for the server's lifetime (ADR 0003), so a folder that
  * flips native ↔ bridged must get a *new* runtime even when both modes resolve
  * the same physical core. Upstream has no bridged mode and keys on the core

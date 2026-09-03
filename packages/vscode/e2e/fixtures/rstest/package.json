@@ -3,8 +3,8 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "E2E fixture: a project detected as Rstest only, pinned to the launch floor `@rstest/core >= 0.6.0`.",
+  "description": "E2E fixture: a project detected as Rstest only, installed from the npm registry.",
   "dependencies": {
-    "@rstest/core": "^0.6.0"
+    "@rstest/core": "^0.11.11"
   }
 }

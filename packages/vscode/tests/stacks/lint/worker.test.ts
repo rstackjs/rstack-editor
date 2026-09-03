@@ -91,8 +91,8 @@ describe('lint worker config refresh', () => {
   it('stamps the core protocol and pins the explicit shim on every refresh', () => {
     const configPath = path.resolve('/project/rslintConfig.js');
     for (const reason of ['initial', 'config-change', 'dependency-change']) {
-      expect(stampConfigRefresh({ reason }, 2, configPath)).toEqual({
-        protocolVersion: 2,
+      expect(stampConfigRefresh({ reason }, 3, configPath)).toEqual({
+        protocolVersion: 3,
         reason,
         configPath,
       });
@@ -100,8 +100,8 @@ describe('lint worker config refresh', () => {
   });
 
   it('leaves native discovery without an explicit config path', () => {
-    expect(stampConfigRefresh({ reason: 'initial' }, 2)).toEqual({
-      protocolVersion: 2,
+    expect(stampConfigRefresh({ reason: 'initial' }, 3)).toEqual({
+      protocolVersion: 3,
       reason: 'initial',
     });
   });
@@ -138,7 +138,7 @@ describe('lint worker config refresh', () => {
 
     try {
       registerEditorProxy(workerConnection, goConnection, {
-        protocolVersion: 2,
+        protocolVersion: 3,
         configPath,
         observeRefresh: (reason) => observedReasons.push(reason),
         requestStop: () => undefined,
@@ -156,7 +156,7 @@ describe('lint worker config refresh', () => {
         method: 'rslint/configRefresh',
         hasParams: true,
         params: {
-          protocolVersion: 2,
+          protocolVersion: 3,
           reason: 'config-change',
           configPath,
         },

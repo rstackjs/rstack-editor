@@ -10,19 +10,19 @@ import {
 describe('support matrix', () => {
   it('pins the launch support floors', () => {
     expect(SUPPORT_MATRIX).toEqual({
-      '@rslint/core': '>=0.8.0',
-      '@rstest/core': '>=0.6.0',
-      rstack: '>=0.6.1',
+      '@rslint/core': '>=0.9.0',
+      '@rstest/core': '>=0.11.11',
+      rstack: '>=0.7.2',
     });
   });
 });
 
 describe('checkPackageVersion', () => {
   it('accepts versions at and above the floor', () => {
-    expect(checkPackageVersion('@rslint/core', '0.8.0').kind).toBe('ok');
+    expect(checkPackageVersion('@rslint/core', '0.9.0').kind).toBe('ok');
     expect(checkPackageVersion('@rslint/core', '1.2.3').kind).toBe('ok');
-    expect(checkPackageVersion('@rstest/core', '0.11.5').kind).toBe('ok');
-    expect(checkPackageVersion('rstack', '0.6.1').kind).toBe('ok');
+    expect(checkPackageVersion('@rstest/core', '0.11.11').kind).toBe('ok');
+    expect(checkPackageVersion('rstack', '0.7.2').kind).toBe('ok');
   });
 
   it('accepts prereleases of a supported range', () => {
@@ -30,11 +30,11 @@ describe('checkPackageVersion', () => {
   });
 
   it('rejects versions below the floor', () => {
-    const result = checkPackageVersion('@rstest/core', '0.5.9');
+    const result = checkPackageVersion('@rstest/core', '0.11.10');
     expect(result.kind).toBe('mismatch');
     if (result.kind === 'mismatch') {
       expect(formatVersionMismatch('@rstest/core', result)).toContain(
-        '>=0.6.0',
+        '>=0.11.11',
       );
     }
   });

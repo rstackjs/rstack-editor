@@ -6,7 +6,7 @@
 //   constant: `@rslint/core/config-loader` is resolved from the project at
 //   runtime, so the adapter takes the loader's
 //   `CONFIG_DISCOVERY_PROTOCOL_VERSION` as a constructor argument. The tests
-//   inject the devDependency's constant, which tracks the same `^0.8.0` floor
+//   inject the devDependency's constant, which tracks the same `^0.9.0` floor
 //   as the fixtures.
 // - The watch-glob test asserts upstream's glob is kept verbatim, lockfiles
 //   included.

@@ -36,11 +36,11 @@ A restart re-resolves every binary and package version and respawns every tool p
 
 The project-resolved packages are checked against a support matrix at runtime; a mismatch shows up as the `version mismatch` status bar state.
 
-| Package        | Required  |
-| -------------- | --------- |
-| `@rslint/core` | `>=0.8.0` |
-| `@rstest/core` | `>=0.6.0` |
-| `rstack`       | `>=0.6.1` |
+| Package        | Required    |
+| -------------- | ----------- |
+| `@rslint/core` | `>=0.9.0`   |
+| `@rstest/core` | `>=0.11.11` |
+| `rstack`       | `>=0.7.2`   |
 
 ## Auto-fix on save (Rslint)
 

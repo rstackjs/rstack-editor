@@ -8,25 +8,21 @@ import { readPackageJson } from './packageResolve';
  * status bar state with actual vs required versions.
  *
  * Launch floors (verified against npm):
- * - `@rslint/core >= 0.8.0` — explicit protocol-2 config selection.
- * - `@rstest/core >= 0.6.0` — the existing `MIN_CORE_VERSION` upstream.
- * - `rstack >= 0.6.1` — the first release depending on `@rslint/core ~0.8.0`,
- *   whose lint shim the bridged lint worker pins (protocol 2). It also carries
- *   `rs fmt --lsp`; there is no stdin fallback for older releases, since the
- *   editor would then format through a code path it is not tested against.
- *   The floor is **uniform across consumers by decision**: the Rstest bridge
- *   checks the same entry, so an older rstack reports `version mismatch` for
- *   tests too, even when that stack's own API would still work. One matrix
- *   entry means "which rstack does the extension support?"
- *   has one answer; per-stack rstack floors were considered and rejected —
- *   they make the answer depend on which status the user happens to look at,
- *   for the price of keeping tests alive on releases the toolchain has moved
- *   past. The status message names the required version either way.
+ * - `@rslint/core >= 0.9.0` — the latest released core and protocol surface.
+ * - `@rstest/core >= 0.11.11` — the latest released core.
+ * - `rstack >= 0.7.2` — the latest release, including its current lint and
+ *   Rstest shims and `rs fmt --lsp`.
+ *
+ * The extension is pre-1.0 and supports only the latest released toolchain.
+ * The rstack floor is **uniform across consumers by decision**: lint, Rstest
+ * and fmt all check the same entry, so "which rstack does the extension
+ * support?" has one answer. Per-stack floors were considered and rejected;
+ * the status message names the required version either way.
  */
 export const SUPPORT_MATRIX = {
-  '@rslint/core': '>=0.8.0',
-  '@rstest/core': '>=0.6.0',
-  rstack: '>=0.6.1',
+  '@rslint/core': '>=0.9.0',
+  '@rstest/core': '>=0.11.11',
+  rstack: '>=0.7.2',
 } as const;
 
 export type SupportedPackage = keyof typeof SUPPORT_MATRIX;

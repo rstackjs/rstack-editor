@@ -72,13 +72,13 @@ describe('Rslint status classification', () => {
     expect(
       statusForRslintStartFailure(
         new RslintVersionMismatchError(
-          '@rslint/core 0.7.3 is not supported, this extension requires >=0.8.0',
+          '@rslint/core 0.8.2 is not supported, this extension requires >=0.9.0',
         ),
       ),
     ).toEqual({
       kind: 'version-mismatch',
       detail:
-        '@rslint/core 0.7.3 is not supported, this extension requires >=0.8.0',
+        '@rslint/core 0.8.2 is not supported, this extension requires >=0.9.0',
     });
   });
 

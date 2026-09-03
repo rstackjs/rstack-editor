@@ -4,7 +4,7 @@ Thanks for your interest in contributing to Rstack Editor!
 
 ## Setup
 
-- Node.js: the version is pinned in [`.nvmrc`](./.nvmrc) (`nvm use` / `fnm use`). Node >= 22.12 is required.
+- Node.js: the version is pinned in [`.nvmrc`](./.nvmrc) (`nvm use` / `fnm use`). Node `^22.18.0 || >=24.3.0` is required.
 - pnpm: pinned via the `packageManager` field — run `corepack enable pnpm` once and the right version is used automatically.
 
 ```bash
