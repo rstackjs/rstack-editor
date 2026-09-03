@@ -124,15 +124,8 @@
         "type": "object",
         "title": "Rstack",
         "properties": {
-          "rstack.enable": {
-            "order": 0,
-            "type": "boolean",
-            "default": true,
-            "scope": "window",
-            "markdownDescription": "Master switch for the Rstack extension. When disabled, no stack is registered — the status bar item stays visible so the extension can still be told apart from a broken install."
-          },
           "rstack.nodeExecutable": {
-            "order": 1,
+            "order": 0,
             "type": "string",
             "scope": "resource",
             "markdownDescription": "Overrides the `node` binary used to spawn processes that load your project — the Rslint worker, the Rstest test worker and the `rs fmt` language server. Provide an absolute path to a Node.js executable (for example, a version-manager or custom build). An explicit choice is always honoured — the escape hatch when no suitable Node.js can be found automatically — but the version check still runs as an advisory: pointing at a Node.js below the supported floor shows a status-bar warning while runs proceed with it. When empty, the extension picks one: the `node` on `PATH` if it is new enough, otherwise the one your interactive shell resolves. Supports the `${workspaceFolder}` placeholder."
@@ -148,7 +141,7 @@
             "type": "boolean",
             "default": true,
             "scope": "window",
-            "markdownDescription": "Enable the Rslint language server for detected workspace folders. Requires `#rstack.enable#`. This is a window-level kill switch; which folders run Rslint is decided by detection."
+            "markdownDescription": "Enable the Rslint language server for detected workspace folders. This is a window-level kill switch; which folders run Rslint is decided by detection."
           },
           "rstack.rslint.corePath": {
             "order": 1,
@@ -180,7 +173,7 @@
             "type": "boolean",
             "default": true,
             "scope": "window",
-            "markdownDescription": "Enable the Rstest test explorer for detected workspace folders. Requires `#rstack.enable#`. This is a window-level kill switch; which folders run Rstest is decided by detection."
+            "markdownDescription": "Enable the Rstest test explorer for detected workspace folders. This is a window-level kill switch; which folders run Rstest is decided by detection."
           },
           "rstack.rstest.rstestPackagePath": {
             "order": 1,
@@ -318,7 +311,7 @@
             "type": "boolean",
             "default": true,
             "scope": "window",
-            "markdownDescription": "Enable the `rs fmt` document formatter for detected workspace folders. Requires `#rstack.enable#`. This is a window-level kill switch; which folders are formatted is decided by detection."
+            "markdownDescription": "Enable the `rs fmt` document formatter for detected workspace folders. This is a window-level kill switch; which folders are formatted is decided by detection."
           },
           "rstack.fmt.trace.server": {
             "order": 1,

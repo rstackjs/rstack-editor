@@ -7,7 +7,7 @@ Glossary of terms used across rstack-editor. Code, docs, commit messages and rev
 - **Stack** — one tool integration (lint, test, fmt) hosted by the extension shell. A stack registers against the shell and reports status through it; stacks never own UI chrome.
 - **Shell** — the always-activating extension core: detection, status bar, output channels, stack lifecycle.
 - **Detection** — the per-workspace-folder scan deciding which stacks a folder lights up. Detection signals are config files and installed tool binaries, never user settings.
-- **Gate** — the per-stack activation condition: detected, workspace trusted, and the enable settings on.
+- **Gate** — the per-stack activation condition: detected, workspace trusted, and that stack's enable setting on.
 
 ## Runtimes
 

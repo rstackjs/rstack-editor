@@ -37,7 +37,8 @@ type Gate =
  * The extension shell: it always activates on
  * `onStartupFinished` and does exactly three things — create the status bar
  * item and the output channels, run detection, and register the stacks that
- * pass the gate `rstack.enable && rstack.<stack>.enable && detected(stack)`.
+ * pass the gate `rstack.<stack>.enable && detected(stack)` after workspace
+ * trust.
  *
  * A stack failing to register never takes another stack down.
  */
@@ -86,7 +87,6 @@ class ExtensionShell {
             reasons.add(key);
           }
         };
-        note('rstack.enable');
         for (const stack of STACK_IDS) {
           note(`rstack.${stack}.enable`);
         }
@@ -155,11 +155,11 @@ class ExtensionShell {
   }
 
   /**
-   * `rstack.enable && rstack.<stack>.enable && detected(stack)`.
+   * `rstack.<stack>.enable && detected(stack)`, after workspace trust.
    *
-   * The two settings are declared `"scope": "window"` in the manifest, so
-   * reading them without a resource URI is exactly what they promise: they are
-   * kill switches for the window. Per-folder granularity is detection's job
+   * The enable setting is declared `"scope": "window"` in the manifest, so
+   * reading it without a resource URI is exactly what it promises: it is a
+   * kill switch for the window. Per-folder granularity is detection's job
    * and stays inside the controllers (`foldersFor(stack)`).
    */
   private gate(stack: StackId, snapshot: DetectionSnapshot): Gate {
@@ -173,14 +173,6 @@ class ExtensionShell {
           kind: 'disabled',
           reason: 'the workspace is not trusted (Restricted Mode)',
         },
-      };
-    }
-    if (
-      !vscode.workspace.getConfiguration('rstack').get<boolean>('enable', true)
-    ) {
-      return {
-        ok: false,
-        state: { kind: 'disabled', reason: '`rstack.enable` is off' },
       };
     }
     if (

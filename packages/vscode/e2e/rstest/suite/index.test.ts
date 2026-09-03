@@ -33,8 +33,8 @@ suite('Extension Test Suite', () => {
     );
 
     // Waits for the `onStartupFinished` activation and the shell registering
-    // the Rstest stack (the `rstack.enable && rstack.rstest.enable &&
-    // detected` gate).
+    // the Rstest stack (the `rstack.rstest.enable && detected` gate after
+    // workspace trust).
     const rstestInstance = await getRstestExports();
     const testController = rstestInstance.testController;
     assert.ok(
