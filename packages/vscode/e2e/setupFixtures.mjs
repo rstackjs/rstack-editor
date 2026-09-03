@@ -4,7 +4,9 @@
 // `@rslint/core` / `@rstest/core` / `rstack` — the extension resolves all three
 // from the project, so a fixture that linked this repo's own node_modules would
 // test nothing. Each fixture is its own independent install; `--ignore-workspace`
-// makes sure pnpm never folds them into a parent workspace.
+// makes sure pnpm never folds them into a parent workspace. Their lockfiles are
+// committed for deterministic installs and updated with the manifests by
+// Renovate.
 //
 // Idempotent: pnpm is a no-op when the fixture is already up to date, so
 // `test:e2e` can always run it.
@@ -55,9 +57,9 @@ const install = (name) => {
       // A fixture is a standalone project, never a workspace member of this
       // repo: the whole point is a plain, published-versions install.
       '--ignore-workspace',
-      // Fixtures pin ranges, not a lockfile — a frozen lockfile would fail CI
-      // the moment a patch release lands.
-      '--no-frozen-lockfile',
+      // Fixture lockfiles are committed for deterministic installs; Renovate
+      // updates each manifest and lockfile together.
+      '--frozen-lockfile',
       '--prefer-offline',
       // Changing a fixture's install config makes pnpm want to purge
       // `node_modules`, which it refuses to do without a TTY. The directory is

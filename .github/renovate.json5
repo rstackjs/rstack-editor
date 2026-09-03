@@ -6,9 +6,9 @@
     'schedule:weekly',
     'helpers:pinGitHubActionDigests',
   ],
-  // E2E fixtures deliberately pin the published toolchain versions the suites
-  // run against; bumping them is a manual, E2E-verified decision.
-  ignorePaths: ['**/node_modules/**', 'packages/vscode/e2e/**'],
+  // E2E fixtures pin published packages with committed lockfiles; their Rstack
+  // dependencies are updated by the `rstack toolchain` group below.
+  ignorePaths: ['**/node_modules/**'],
   packageRules: [
     // Use chore as semantic commit type for commit messages
     {
