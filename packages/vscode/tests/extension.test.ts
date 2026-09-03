@@ -319,7 +319,7 @@ describe('restart-triggering settings', () => {
     harness.detected = new Set(['rslint', 'rstest', 'fmt']);
     harness.restartOnSettings = new Map([
       ['rstest', ['nodeExecutable']],
-      ['rslint', ['rstack.nodeExecutable', 'corePath', 'trace.server']],
+      ['rslint', ['rstack.nodeExecutable', 'corePath']],
     ]);
     await activate(context);
     harness.events.length = 0;
@@ -401,6 +401,12 @@ describe('restart-triggering settings', () => {
 
   it('ignores a setting no stack declared', async () => {
     changeSetting('rstack.rstest.nodeExecArgs');
+    await settle();
+    expect(harness.events).toEqual([]);
+  });
+
+  it('leaves language-client trace changes to the running client', async () => {
+    changeSetting('rstack.rslint.trace.server');
     await settle();
     expect(harness.events).toEqual([]);
   });

@@ -8,8 +8,8 @@
 //   `CONFIG_DISCOVERY_PROTOCOL_VERSION` as a constructor argument. The tests
 //   inject the devDependency's constant; the fixtures currently pin the same
 //   0.9.0 release line.
-// - The watch-glob test asserts upstream's glob is kept verbatim, lockfiles
-//   included.
+// - The watch-glob test asserts upstream's current JS/TS config list is kept
+//   verbatim, with this extension's existing lockfile additions.
 import * as assert from 'node:assert';
 
 import {
@@ -34,6 +34,7 @@ import {
   RelativePattern,
   Uri,
   type DocumentFilter,
+  type OutputChannel,
   type WorkspaceFolder,
 } from 'vscode';
 
@@ -49,11 +50,31 @@ suite('initial config refresh retry classification', () => {
       name: 'second-root',
       uri: Uri.file('/workspace/second-root'),
     };
-    const firstOptions = createLanguageClientOptions(firstFolder, undefined);
-    const secondOptions = createLanguageClientOptions(secondFolder, undefined);
+    const traceOutputChannel: OutputChannel = {
+      name: 'Rslint client-options test',
+      append() {},
+      appendLine() {},
+      replace() {},
+      clear() {},
+      show() {},
+      hide() {},
+      dispose() {},
+    };
+    const firstOptions = createLanguageClientOptions(
+      firstFolder,
+      undefined,
+      traceOutputChannel,
+    );
+    const secondOptions = createLanguageClientOptions(
+      secondFolder,
+      undefined,
+      traceOutputChannel,
+    );
 
     assert.strictEqual(firstOptions.workspaceFolder, firstFolder);
     assert.strictEqual(secondOptions.workspaceFolder, secondFolder);
+    assert.strictEqual(firstOptions.traceOutputChannel, traceOutputChannel);
+    assert.strictEqual(secondOptions.traceOutputChannel, traceOutputChannel);
     for (const [options, folder] of [
       [firstOptions, firstFolder],
       [secondOptions, secondFolder],
@@ -240,7 +261,7 @@ suite('LSP config discovery transactions', () => {
     assert.match(CONFIG_REFRESH_WATCH_GLOB, /rslint\.config\.ts/);
     assert.match(CONFIG_REFRESH_WATCH_GLOB, /rslint\.config\.mts/);
     assert.doesNotMatch(CONFIG_REFRESH_WATCH_GLOB, /rslint\.config\.\*/);
-    assert.match(CONFIG_REFRESH_WATCH_GLOB, /rslint\.jsonc/);
+    assert.doesNotMatch(CONFIG_REFRESH_WATCH_GLOB, /rslint\.json/);
     assert.match(CONFIG_REFRESH_WATCH_GLOB, /pnpm-lock\.yaml/);
     assert.doesNotMatch(CONFIG_REFRESH_WATCH_GLOB, /\.gitignore/);
     assert.strictEqual(

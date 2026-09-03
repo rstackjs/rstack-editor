@@ -68,11 +68,7 @@ class RslintController implements StackController {
    * full restart pass (a stack must never rebuild itself), which also clears
    * the shared User Node preflight memo — an in-place reconcile would keep it.
    */
-  readonly restartOnSettings = [
-    NODE_EXECUTABLE_SETTING,
-    'corePath',
-    'trace.server',
-  ];
+  readonly restartOnSettings = [NODE_EXECUTABLE_SETTING, 'corePath'];
 
   #context: StackContext | undefined;
   #logger: Logger | undefined;

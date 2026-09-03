@@ -25,7 +25,6 @@ import {
   type Middleware,
   type ServerOptions,
   State,
-  Trace,
 } from 'vscode-languageclient/node';
 import {
   configuredNodeBelowFloor,
@@ -61,18 +60,11 @@ const LOCKFILE_NAMES = [
   'yarn.lock',
 ] as const;
 
-/**
- * Kept verbatim from upstream, JSON names included: they are not detection
- * signals but watching them is harmless, and the Go server does load
- * `rslint.json` from its cwd as a no-JS-config fallback in automatic mode.
- */
 const RSLINT_CONFIG_WATCH_NAMES = [
   'rslint.config.js',
   'rslint.config.mjs',
   'rslint.config.ts',
   'rslint.config.mts',
-  'rslint.json',
-  'rslint.jsonc',
 ] as const;
 
 export const CONFIG_REFRESH_WATCH_GLOB = `**/{${[
@@ -108,6 +100,7 @@ export function shouldResetDocumentSessionOnServerState(
 export function createLanguageClientOptions(
   workspaceFolder: WorkspaceFolder,
   outputChannel: OutputChannel | undefined,
+  traceOutputChannel: OutputChannel,
   middleware?: Middleware,
 ): LanguageClientOptions {
   const documentSelector = createWorkspaceDocumentSelector(workspaceFolder);
@@ -117,6 +110,10 @@ export function createLanguageClientOptions(
       // rslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
       documentSelector as unknown as LanguageClientOptions['documentSelector'],
     outputChannel,
+    // vscode-languageclient reads rstack.rslint.trace.server and owns its
+    // initial and live $/setTrace updates. Supplying this unconditionally
+    // ensures enabling tracing after startup uses the shared Rslint channel.
+    traceOutputChannel,
     middleware,
   };
 }
@@ -412,13 +409,10 @@ export class Rslint implements Disposable {
     this.serverProcessOwner = serverProcessOwner;
     const serverOptions: ServerOptions = async () => serverProcessOwner.start();
 
-    const traceServer = workspace
-      .getConfiguration('rstack.rslint', this.workspaceFolder.uri)
-      .get<string>('trace.server', 'off');
-    const traceEnabled = traceServer !== 'off';
     const clientOptions = createLanguageClientOptions(
       this.workspaceFolder,
       this.outputChannel,
+      this.lspOutputChannel,
       this.router.createMiddleware(this),
     );
     const errorHandlerHolder: { current?: ErrorHandler } = {};
@@ -440,12 +434,8 @@ export class Rslint implements Disposable {
         );
       },
     };
-    if (traceEnabled) {
-      clientOptions.traceOutputChannel = this.lspOutputChannel;
-    }
-
     const client = new ManagedLanguageClient(
-      'rslint',
+      'rstack.rslint',
       `Rslint Language Server (${this.workspaceFolder.name})`,
       serverOptions,
       clientOptions,
@@ -505,13 +495,6 @@ export class Rslint implements Disposable {
           },
         );
       });
-
-      if (traceEnabled) {
-        await client.setTrace(
-          traceServer === 'verbose' ? Trace.Verbose : Trace.Messages,
-        );
-        this.assertStartCurrent(epoch, signal, client);
-      }
 
       this.installConfigRefreshWatchers(mode);
       const retried = await retryConfigRefreshOnSourceChange(
