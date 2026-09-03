@@ -6,10 +6,10 @@
 // `test:e2e*` scripts are thin forwards to this file and carry none of that
 // knowledge. The shared `tsc -p tsconfig.e2e.json` pass runs first (the
 // cheap, likely-to-fail step), then the selected slices' fixtures install in
-// one `setupFixtures.mjs` invocation from committed lockfiles (idempotent —
-// pnpm no-ops on an up-to-date fixture, and unknown names throw there), then
-// the entries run sequentially — each `compile`d entry launches its own VS
-// Code via `@vscode/test-electron`.
+// one `setupFixtures.mjs` invocation (idempotent — pnpm no-ops on an
+// up-to-date fixture, and unknown names throw there), then the entries run
+// sequentially — each `compile`d entry launches its own VS Code via
+// `@vscode/test-electron`.
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

@@ -1,14 +1,13 @@
 // Installs the E2E fixture workspaces.
 //
-// The fixtures install **published npm versions** of
+// The fixtures install **exact published npm versions** of
 // `@rslint/core` / `@rstest/core` / `rstack` — the extension resolves all three
 // from the project, so a fixture that linked this repo's own node_modules would
-// test nothing. Each fixture is its own independent install: `--ignore-workspace`
-// keeps test setup out of the parent workspace, while its pnpm-workspace.yaml
-// marker makes Renovate's plain `pnpm install --lockfile-only` stop at the
-// fixture instead of walking up to the repository workspace. Their lockfiles
-// are committed for deterministic installs and updated with the manifests by
-// Renovate.
+// test nothing. `rstack@0.7.2` itself pins `@rslint/core@0.9.0` exactly, so the
+// Rstack fixture pins its lint core transitively. Each fixture is its own
+// independent install; `--ignore-workspace` keeps test setup out of the parent
+// workspace. Exact toolchain pins make installs reproducible without committed
+// lockfiles, and Renovate bumps those pins.
 //
 // Idempotent: pnpm is a no-op when the fixture is already up to date, so
 // `test:e2e` can always run it.
@@ -59,9 +58,9 @@ const install = (name) => {
       // A fixture is a standalone project, never a workspace member of this
       // repo: the whole point is a plain, published-versions install.
       '--ignore-workspace',
-      // Fixture lockfiles are committed for deterministic installs; Renovate
-      // updates each manifest and lockfile together.
-      '--frozen-lockfile',
+      // Fixtures pin exact toolchain versions rather than committing lockfiles;
+      // Renovate updates the pins.
+      '--no-frozen-lockfile',
       '--prefer-offline',
       // Changing a fixture's install config makes pnpm want to purge
       // `node_modules`, which it refuses to do without a TTY. The directory is
@@ -69,9 +68,7 @@ const install = (name) => {
       '--config.confirmModulesPurge=false',
       // Fixtures deliberately install pinned published versions of the Rstack
       // toolchain, which are often hours old — disable pnpm's
-      // minimum-release-age supply-chain gate for these sandboxes. The local
-      // workspace marker mirrors this for Renovate, but `--ignore-workspace`
-      // ignores that file here, so test setup still needs the CLI flag.
+      // minimum-release-age supply-chain gate for these sandboxes.
       '--config.minimumReleaseAge=0',
       // pnpm's build-script gate exits non-zero on unapproved postinstalls
       // (e.g. core-js in the rstest fixture). These sandboxes install real

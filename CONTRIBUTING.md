@@ -19,9 +19,9 @@ pnpm install   # also installs the git hooks (rs hooks)
 | `pnpm lint` | Lint + type check (`rs lint --type-check`) |
 | `pnpm fmt` | Format the repo (`rs fmt`) |
 | `pnpm test:unit` | Unit tests |
-| `pnpm test:e2e` | Full E2E chain (installs fixtures from committed lockfiles, launches a real VS Code) |
+| `pnpm test:e2e` | Full E2E chain (fresh-installs exactly pinned fixtures, launches a real VS Code) |
 
-To try the extension: press F5 in VS Code at the repo root — the playground launch config starts a watch build, lets you pick a fixture project, and opens an Extension Development Host on it. Run `pnpm --filter rstack test:e2e:fixtures` once beforehand to install the fixture dependencies from their committed lockfiles.
+To try the extension: press F5 in VS Code at the repo root — the playground launch config starts a watch build, lets you pick a fixture project, and opens an Extension Development Host on it. Run `pnpm --filter rstack test:e2e:fixtures` once beforehand to install the exactly pinned fixture dependencies.
 
 ## Submitting changes
 

@@ -1,5 +1,0 @@
-# This workspace-root marker makes pnpm stop here instead of walking up to the
-# repository workspace; Renovate runs `pnpm install --lockfile-only` here without
-# `--ignore-workspace`.
-# Fixtures track toolchain releases that may be only hours old.
-minimumReleaseAge: 0
