@@ -351,12 +351,13 @@ describe('restart-triggering settings', () => {
     expect(stacksOf('register')).toContain('rstest');
   });
 
-  it('runs a full pass for a bare gate write', async () => {
-    // The gate half of the trigger set, pinned in isolation: the enable keys
-    // must fire the pass on their own — the other gate tests here also move a
-    // declared setting, which would fire the pass regardless.
-    changeSetting('rstack.enable');
+  it('runs a full pass for a per-stack enable write', async () => {
+    // The gate half of the trigger set, pinned in isolation: a per-stack
+    // enable key must fire the pass on its own — the other gate tests here
+    // also move a declared setting, which would fire the pass regardless.
+    changeSetting('rstack.fmt.enable');
     await settle();
+    expect(stacksOf('dispose').sort()).toEqual(['fmt', 'rslint', 'rstest']);
     expect(stacksOf('register').sort()).toEqual(['fmt', 'rslint', 'rstest']);
   });
 
@@ -368,7 +369,7 @@ describe('restart-triggering settings', () => {
     harness.settings.set('rstack.rstest.enable', false);
     changeSetting('rstack.rstest.enable');
     await settle();
-    expect(stacksOf('dispose')).toContain('rstest');
+    expect(stacksOf('dispose').sort()).toEqual(['fmt', 'rslint', 'rstest']);
     expect(stacksOf('register')).not.toContain('rstest');
     expect(stacksOf('register').sort()).toEqual(['fmt', 'rslint']);
   });

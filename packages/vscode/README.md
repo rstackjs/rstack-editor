@@ -76,7 +76,6 @@ All settings live under the unified `rstack.*` namespace. There are no `rslint.*
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `rstack.enable` | `true` | Master switch for the whole extension. |
 | `rstack.nodeExecutable` | — | Node binary used for the processes that load your project: the lint worker, test worker and `rs fmt` language server. Empty means the extension picks one (`PATH` first, then the `node` your interactive shell resolves). |
 | `rstack.rslint.enable` | `true` | Enable/disable the Rslint integration. |
 | `rstack.rslint.corePath` | — | Path to an `@rslint/core` package directory; relative paths resolve from the workspace folder. |

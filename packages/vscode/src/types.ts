@@ -126,7 +126,7 @@ export interface StackContext {
 
 /**
  * One per stack. `register` is called when the stack passes the gate
- * (`rstack.enable && rstack.<stack>.enable && detected(stack)`)
+ * (`rstack.<stack>.enable && detected(stack)`, after workspace trust)
  * and `dispose` when it stops passing it or the extension deactivates.
  *
  * `register` rejecting is contained by the shell: the failure is
