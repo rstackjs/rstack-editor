@@ -59,17 +59,18 @@ export const readPackageVersion = (
  *
  * Native type stripping is what lets a worker load an `rstack.config.*` —
  * rstack's shim loads it with `loader: 'native'` and no jiti fallback. It was
- * unflagged in 23.6.0 and backported to the LTS line in 22.18.0, so 23.0–23.5
- * compare above 22.18.0 yet predate it — hence a disjunction, not a plain
- * floor. Verified: 22.17.1 reports `process.features.typescript` false,
- * 22.18.0 reports `strip`. See `shared/nodeResolution.ts` for how candidates
+ * unflagged in 23.6.0 and backported to the LTS line in 22.18.0. The supported
+ * rstack line declares the same range in `engines.node`: Node 23 is unsupported,
+ * while Node 24.0–24.2 still emits the experimental type-stripping warning
+ * (rstackjs/rstack-cli#427). This range intersects the runtime capability with
+ * that declared contract. See `shared/nodeResolution.ts` for how candidates
  * are probed.
  *
  * `scripts/playgroundNode.mjs` regex-parses this exact declaration (it is a
  * plain .mjs with no access to TS exports) — keep the single-quoted literal
  * form if this constant moves or is reformatted.
  */
-export const NODE_RUNTIME_RANGE = '^22.18.0 || >=23.6.0';
+export const NODE_RUNTIME_RANGE = '^22.18.0 || >=24.3.0';
 
 /**
  * `NODE_RUNTIME_RANGE` for human eyes, interpolated into the user-facing
@@ -78,7 +79,7 @@ export const NODE_RUNTIME_RANGE = '^22.18.0 || >=23.6.0';
  * to learn why they were refused. Logs keep the raw range, the precise
  * register there. Keep the two in lockstep.
  */
-export const NODE_RUNTIME_LABEL = '22.18+ (excluding 23.0–23.5)';
+export const NODE_RUNTIME_LABEL = '22.18–22.x or 24.3+';
 
 /**
  * Classifies a version against a range; it does not decide what the classes

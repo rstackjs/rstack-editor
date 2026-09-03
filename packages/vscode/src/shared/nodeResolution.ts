@@ -21,10 +21,9 @@ import {
  * than per-project or per-stack. It is set by the strictest thing any of these
  * children do — load an `rstack.config.*` — and applying it uniformly,
  * including to projects whose config an older engine could load, is a
- * deliberate simplification. It costs Node 20.19–22.17 — but Node 20 left
- * support on 2026-04-30 (`nodejs/Release`), so the users it actually turns away
- * sit on 22.12–22.17, a supported LTS line where the remedy is a patch-level
- * update within 22.x. See `docs/adr/0001-node-runtime-selection.md`.
+ * deliberate simplification. It excludes Node 20.19–22.17, and the exact
+ * exclusions above that follow rstack's engines — see
+ * `docs/adr/0001-node-runtime-selection.md`.
  *
  * There is deliberately NO fallback to the VS Code Node runtime
  * (`process.execPath` + `ELECTRON_RUN_AS_NODE`). It would silently move the

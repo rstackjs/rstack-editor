@@ -1,8 +1,12 @@
+import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import { describe, expect, it } from '@rstest/core';
+import semver from 'semver';
 import {
   checkPackageVersion,
   checkVersion,
   formatVersionMismatch,
+  NODE_RUNTIME_LABEL,
   NODE_RUNTIME_RANGE,
   SUPPORT_MATRIX,
 } from '../src/shared/versionCheck';
@@ -46,10 +50,30 @@ describe('checkPackageVersion', () => {
 });
 
 describe('node runtime range', () => {
-  it('pins every edge, including the 23.x type-stripping hole', () => {
+  it('pins every edge, including the rstack engine exclusions', () => {
     expect(checkVersion('22.17.1', NODE_RUNTIME_RANGE).kind).toBe('mismatch');
     expect(checkVersion('22.18.0', NODE_RUNTIME_RANGE).kind).toBe('ok');
-    expect(checkVersion('23.5.0', NODE_RUNTIME_RANGE).kind).toBe('mismatch');
-    expect(checkVersion('23.6.0', NODE_RUNTIME_RANGE).kind).toBe('ok');
+    expect(checkVersion('23.6.0', NODE_RUNTIME_RANGE).kind).toBe('mismatch');
+    expect(checkVersion('24.2.0', NODE_RUNTIME_RANGE).kind).toBe('mismatch');
+    expect(checkVersion('24.3.0', NODE_RUNTIME_RANGE).kind).toBe('ok');
+  });
+
+  it("never admits a runtime the development rstack's engines reject", () => {
+    const require = createRequire(__filename);
+    const packageJson = JSON.parse(
+      fs.readFileSync(require.resolve('rstack/package.json'), 'utf8'),
+    ) as { engines?: { node?: string } };
+    const engineRange = packageJson.engines?.node;
+    if (!engineRange) throw new Error('rstack does not declare engines.node');
+
+    // This is an alarm, not an auto-move: the floor remains an ADR 0001
+    // decision; this only proves it never admits a runtime rstack rejects.
+    expect(semver.subset(NODE_RUNTIME_RANGE, engineRange)).toBe(true);
+  });
+
+  it('keeps the human label aligned with the range', () => {
+    expect(NODE_RUNTIME_LABEL).toContain('22.18');
+    expect(NODE_RUNTIME_LABEL).toContain('24.3');
+    expect(NODE_RUNTIME_LABEL).not.toContain('23.');
   });
 });
