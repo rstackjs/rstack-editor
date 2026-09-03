@@ -434,6 +434,28 @@ describe('restart-triggering settings', () => {
   });
 });
 
+describe('the extension manifest', () => {
+  it('scopes language-client tracing to the window', () => {
+    const manifest = require('../package.json') as {
+      contributes: {
+        configuration: Array<{
+          properties: Record<string, { scope?: string }>;
+        }>;
+      };
+    };
+    const settings = Object.assign(
+      {},
+      ...manifest.contributes.configuration.map(({ properties }) => properties),
+    ) as Record<string, { scope?: string }>;
+
+    // languageclient resolves trace.server from the client id without a
+    // resource URI, so resource scope would advertise a folder override that
+    // the running client never reads.
+    expect(settings['rstack.rslint.trace.server']?.scope).toBe('window');
+    expect(settings['rstack.fmt.trace.server']?.scope).toBe('window');
+  });
+});
+
 describe('the shell restart command', () => {
   beforeEach(async () => {
     harness.reset();

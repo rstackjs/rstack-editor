@@ -113,6 +113,7 @@ export function createLanguageClientOptions(
     // vscode-languageclient reads rstack.rslint.trace.server and owns its
     // initial and live $/setTrace updates. Supplying this unconditionally
     // ensures enabling tracing after startup uses the shared Rslint channel.
+    // The setting is window-scoped because the client reads it without a URI.
     traceOutputChannel,
     middleware,
   };
