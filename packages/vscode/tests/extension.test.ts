@@ -319,7 +319,7 @@ describe('restart-triggering settings', () => {
     harness.detected = new Set(['rslint', 'rstest', 'fmt']);
     harness.restartOnSettings = new Map([
       ['rstest', ['nodeExecutable']],
-      ['rslint', ['rstack.nodeExecutable', 'corePath', 'trace.server']],
+      ['rslint', ['rstack.nodeExecutable', 'corePath']],
     ]);
     await activate(context);
     harness.events.length = 0;
@@ -406,6 +406,12 @@ describe('restart-triggering settings', () => {
     expect(harness.events).toEqual([]);
   });
 
+  it('leaves language-client trace changes to the running client', async () => {
+    changeSetting('rstack.rslint.trace.server');
+    await settle();
+    expect(harness.events).toEqual([]);
+  });
+
   it('ignores a declared name under another stack namespace', async () => {
     // The section is built as `rstack.<stack>.<setting>`, so rslint's corePath
     // must not move rstest even though both are declared somewhere.
@@ -426,6 +432,28 @@ describe('restart-triggering settings', () => {
     changeSetting('rstack.rstest.nodeExecutable');
     await settle();
     expect(harness.events).toEqual([]);
+  });
+});
+
+describe('the extension manifest', () => {
+  it('scopes language-client tracing to the window', () => {
+    const manifest = require('../package.json') as {
+      contributes: {
+        configuration: Array<{
+          properties: Record<string, { scope?: string }>;
+        }>;
+      };
+    };
+    const settings = Object.assign(
+      {},
+      ...manifest.contributes.configuration.map(({ properties }) => properties),
+    ) as Record<string, { scope?: string }>;
+
+    // languageclient resolves trace.server from the client id without a
+    // resource URI, so resource scope would advertise a folder override that
+    // the running client never reads.
+    expect(settings['rstack.rslint.trace.server']?.scope).toBe('window');
+    expect(settings['rstack.fmt.trace.server']?.scope).toBe('window');
   });
 });
 

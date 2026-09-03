@@ -159,7 +159,7 @@
               "verbose"
             ],
             "default": "off",
-            "scope": "resource",
+            "scope": "window",
             "description": "Traces the communication between VS Code and the Rslint language server"
           }
         }

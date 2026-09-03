@@ -236,6 +236,11 @@ async function main(): Promise<void> {
       tests: suiteDir('suite-jsconfig'),
     },
     {
+      name: 'Trace output channel tests',
+      workspace: fixture('jsconfig'),
+      tests: suiteDir('suite-trace'),
+    },
+    {
       name: 'Monorepo config tests',
       workspace: fixture('monorepo'),
       tests: suiteDir('suite-monorepo'),
@@ -278,6 +283,11 @@ async function main(): Promise<void> {
       name: 'eslintPlugins tests',
       workspace: fixture('eslint-plugins'),
       tests: suiteDir('suite-eslint-plugins'),
+    },
+    {
+      name: 'unicode-bom tests',
+      workspace: fixture('unicode-bom'),
+      tests: suiteDir('suite-unicode-bom'),
     },
     {
       name: 'Generated rule-option-types tests',
