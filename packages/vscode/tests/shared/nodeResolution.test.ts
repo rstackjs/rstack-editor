@@ -71,7 +71,7 @@ describe('resolveUserNode', () => {
       ...base,
       probe: versionsOf({
         node: { kind: 'ok' },
-        '/versions/24/bin/node': ok('24.0.0'),
+        '/versions/24/bin/node': ok('24.3.0'),
       }),
       probeShellPath: shellFinds('/versions/24/bin/node'),
     });
@@ -92,7 +92,7 @@ describe('resolveUserNode', () => {
     // that the node floor now follows the same rule as every package floor.
     const resolution = await resolveUserNode({
       ...base,
-      probe: versionsOf({ node: ok('24.0.0-nightly20260101') }),
+      probe: versionsOf({ node: ok('24.4.0-nightly20260101') }),
       probeShellPath: never,
     });
     expect(resolution.source).toBe('path');
@@ -103,35 +103,37 @@ describe('resolveUserNode', () => {
       ...base,
       probe: versionsOf({
         node: ok('20.19.4'),
-        '/versions/24/bin/node': ok('24.0.0'),
+        '/versions/24/bin/node': ok('24.3.0'),
       }),
       probeShellPath: shellFinds('/versions/24/bin/node'),
     });
     expect(resolution).toEqual({
       executable: '/versions/24/bin/node',
       source: 'shell',
-      version: '24.0.0',
+      version: '24.3.0',
     });
   });
 
-  it('falls through a pre-23.6 Node 23, which does not strip types', async () => {
-    // 23.0–23.5 sit above 22.18.0 yet predate default type stripping — the
-    // hole `NODE_RUNTIME_RANGE`'s disjunction encodes.
+  it("falls through a Node 24.0–24.2 that rstack's engines exclude", async () => {
     const resolution = await resolveUserNode({
       ...base,
       probe: versionsOf({
-        node: ok('23.5.0'),
-        '/versions/24/bin/node': ok('24.0.0'),
+        node: ok('24.2.0'),
+        '/versions/24/bin/node': ok('24.3.0'),
       }),
       probeShellPath: shellFinds('/versions/24/bin/node'),
     });
-    expect(resolution.source).toBe('shell');
+    expect(resolution).toEqual({
+      executable: '/versions/24/bin/node',
+      source: 'shell',
+      version: '24.3.0',
+    });
   });
 
   it('falls back to the shell node when no PATH node runs at all', async () => {
     const resolution = await resolveUserNode({
       ...base,
-      probe: versionsOf({ '/versions/24/bin/node': ok('24.0.0') }),
+      probe: versionsOf({ '/versions/24/bin/node': ok('24.3.0') }),
       probeShellPath: shellFinds('/versions/24/bin/node'),
     });
     expect(resolution.source).toBe('shell');
@@ -148,7 +150,7 @@ describe('resolveUserNode', () => {
           return Promise.resolve({ kind: 'not-found' });
         calls++;
         return Promise.resolve(
-          calls < 3 ? { kind: 'not-found' } : ok('24.0.0'),
+          calls < 3 ? { kind: 'not-found' } : ok('24.3.0'),
         );
       },
       probeShellPath: never,
@@ -297,7 +299,7 @@ describe('resolveUserNodeOnce', () => {
 
   const options = {
     ...base,
-    probe: versionsOf({ node: ok('24.0.0') }),
+    probe: versionsOf({ node: ok('24.3.0') }),
     probeShellPath: never,
   };
 
@@ -335,7 +337,7 @@ describe('resolveUserNodeOnce', () => {
       ...base,
       probe: versionsOf({
         node: ok('20.19.4'),
-        '/versions/24/bin/node': ok('24.0.0'),
+        '/versions/24/bin/node': ok('24.3.0'),
       }),
       probeShellPath: shellFinds('/versions/24/bin/node'),
       notify: (message: string) => notices.push(message),
@@ -365,7 +367,7 @@ describe('resolveUserNodeOnce', () => {
       probe: () => {
         calls++;
         return new Promise<NodeProbe>((resolve) =>
-          setTimeout(() => resolve(ok('24.0.0')), 10),
+          setTimeout(() => resolve(ok('24.3.0')), 10),
         );
       },
       probeShellPath: never,
@@ -390,7 +392,7 @@ describe('configuredNodeBelowFloor', () => {
 
   it('passes an explicit executable that clears the floor', async () => {
     expect(
-      await configuredNodeBelowFloor(configured, answers(ok('24.0.0'))),
+      await configuredNodeBelowFloor(configured, answers(ok('24.3.0'))),
     ).toBeUndefined();
   });
 
@@ -424,7 +426,7 @@ describe('configuredNodeBelowFloor', () => {
     const counting = {
       probe: () => {
         calls++;
-        return Promise.resolve<NodeProbe>(ok('24.0.0'));
+        return Promise.resolve<NodeProbe>(ok('24.3.0'));
       },
     };
     await configuredNodeBelowFloor(configured, counting);
@@ -441,7 +443,7 @@ describe('configuredNodeBelowFloor', () => {
       await configuredNodeBelowFloor('/opt/old/node', answers(ok('20.19.4'))),
     ).toBeDefined();
     expect(
-      await configuredNodeBelowFloor('/opt/new/node', answers(ok('24.0.0'))),
+      await configuredNodeBelowFloor('/opt/new/node', answers(ok('24.3.0'))),
     ).toBeUndefined();
   });
 });

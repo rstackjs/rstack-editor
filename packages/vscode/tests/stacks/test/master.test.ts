@@ -399,7 +399,7 @@ describe('RstestApi with a configured nodeExecutable', () => {
   const settleVerdict = () => configuredNodeBelowFloor(configuredNode);
 
   it('should stay silent when the configured executable clears the floor', async () => {
-    await seedProbe({ kind: 'ok', version: '24.0.0' });
+    await seedProbe({ kind: 'ok', version: '24.3.0' });
     const { nodeExecutable } = await resolveWorkerNodeCommand(createApi());
     await settleVerdict();
     expect(nodeExecutable).toBe(configuredNode);
@@ -447,7 +447,7 @@ describe('RstestApi with a configured nodeExecutable', () => {
     // The seed keeps the configured executable's probe off the real spawn
     // path, so the abort observed is the disposed check and not an earlier
     // resolution failure.
-    await seedProbe({ kind: 'ok', version: '24.0.0' });
+    await seedProbe({ kind: 'ok', version: '24.3.0' });
     const api = createApi(packageDir);
     const spawning = api.createChildProcess();
     api.dispose();
@@ -466,7 +466,7 @@ describe('RstestApi worker spawn failures', () => {
 
   const seedConfiguredNode = (executable: string) => {
     settings['rstack.nodeExecutable'] = executable;
-    return seedNodeProbe(executable, { kind: 'ok', version: '24.0.0' });
+    return seedNodeProbe(executable, { kind: 'ok', version: '24.3.0' });
   };
 
   beforeEach(() => {

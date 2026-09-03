@@ -92,7 +92,7 @@ const main = async () => {
       files: [{ path: SOURCE_PATH, configKey: PROJECT_DIR }],
       // The rule set Go would have computed from the config for this file.
       rules: { [RULE_NAME]: { options: [] } },
-      fix: false,
+      collectFixes: false,
       suggestionsMode: 'off',
     });
   } finally {

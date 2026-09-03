@@ -406,7 +406,7 @@ export class RstestApi {
       //
       // The status-aggregation adaptation: the one-shot `showWarningMessage`
       // becomes the shared `version mismatch` status bar state with actual vs
-      // required versions. The floor is the same `>= 0.6.0`.
+      // required versions. The floor comes from the shared support matrix.
       // Skipped after dispose: the project's status was already forgotten,
       // and a mismatch re-latched now — for a root that may never come back —
       // would have nothing left to clear it.

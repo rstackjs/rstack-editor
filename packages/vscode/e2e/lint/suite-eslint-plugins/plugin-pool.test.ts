@@ -53,7 +53,7 @@ function request(generation: string): EslintPluginLintRequest {
     generation,
     files: [],
     rules: {},
-    fix: false,
+    collectFixes: false,
     suggestionsMode: 'off',
   };
 }

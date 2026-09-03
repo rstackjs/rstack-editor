@@ -37,9 +37,9 @@ describe('CoreResolver', () => {
   it('identifies a core by its real path, so a symlink is the copy it points at', async () => {
     const root = temporaryDirectory();
     const store = writePackage(
-      path.join(root, 'store', 'core-0.8.0'),
+      path.join(root, 'store', 'core-0.9.0'),
       '@rslint/core',
-      '0.8.0',
+      '0.9.0',
     );
     const link = path.join(root, 'app', 'node_modules', '@rslint', 'core');
     fs.mkdirSync(path.dirname(link), { recursive: true });
@@ -59,8 +59,8 @@ describe('CoreResolver', () => {
     const root = temporaryDirectory();
     const left = path.join(root, 'left');
     const right = path.join(root, 'right');
-    installPackage(left, '@rslint/core', '0.8.0');
-    installPackage(right, '@rslint/core', '0.8.0');
+    installPackage(left, '@rslint/core', '0.9.0');
+    installPackage(right, '@rslint/core', '0.9.0');
     const folder = folderOf(root);
     const resolver = new CoreResolver();
 
@@ -89,8 +89,8 @@ describe('CoreResolver', () => {
     // land on the same physical core. Upstream, which has no bridge, keys on
     // the core alone.
     const root = temporaryDirectory();
-    installPackage(root, '@rslint/core', '0.8.0');
-    const rstack = installPackage(root, 'rstack', '0.6.1');
+    installPackage(root, '@rslint/core', '0.9.0');
+    const rstack = installPackage(root, 'rstack', '0.7.2');
     const shimPath = installShim(rstack);
     const folder = folderOf(root);
     const resolver = new CoreResolver();

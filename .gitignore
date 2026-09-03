@@ -150,8 +150,8 @@ tests-dist/
 # F5 playground's materialized Node (see .vscode/tasks.json "playground node")
 packages/vscode/.playground/
 
-# E2E fixtures install published npm versions on demand; only
-# their manifests and configs are tracked.
+# E2E fixtures pin exact published versions and install them fresh;
+# their generated node_modules directories and lockfiles stay disposable.
 packages/vscode/e2e/fixtures/*/node_modules/
 packages/vscode/e2e/fixtures/*/pnpm-lock.yaml
 packages/vscode/e2e/lint/fixtures/pnpm-lock.yaml

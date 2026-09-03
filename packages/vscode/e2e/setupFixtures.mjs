@@ -1,10 +1,13 @@
 // Installs the E2E fixture workspaces.
 //
-// The fixtures install **published npm versions** of
+// The fixtures install **exact published npm versions** of
 // `@rslint/core` / `@rstest/core` / `rstack` — the extension resolves all three
 // from the project, so a fixture that linked this repo's own node_modules would
-// test nothing. Each fixture is its own independent install; `--ignore-workspace`
-// makes sure pnpm never folds them into a parent workspace.
+// test nothing. `rstack@0.7.2` itself pins `@rslint/core@0.9.0` exactly, so the
+// Rstack fixture pins its lint core transitively. Each fixture is its own
+// independent install; `--ignore-workspace` keeps test setup out of the parent
+// workspace. Exact toolchain pins make installs reproducible without committed
+// lockfiles, and Renovate bumps those pins.
 //
 // Idempotent: pnpm is a no-op when the fixture is already up to date, so
 // `test:e2e` can always run it.
@@ -55,8 +58,8 @@ const install = (name) => {
       // A fixture is a standalone project, never a workspace member of this
       // repo: the whole point is a plain, published-versions install.
       '--ignore-workspace',
-      // Fixtures pin ranges, not a lockfile — a frozen lockfile would fail CI
-      // the moment a patch release lands.
+      // Fixtures pin exact toolchain versions rather than committing lockfiles;
+      // Renovate updates the pins.
       '--no-frozen-lockfile',
       '--prefer-offline',
       // Changing a fixture's install config makes pnpm want to purge
@@ -65,10 +68,7 @@ const install = (name) => {
       '--config.confirmModulesPurge=false',
       // Fixtures deliberately install pinned published versions of the Rstack
       // toolchain, which are often hours old — disable pnpm's
-      // minimum-release-age supply-chain gate for these sandboxes. It must be
-      // a CLI flag: `--ignore-workspace` also ignores a local
-      // pnpm-workspace.yaml, and pnpm would otherwise auto-write exclusion
-      // files into the fixture.
+      // minimum-release-age supply-chain gate for these sandboxes.
       '--config.minimumReleaseAge=0',
       // pnpm's build-script gate exits non-zero on unapproved postinstalls
       // (e.g. core-js in the rstest fixture). These sandboxes install real

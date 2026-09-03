@@ -10,23 +10,19 @@ import { readPackageJson } from './packageResolve';
  * Launch floors (verified against npm):
  * - `@rslint/core >= 0.8.0` — explicit protocol-2 config selection.
  * - `@rstest/core >= 0.6.0` — the existing `MIN_CORE_VERSION` upstream.
- * - `rstack >= 0.6.1` — the first release depending on `@rslint/core ~0.8.0`,
- *   whose lint shim the bridged lint worker pins (protocol 2). It also carries
- *   `rs fmt --lsp`; there is no stdin fallback for older releases, since the
- *   editor would then format through a code path it is not tested against.
- *   The floor is **uniform across consumers by decision**: the Rstest bridge
- *   checks the same entry, so an older rstack reports `version mismatch` for
- *   tests too, even when that stack's own API would still work. One matrix
- *   entry means "which rstack does the extension support?"
- *   has one answer; per-stack rstack floors were considered and rejected —
- *   they make the answer depend on which status the user happens to look at,
- *   for the price of keeping tests alive on releases the toolchain has moved
- *   past. The status message names the required version either way.
+ * - `rstack >= 0.7.0` — the first release whose lint shim sets `basePath` and
+ *   itself pins `@rslint/core` 0.9.0, preserving project-relative config
+ *   paths (#431).
+ *
+ * The rstack floor is **uniform across consumers by decision**: lint, Rstest
+ * and fmt all check the same entry, so "which rstack does the extension
+ * support?" has one answer. Per-stack floors were considered and rejected;
+ * the status message names the required version either way.
  */
 export const SUPPORT_MATRIX = {
   '@rslint/core': '>=0.8.0',
   '@rstest/core': '>=0.6.0',
-  rstack: '>=0.6.1',
+  rstack: '>=0.7.0',
 } as const;
 
 export type SupportedPackage = keyof typeof SUPPORT_MATRIX;
@@ -63,17 +59,18 @@ export const readPackageVersion = (
  *
  * Native type stripping is what lets a worker load an `rstack.config.*` —
  * rstack's shim loads it with `loader: 'native'` and no jiti fallback. It was
- * unflagged in 23.6.0 and backported to the LTS line in 22.18.0, so 23.0–23.5
- * compare above 22.18.0 yet predate it — hence a disjunction, not a plain
- * floor. Verified: 22.17.1 reports `process.features.typescript` false,
- * 22.18.0 reports `strip`. See `shared/nodeResolution.ts` for how candidates
+ * unflagged in 23.6.0 and backported to the LTS line in 22.18.0. The supported
+ * rstack line declares the same range in `engines.node`: Node 23 is unsupported,
+ * while Node 24.0–24.2 still emits the experimental type-stripping warning
+ * (rstackjs/rstack-cli#427). This range intersects the runtime capability with
+ * that declared contract. See `shared/nodeResolution.ts` for how candidates
  * are probed.
  *
  * `scripts/playgroundNode.mjs` regex-parses this exact declaration (it is a
  * plain .mjs with no access to TS exports) — keep the single-quoted literal
  * form if this constant moves or is reformatted.
  */
-export const NODE_RUNTIME_RANGE = '^22.18.0 || >=23.6.0';
+export const NODE_RUNTIME_RANGE = '^22.18.0 || >=24.3.0';
 
 /**
  * `NODE_RUNTIME_RANGE` for human eyes, interpolated into the user-facing
@@ -82,7 +79,7 @@ export const NODE_RUNTIME_RANGE = '^22.18.0 || >=23.6.0';
  * to learn why they were refused. Logs keep the raw range, the precise
  * register there. Keep the two in lockstep.
  */
-export const NODE_RUNTIME_LABEL = '22.18+ (excluding 23.0–23.5)';
+export const NODE_RUNTIME_LABEL = '22.18–22.x or 24.3+';
 
 /**
  * Classifies a version against a range; it does not decide what the classes
