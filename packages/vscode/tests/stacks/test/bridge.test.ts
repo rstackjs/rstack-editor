@@ -197,14 +197,14 @@ describe('resolveRstackShim', () => {
   });
 
   it('refuses an rstack older than the support matrix floor', () => {
-    const configDir = createWorkspace({ version: '0.7.1' });
+    const configDir = createWorkspace({ version: '0.6.5' });
 
     expect(resolveRstackShim(configDir)).toBeUndefined();
     expect(reported).toEqual([
       {
         kind: 'version-mismatch',
         detail:
-          'rstack 0.7.1 is not supported, this extension requires >=0.7.2',
+          'rstack 0.6.5 is not supported, this extension requires >=0.7.0',
       },
     ]);
   });

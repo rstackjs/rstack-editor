@@ -40,7 +40,7 @@ The project-resolved packages are checked against a support matrix at runtime; a
 | -------------- | --------- |
 | `@rslint/core` | `>=0.9.0` |
 | `@rstest/core` | `>=0.6.0` |
-| `rstack`       | `>=0.7.2` |
+| `rstack`       | `>=0.7.0` |
 
 ## Auto-fix on save (Rslint)
 

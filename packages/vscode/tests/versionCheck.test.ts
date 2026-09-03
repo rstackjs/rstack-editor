@@ -12,7 +12,7 @@ describe('support matrix', () => {
     expect(SUPPORT_MATRIX).toEqual({
       '@rslint/core': '>=0.9.0',
       '@rstest/core': '>=0.6.0',
-      rstack: '>=0.7.2',
+      rstack: '>=0.7.0',
     });
   });
 });
@@ -22,7 +22,7 @@ describe('checkPackageVersion', () => {
     expect(checkPackageVersion('@rslint/core', '0.9.0').kind).toBe('ok');
     expect(checkPackageVersion('@rslint/core', '1.2.3').kind).toBe('ok');
     expect(checkPackageVersion('@rstest/core', '0.11.5').kind).toBe('ok');
-    expect(checkPackageVersion('rstack', '0.7.2').kind).toBe('ok');
+    expect(checkPackageVersion('rstack', '0.7.0').kind).toBe('ok');
   });
 
   it('accepts prereleases of a supported range', () => {

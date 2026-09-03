@@ -30,7 +30,7 @@ The extension resolves the tools from your project's `node_modules` and checks t
 | -------------- | --------- |
 | `@rslint/core` | `>=0.9.0` |
 | `@rstest/core` | `>=0.6.0` |
-| `rstack`       | `>=0.7.2` |
+| `rstack`       | `>=0.7.0` |
 
 ## Documentation
 
