@@ -430,11 +430,11 @@
     "onStartupFinished"
   ],
   "devDependencies": {
-    "@rsbuild/core": "~2.1.9",
-    "@rslib/core": "^1.0.0-beta.1",
-    "@rslint/core": "^0.9.0",
+    "@rsbuild/core": "~2.2.3",
+    "@rslib/core": "^1.0.0",
+    "@rslint/core": "^0.9.1",
     "@rstackjs/load-config": "^0.1.2",
-    "@rstest/core": "^0.11.11",
+    "@rstest/core": "^0.11.12",
     "@types/istanbul-lib-report": "^3.0.3",
     "@types/mocha": "^10.0.10",
     "@types/node": "^22.16.5",
