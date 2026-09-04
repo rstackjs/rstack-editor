@@ -301,4 +301,35 @@ describe('Project config/cwd/package-resolution decoupling', () => {
     project.dispose();
     status.unbind();
   });
+
+  it('replaces not installed with a logged config error when a retry rejects', async () => {
+    const config = uri('/repo/templates/app/rstest.config.ts');
+    normalizedConfigResult = {
+      ok: false,
+      message: "Cannot find package '@rstest/plugin-missing'",
+    };
+    const { reporter, reported } = createStatusRecorder();
+    status.bind(reporter);
+    const { project } = await createProject({ sourceUri: config });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(status.hasNotInstalled()).toBe(true);
+    normalizedConfigResult = undefined;
+    normalizedConfigFailure = new SyntaxError('Unexpected token export');
+    await project.retryFailedConfig();
+
+    expect(project.configLoadFailed).toBe(true);
+    expect(status.hasNotInstalled()).toBe(false);
+    expect(loggedWarnings).toHaveLength(1);
+    expect(loggedErrors).toHaveLength(1);
+    expect(loggedErrors[0]).toContain('Failed to initialize project config');
+    expect(reported.at(-1)).toEqual({
+      kind: 'crashed',
+      detail:
+        'Cannot load templates/app/rstest.config.ts: Unexpected token export',
+    });
+
+    project.dispose();
+    status.unbind();
+  });
 });

@@ -4,9 +4,11 @@ import {
   aggregateFolderStates,
   attributeToCore,
   foldRslintFolderState,
+  hasNotInstalledRslintState,
   missingPackageOf,
   RslintVersionMismatchError,
   runningRslintStatus,
+  shouldReportRslintStartFailure,
   statusForRslintStartFailure,
 } from '../../../src/stacks/lint/status';
 
@@ -88,6 +90,32 @@ describe('Rslint status classification', () => {
       kind: 'version-mismatch',
       detail: 'Node 22.17 is below the floor',
     });
+  });
+
+  it('preserves a classified config dependency when initial refresh rejects', () => {
+    // The worker notification is delivered before the rejected
+    // rslint/configRefresh response. Both the start catch's logger and its
+    // outer status catch use this verdict, so neither may replace `disabled`.
+    expect(shouldReportRslintStartFailure(false, true)).toBe(false);
+    expect(shouldReportRslintStartFailure(true, false)).toBe(false);
+    expect(shouldReportRslintStartFailure(false, false)).toBe(true);
+  });
+});
+
+describe('hasNotInstalledRslintState', () => {
+  it('reads the raw runtime and resolution states rather than the aggregate', () => {
+    expect(
+      hasNotInstalledRslintState([
+        { kind: 'crashed', detail: 'worker stopped' },
+        { kind: 'disabled', reason: 'dependencies missing' },
+      ]),
+    ).toBe(true);
+    expect(
+      hasNotInstalledRslintState([
+        { kind: 'running' },
+        { kind: 'version-mismatch', detail: 'core too old' },
+      ]),
+    ).toBe(false);
   });
 });
 

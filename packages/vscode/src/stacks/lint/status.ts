@@ -41,6 +41,18 @@ export const statusForRslintStartFailure = (error: unknown): StackState => {
 };
 
 /**
+ * A rejected start is already represented by the worker's config-dependency
+ * notification when that verdict arrived first. In that case the catch must
+ * preserve `disabled` and its one-line warning instead of replacing it with a
+ * `crashed` state and a stack trace. Planned aborts are silent for the same
+ * reason they were before config-dependency reporting existed.
+ */
+export const shouldReportRslintStartFailure = (
+  plannedAbort: boolean,
+  hasConfigDependencyFailure: boolean,
+): boolean => !plannedAbort && !hasConfigDependencyFailure;
+
+/**
  * Names the Rslint core a runtime's failure came from. With several runtimes
  * in one folder, "the language server stopped" alone does not say which core
  * to look at; the resolver's own messages already carry the directory, so it
@@ -138,6 +150,11 @@ export interface RslintFolderStatus {
   readonly name: string;
   readonly state: StackState;
 }
+
+/** The raw not-installed predicate used by the shell's conditional poll. */
+export const hasNotInstalledRslintState = (
+  states: Iterable<StackState>,
+): boolean => [...states].some((state) => state.kind === 'disabled');
 
 /**
  * Folds every workspace folder's state into the one state the status bar shows

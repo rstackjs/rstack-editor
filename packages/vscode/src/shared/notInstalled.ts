@@ -50,6 +50,47 @@ export const formatConfigDependencyMissingLog = (
 ): string =>
   `Cannot load ${configPath}: ${cause}. Install the project dependencies to enable ${STACK_LABELS[stack]} for this config.`;
 
+export interface ConfigDependencyEpisodeReport {
+  readonly reason: string;
+  readonly warning: string | undefined;
+}
+
+/**
+ * Deduplicates one config-dependency warning until a successful load ends the
+ * episode. Lint and fmt receive their failures over different protocols, but
+ * the latch semantics and the user-facing words are the same.
+ */
+export class ConfigDependencyEpisode {
+  #fingerprint: string | undefined;
+
+  get active(): boolean {
+    return this.#fingerprint !== undefined;
+  }
+
+  observe(
+    stack: StackId,
+    configPath: string,
+    cause: string,
+  ): ConfigDependencyEpisodeReport {
+    const fingerprint = `${configPath}\0${cause}`;
+    const warning =
+      fingerprint === this.#fingerprint
+        ? undefined
+        : formatConfigDependencyMissingLog(stack, configPath, cause);
+    this.#fingerprint = fingerprint;
+    return {
+      reason: formatConfigDependencyMissingStatus(stack, configPath),
+      warning,
+    };
+  }
+
+  clear(): boolean {
+    const wasActive = this.active;
+    this.#fingerprint = undefined;
+    return wasActive;
+  }
+}
+
 /**
  * The output-channel line: where the stack looked, plus the stack's own
  * consequence — the same shape as the shared Node preflight message

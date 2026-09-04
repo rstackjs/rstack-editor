@@ -13,8 +13,7 @@ import {
 import { RSTACK_CONFIG_GLOB } from '../../detection';
 import { getConfiguredNodeExecutable } from '../../shared/nodeExecutableSetting';
 import {
-  formatConfigDependencyMissingLog,
-  formatConfigDependencyMissingStatus,
+  ConfigDependencyEpisode,
   formatNotInstalledLog,
   formatNotInstalledStatus,
 } from '../../shared/notInstalled';
@@ -45,11 +44,13 @@ import type {
 import { LanguageServerProcessOwner } from '../lint/LanguageServerProcessOwner';
 import { pickBinEntry } from './binEntry';
 import {
-  classifyFmtSessionError,
-  showMessagePresentation,
+  finishSuccessfulFormatting,
+  handleFmtShowMessage,
+  type ShowMessageParams,
 } from './sessionError';
 import {
   foldFolderStatus,
+  hasNotInstalledFmtState,
   type FmtFolderStatus,
   type FmtRuntimeState,
   isFailedFmtState,
@@ -163,7 +164,7 @@ class FmtFolderRuntime {
   #stateWatcher: vscode.Disposable | undefined;
   #configPath: string | undefined;
   #missingPackage: string | undefined;
-  #configDependencyFingerprint: string | undefined;
+  readonly #configDependencyEpisode = new ConfigDependencyEpisode();
   readonly #configDependencyWarnings: string[] = [];
   #suppressedShowMessages = 0;
   #closing = false;
@@ -231,46 +232,31 @@ class FmtFolderRuntime {
     this.onDidChangeStatus();
   }
 
-  private handleShowMessage(message: {
-    readonly type: number;
-    readonly message: string;
-  }): void {
-    const configPath = this.#configPath;
-    const failure =
-      configPath === undefined
-        ? undefined
-        : classifyFmtSessionError(message, this.folderPath, configPath);
-    if (failure !== undefined) {
-      const fingerprint = `${failure.configPath}\0${failure.cause}`;
-      if (this.#configDependencyFingerprint !== fingerprint) {
-        const warning = formatConfigDependencyMissingLog(
+  private handleShowMessage(message: ShowMessageParams): void {
+    handleFmtShowMessage(message, this.folderPath, this.#configPath, {
+      onConfigDependency: (failure) => {
+        const report = this.#configDependencyEpisode.observe(
           'fmt',
           failure.configPath,
           failure.cause,
         );
-        this.context.output.warn(warning);
-        this.#configDependencyWarnings.push(warning);
-      }
-      this.#configDependencyFingerprint = fingerprint;
-      this.#suppressedShowMessages++;
-      this.setState(
-        'disabled',
-        formatConfigDependencyMissingStatus('fmt', failure.configPath),
-      );
-      return;
-    }
-
-    switch (showMessagePresentation(message.type)) {
-      case 'error':
-        void vscode.window.showErrorMessage(message.message);
-        break;
-      case 'warning':
-        void vscode.window.showWarningMessage(message.message);
-        break;
-      case 'information':
-        void vscode.window.showInformationMessage(message.message);
-        break;
-    }
+        if (report.warning !== undefined) {
+          this.context.output.warn(report.warning);
+          this.#configDependencyWarnings.push(report.warning);
+        }
+        this.#suppressedShowMessages++;
+        this.setState('disabled', report.reason);
+      },
+      showErrorMessage: (text) => {
+        void vscode.window.showErrorMessage(text);
+      },
+      showWarningMessage: (text) => {
+        void vscode.window.showWarningMessage(text);
+      },
+      showInformationMessage: (text) => {
+        void vscode.window.showInformationMessage(text);
+      },
+    });
   }
 
   /**
@@ -568,6 +554,28 @@ class FmtFolderRuntime {
       // instead of a separate "... Trace" channel per folder.
       traceOutputChannel: this.context.output,
       errorHandler,
+      middleware: {
+        provideDocumentFormattingEdits: async (
+          document,
+          options,
+          token,
+          next,
+        ) => {
+          const suppressedBeforeRequest = this.#suppressedShowMessages;
+          const edits = await next(document, options, token);
+          if (
+            finishSuccessfulFormatting(
+              this.#configDependencyEpisode,
+              suppressedBeforeRequest,
+              this.#suppressedShowMessages,
+            ) &&
+            this.#state === 'disabled'
+          ) {
+            this.setState('running');
+          }
+          return edits;
+        },
+      },
     };
   }
 
@@ -820,8 +828,8 @@ class FmtController implements StackController {
   }
 
   hasNotInstalledState(): boolean {
-    return [...this.#runtimes.values()].some(
-      (runtime) => runtime.state === 'disabled',
+    return hasNotInstalledFmtState(
+      [...this.#runtimes.values()].map((runtime) => runtime.state),
     );
   }
 

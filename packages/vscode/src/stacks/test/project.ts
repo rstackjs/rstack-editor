@@ -10,7 +10,10 @@ import {
   formatConfigDependencyMissingLog,
   formatConfigDependencyMissingStatus,
 } from '../../shared/notInstalled';
-import { logUnlessReported } from './coreResolution';
+import {
+  logUnlessReported,
+  ReportedRstestResolutionError,
+} from './coreResolution';
 import { logger } from './logger';
 import { RstestApi } from './master';
 import { type ChildProjectRef, computeCoveredConfigs } from './projectCoverage';
@@ -613,6 +616,20 @@ export class Project implements vscode.Disposable {
         if (this.cancellationSource.token.isCancellationRequested) return;
         this.configLoadFailed = true;
         this.#configDependencyCause = undefined;
+        if (!(error instanceof ReportedRstestResolutionError)) {
+          const cause =
+            error instanceof Error
+              ? error.message.split('\n', 1)[0]
+              : String(error);
+          // Replace the previous not-installed verdict with the real config
+          // error before clearing that latch. Crash outranks disabled, so the
+          // synchronous transition never paints a healthy intermediate state;
+          // clearing the raw latch stops dependency polling as intended.
+          status.crashed(
+            `Cannot load ${relativeTo(this.workspaceFolder, this.sourceUri)}: ${cause}`,
+            this.configDependencyStatusSource,
+          );
+        }
         status.installed(this.configDependencyStatusSource);
         logUnlessReported('Failed to initialize project config', error);
         // Let the manager settle its tree even when a config fails to load.

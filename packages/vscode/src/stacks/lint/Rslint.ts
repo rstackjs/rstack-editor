@@ -26,10 +26,7 @@ import {
   type ServerOptions,
   State,
 } from 'vscode-languageclient/node';
-import {
-  formatConfigDependencyMissingLog,
-  formatConfigDependencyMissingStatus,
-} from '../../shared/notInstalled';
+import { ConfigDependencyEpisode } from '../../shared/notInstalled';
 import {
   configuredNodeBelowFloor,
   NodePreflightError,
@@ -48,6 +45,7 @@ import {
 import {
   RslintVersionMismatchError,
   runningRslintStatus,
+  shouldReportRslintStartFailure,
   statusForRslintStartFailure,
 } from './status';
 import {
@@ -317,12 +315,6 @@ export interface RslintOptions {
   readonly onClosed?: () => void;
 }
 
-interface ReportedConfigDependencyFailure {
-  readonly fingerprint: string;
-  readonly displayPath: string;
-  readonly cause: string;
-}
-
 export class Rslint implements Disposable {
   private client: LanguageClient | undefined;
   private readonly logger: Logger;
@@ -344,7 +336,7 @@ export class Rslint implements Disposable {
   private stateWatcher: Disposable | undefined;
   private lifecycleEpoch = 0;
   private advisory: string | undefined;
-  private configDependencyFailure: ReportedConfigDependencyFailure | undefined;
+  private readonly configDependencyEpisode = new ConfigDependencyEpisode();
   private startPromise: Promise<void> | undefined;
   private startOperation: Promise<void> | undefined;
   private clientStartPromise: Promise<void> | undefined;
@@ -391,30 +383,24 @@ export class Rslint implements Disposable {
   ): void {
     const failure = notification.failure;
     if (failure === null) {
-      const wasMissing = this.configDependencyFailure !== undefined;
-      this.configDependencyFailure = undefined;
+      const wasMissing = this.configDependencyEpisode.clear();
       if (wasMissing && this.isRunning()) this.reportRunning();
       return;
     }
     const displayPath = this.displayConfigPath(failure.configPath);
-    const fingerprint = `${displayPath}\0${failure.cause}`;
-    if (this.configDependencyFailure?.fingerprint !== fingerprint) {
-      const warning = formatConfigDependencyMissingLog(
-        'rslint',
-        displayPath,
-        failure.cause,
-      );
+    const report = this.configDependencyEpisode.observe(
+      'rslint',
+      displayPath,
+      failure.cause,
+    );
+    if (report.warning !== undefined) {
+      const warning = report.warning;
       this.logger.warn(warning);
       this.configDependencyWarnings.push(warning);
     }
-    this.configDependencyFailure = {
-      fingerprint,
-      displayPath,
-      cause: failure.cause,
-    };
     this.report({
       kind: 'disabled',
-      reason: formatConfigDependencyMissingStatus('rslint', displayPath),
+      reason: report.reason,
     });
   }
 
@@ -440,7 +426,14 @@ export class Rslint implements Disposable {
   }
 
   private reportStartFailure(error: unknown): void {
-    if (this.isPlannedStartAbort(error)) return;
+    if (
+      !shouldReportRslintStartFailure(
+        this.isPlannedStartAbort(error),
+        this.hasConfigDependencyFailure(),
+      )
+    ) {
+      return;
+    }
     this.report(statusForRslintStartFailure(error));
   }
 
@@ -590,7 +583,12 @@ export class Rslint implements Disposable {
     } catch (error: unknown) {
       // A close or supersede during start is a planned abort, not a failure;
       // logging it as an error made every teardown race look like a crash.
-      if (!this.isPlannedStartAbort(error)) {
+      if (
+        shouldReportRslintStartFailure(
+          this.isPlannedStartAbort(error),
+          this.hasConfigDependencyFailure(),
+        )
+      ) {
         this.logger.error('Failed to start Rslint language client', error);
       }
       throw error;
@@ -684,7 +682,7 @@ export class Rslint implements Disposable {
   }
 
   public hasConfigDependencyFailure(): boolean {
-    return this.configDependencyFailure !== undefined;
+    return this.configDependencyEpisode.active;
   }
 
   public retryConfigDependency(): Promise<void> | undefined {

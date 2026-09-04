@@ -71,6 +71,11 @@ const STATE_RANK: Readonly<Record<FmtRuntimeState, number>> = {
 export const isFailedFmtState = (state: FmtRuntimeState): boolean =>
   state === 'disabled' || state === 'version-mismatch' || state === 'crashed';
 
+/** The raw not-installed predicate used by the shell's conditional poll. */
+export const hasNotInstalledFmtState = (
+  states: Iterable<FmtRuntimeState>,
+): boolean => [...states].some((state) => state === 'disabled');
+
 /**
  * Folds every folder runtime's state into the one report the shell shows for
  * the fmt stack. The worst folder wins, and with multiple folders the detail
