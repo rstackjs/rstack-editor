@@ -155,6 +155,15 @@ describe('StatusHolder failure latches', () => {
     expect(calls).toEqual(['report:disabled']);
   });
 
+  it('exposes a missing install even when a crash outranks it', () => {
+    bindRecorder();
+    status.notInstalled('core missing', '/a');
+    status.crashed('worker stopped', '/b');
+    expect(status.hasNotInstalled()).toBe(true);
+    status.installed('/a');
+    expect(status.hasNotInstalled()).toBe(false);
+  });
+
   it('ranks a missing install below a mismatch and a crash', () => {
     const calls = bindRecorder();
     status.notInstalled('core missing', '/a');

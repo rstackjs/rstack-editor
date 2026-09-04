@@ -213,15 +213,25 @@ class RslintController implements StackController {
           // upstream's error. A document with a last-good runtime still
           // lints, so its consequence says what it keeps, not "will not".
           const missing = missingPackageOf(error);
+          const status = statusForRslintStartFailure(error);
           if (missing !== undefined) {
-            logger.warn(
-              formatNotInstalledLog(
-                missing,
-                workspaceFolder.name,
-                workspaceFolder.uri.fsPath,
-                `${document.uri} ${keeping ? `keeps ${keeping}` : 'will not lint'} until it is installed`,
-              ),
-            );
+            const previous = this.#folderStates
+              .get(folderKeyOf(workspaceFolder))
+              ?.failures.get(document.uri.toString());
+            if (
+              previous?.kind !== 'disabled' ||
+              previous.reason !==
+                (status.kind === 'disabled' ? status.reason : undefined)
+            ) {
+              logger.warn(
+                formatNotInstalledLog(
+                  missing,
+                  workspaceFolder.name,
+                  workspaceFolder.uri.fsPath,
+                  `${document.uri} ${keeping ? `keeps ${keeping}` : 'will not lint'} until it is installed`,
+                ),
+              );
+            }
           } else {
             logger.error(
               formatCoreSelectionFailure(document.uri.toString(), keeping),
@@ -232,7 +242,6 @@ class RslintController implements StackController {
           // The failure is still the folder's worst news, so it is folded in
           // beside the runtimes rather than shown as a toast. A start failure
           // outlives its (already closed) runtime here, so it names the core.
-          const status = statusForRslintStartFailure(error);
           this.setState(
             folderKeyOf(workspaceFolder),
             'failures',
@@ -410,6 +419,14 @@ class RslintController implements StackController {
           name: entry.folder.name,
           state: this.folderState(folderKeyOf(entry.folder)),
         })),
+      ),
+    );
+  }
+
+  hasNotInstalledState(): boolean {
+    return [...this.#folderStates.values()].some((states) =>
+      [...states.runtimes.values(), ...states.failures.values()].some(
+        (state) => state.kind === 'disabled',
       ),
     );
   }

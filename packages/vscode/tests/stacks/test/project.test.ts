@@ -20,6 +20,7 @@ const apiCalls: {
 }[] = [];
 let normalizedConfigFailure: unknown;
 let normalizedConfigResult: NormalizedConfigResult | undefined;
+let normalizedConfigCalls = 0;
 
 rs.mock('../../../src/stacks/test/master', () => {
   class RstestApi {
@@ -35,6 +36,7 @@ rs.mock('../../../src/stacks/test/master', () => {
     // Never settles: the constructor's config-resolution continuation would
     // otherwise start watchers this test has no filesystem for.
     getNormalizedConfig() {
+      normalizedConfigCalls += 1;
       if (normalizedConfigFailure) {
         return Promise.reject(normalizedConfigFailure);
       }
@@ -133,6 +135,7 @@ const collection = {
 beforeEach(() => {
   normalizedConfigFailure = undefined;
   normalizedConfigResult = undefined;
+  normalizedConfigCalls = 0;
   loggedErrors.length = 0;
   loggedWarnings.length = 0;
   logger.bind(channel as never);
@@ -261,6 +264,41 @@ describe('Project config/cwd/package-resolution decoupling', () => {
     // Disposal forgets the latch, so the detection-driven retry starts clean.
     project.dispose();
     expect(reported.at(-1)).toEqual({ kind: 'running', detail: undefined });
+    status.unbind();
+  });
+
+  it('retries a missing config dependency in place with one flight and one warning', async () => {
+    const rstackConfig = uri('/repo/templates/app/rstack.config.ts');
+    normalizedConfigResult = {
+      ok: false,
+      message: "Cannot find package '@rsbuild/plugin-react'",
+    };
+    const { reporter, reported } = createStatusRecorder();
+    status.bind(reporter);
+    const { project } = await createProject({ sourceUri: rstackConfig });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const firstRetry = project.retryFailedConfig();
+    const sameRetry = project.retryFailedConfig();
+    expect(firstRetry).toBe(sameRetry);
+    await firstRetry;
+    expect(normalizedConfigCalls).toBe(2);
+    expect(loggedWarnings).toHaveLength(1);
+    expect(project.configLoadFailed).toBe(true);
+
+    normalizedConfigResult = {
+      ok: true,
+      root: '/repo/templates/app',
+      include: ['**/*.test.ts'],
+      exclude: [],
+      childProjects: [],
+    };
+    await project.retryFailedConfig();
+    expect(normalizedConfigCalls).toBe(3);
+    expect(project.configLoadFailed).toBe(false);
+    expect(reported.at(-1)).toEqual({ kind: 'running', detail: undefined });
+
+    project.dispose();
     status.unbind();
   });
 });

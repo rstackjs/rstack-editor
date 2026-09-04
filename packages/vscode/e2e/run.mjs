@@ -43,7 +43,7 @@ const SLICES = [
     // shared `rstack` fixture. `RSTACK_LINT_E2E_SUITES=<name,...>` filters
     // which suites run.
     name: 'lint',
-    fixtures: ['lint', 'rstack'],
+    fixtures: ['lint', 'lint-dependency-recovery', 'rstack'],
     entry: 'tests-dist/e2e/lint/runTest.js',
     compile: true,
   },

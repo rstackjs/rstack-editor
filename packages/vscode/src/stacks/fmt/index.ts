@@ -162,6 +162,7 @@ class FmtFolderRuntime {
   #defaultErrorHandler: ErrorHandler | undefined;
   #stateWatcher: vscode.Disposable | undefined;
   #configPath: string | undefined;
+  #missingPackage: string | undefined;
   #configDependencyFingerprint: string | undefined;
   readonly #configDependencyWarnings: string[] = [];
   #suppressedShowMessages = 0;
@@ -372,11 +373,15 @@ class FmtFolderRuntime {
       // already current) fires no file event, so nothing rebuilds this
       // runtime — the status message is where the way out has to live.
       this.setState('disabled', formatNotInstalledStatus('fmt', 'rstack'));
-      context.output.warn(
-        formatNotInstalledLog('rstack', this.folder.name, folderRoot),
-      );
+      if (this.#missingPackage !== 'rstack') {
+        context.output.warn(
+          formatNotInstalledLog('rstack', this.folder.name, folderRoot),
+        );
+      }
+      this.#missingPackage = 'rstack';
       return;
     }
+    this.#missingPackage = undefined;
 
     // One read for the version and the bin entry; `readPackageJson` re-reads
     // from disk by design, so a reinstall is picked up on the next start.
@@ -813,6 +818,12 @@ class FmtController implements StackController {
           ? `detected in ${names.join(', ')}`
           : `detected in ${names.length} folders`,
       ),
+    );
+  }
+
+  hasNotInstalledState(): boolean {
+    return [...this.#runtimes.values()].some(
+      (runtime) => runtime.state === 'disabled',
     );
   }
 

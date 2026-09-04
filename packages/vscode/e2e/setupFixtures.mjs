@@ -39,6 +39,12 @@ export const FIXTURES = {
   'rstest-workspace-1': path.join(here, 'rstest', 'fixtures', 'workspace-1'),
   'rstest-workspace-2': path.join(here, 'rstest', 'fixtures', 'workspace-2'),
   lint: path.join(here, 'lint', 'fixtures'),
+  'lint-dependency-recovery': path.join(
+    here,
+    'lint',
+    'fixtures',
+    'dependency-recovery',
+  ),
 };
 export const FIXTURE_NAMES = Object.keys(FIXTURES);
 

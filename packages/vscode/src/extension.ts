@@ -10,6 +10,7 @@ import {
   type StackControllerFactory,
   type StackId,
   type StackState,
+  type StatusReporter,
   STACK_IDS,
   STACK_LABELS,
   stackCommand,
@@ -26,6 +27,8 @@ const STACK_FACTORIES: Readonly<Record<StackId, StackControllerFactory>> = {
 
 /** Stacks that run project-loading children on the shared User Node runtime. */
 const USER_NODE_STACKS: readonly StackId[] = ['rslint', 'rstest', 'fmt'];
+
+const DEFAULT_DEPENDENCY_POLL_INTERVAL_MS = 10_000;
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? (error.stack ?? error.message) : String(error);
@@ -57,6 +60,10 @@ class ExtensionShell {
   >();
 
   #reconciling: Promise<void> = Promise.resolve();
+  #dependencyPollIntervalMs = DEFAULT_DEPENDENCY_POLL_INTERVAL_MS;
+  #dependencyPollTimer: ReturnType<typeof setTimeout> | undefined;
+  #dependencyPollInFlight = false;
+  #dependencyPollCount = 0;
   #disposed = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {
@@ -220,6 +227,76 @@ class ExtensionShell {
   }
 
   /**
+   * Starts one recursive timer only while a live controller owns a
+   * not-installed state. The timer enters the same shell queue as every
+   * reconcile/restart, then sends the same forced detection event as a
+   * lockfile change; each stack therefore reuses its existing retry path.
+   */
+  private syncDependencyPoll(): void {
+    const needed =
+      !this.#disposed &&
+      [...this.#controllers.values()].some((controller) =>
+        controller.hasNotInstalledState(),
+      );
+    if (!needed) {
+      if (this.#dependencyPollTimer !== undefined) {
+        clearTimeout(this.#dependencyPollTimer);
+        this.#dependencyPollTimer = undefined;
+      }
+      return;
+    }
+    if (
+      this.#dependencyPollTimer !== undefined ||
+      this.#dependencyPollInFlight
+    ) {
+      return;
+    }
+    this.#dependencyPollTimer = setTimeout(() => {
+      this.#dependencyPollTimer = undefined;
+      this.#dependencyPollInFlight = true;
+      void this.enqueue(async () => {
+        if (
+          this.#disposed ||
+          ![...this.#controllers.values()].some((controller) =>
+            controller.hasNotInstalledState(),
+          )
+        ) {
+          return;
+        }
+        try {
+          await this.#detection.refreshForDependencyChange();
+          this.#dependencyPollCount++;
+        } catch (error) {
+          if (!this.#disposed) {
+            this.#channels.shell.error(
+              `Dependency recovery detection failed: ${errorMessage(error)}`,
+            );
+          }
+        }
+      }).finally(() => {
+        this.#dependencyPollInFlight = false;
+        this.syncDependencyPoll();
+      });
+    }, this.#dependencyPollIntervalMs);
+  }
+
+  private stackStatusReporter(stack: StackId): StatusReporter {
+    const reporter = this.#statusBar.reporterFor(stack);
+    const report = (state: StackState): void => {
+      reporter.report(state);
+      this.syncDependencyPoll();
+    };
+    return {
+      stack,
+      report,
+      starting: (detail) => report({ kind: 'starting', detail }),
+      running: (detail) => report({ kind: 'running', detail }),
+      crashed: (detail) => report({ kind: 'crashed', detail }),
+      versionMismatch: (detail) => report({ kind: 'version-mismatch', detail }),
+    };
+  }
+
+  /**
    * `rstack.restart` (every stack) and `rstack.<stack>.restart` (one) — a full
    * reset, not a "retry whatever looks broken".
    *
@@ -324,6 +401,7 @@ class ExtensionShell {
     next?: StackState,
   ): Promise<void> {
     this.#controllers.delete(stack);
+    this.syncDependencyPoll();
     await this.disposeController(stack, controller);
     if (!next || this.#disposed) {
       return;
@@ -387,7 +465,7 @@ class ExtensionShell {
         stack,
         extensionContext: this.context,
         output: this.#channels.forStack(stack),
-        status: this.#statusBar.reporterFor(stack),
+        status: this.stackStatusReporter(stack),
         detection: snapshot,
         onDidChangeDetection: this.#detectionEmitter.event,
       });
@@ -403,6 +481,7 @@ class ExtensionShell {
       }
       await this.setContextKey(`rstack.${stack}.active`, true);
       this.#statusBar.setActive(stack, true);
+      this.syncDependencyPoll();
       this.#channels.shell.info(`${STACK_LABELS[stack]} registered`);
     } catch (error) {
       await this.retire(stack, controller, {
@@ -468,6 +547,18 @@ class ExtensionShell {
           this.#stackExportWaiters.set(stack, waiters);
         });
       },
+      setDependencyPollIntervalForTest: (intervalMs) => {
+        if (!Number.isFinite(intervalMs) || intervalMs < 1) {
+          throw new Error('dependency poll interval must be a positive number');
+        }
+        this.#dependencyPollIntervalMs = intervalMs;
+        if (this.#dependencyPollTimer !== undefined) {
+          clearTimeout(this.#dependencyPollTimer);
+          this.#dependencyPollTimer = undefined;
+        }
+        this.syncDependencyPoll();
+      },
+      getDependencyPollCountForTest: () => this.#dependencyPollCount,
     };
   }
 
@@ -483,6 +574,10 @@ class ExtensionShell {
 
   async dispose(): Promise<void> {
     this.#disposed = true;
+    if (this.#dependencyPollTimer !== undefined) {
+      clearTimeout(this.#dependencyPollTimer);
+      this.#dependencyPollTimer = undefined;
+    }
     // Before the wait below, not after it: the service holds a debounce timer
     // and its own watchers, so leaving it live means a file touched during
     // shutdown can start a fresh detection pass behind us.

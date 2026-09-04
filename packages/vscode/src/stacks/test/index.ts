@@ -555,6 +555,10 @@ class RstestController implements StackController {
     return this.#rstest.buildExports();
   }
 
+  hasNotInstalledState(): boolean {
+    return status.hasNotInstalled();
+  }
+
   dispose(): void {
     this.#rstest?.dispose();
     this.#rstest = undefined;

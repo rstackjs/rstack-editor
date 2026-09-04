@@ -235,17 +235,15 @@ export class WorkspaceManager implements vscode.Disposable {
     );
   }
   /**
-   * Recreates projects whose one-shot config evaluation failed — dependencies
-   * may have been installed since (observed as a lockfile-driven detection
-   * pass). Only ever called from a detection event, never from a project
-   * callback, so a persistently failing config cannot recreate itself in a
-   * loop; it is simply re-attempted once per detection pass.
+   * Retries projects whose config evaluation failed — dependencies may have
+   * been installed since. The project keeps its identity and the retry is
+   * single-flight, so repeated dependency signals cannot overlap workers or
+   * repeat an unchanged not-installed warning.
    */
   public retryFailedProjects() {
-    for (const [key, project] of [...this.projects]) {
+    for (const project of this.projects.values()) {
       if (!project.configLoadFailed) continue;
-      project.dispose();
-      this.projects.set(key, this.createProject(project.source));
+      void project.retryFailedConfig();
     }
   }
 
@@ -550,10 +548,9 @@ export class Project implements vscode.Disposable {
   // the same tests are not shown twice.
   suppressed = false;
   // The one-shot config evaluation in the constructor rejected (typically:
-  // dependencies not installed yet). `retryFailedProjects` recreates such
-  // projects on the next detection pass.
+  // dependencies not installed yet). A dependency-change pass retries it.
   configLoadFailed = false;
-  /** What this project was built from; `retryFailedProjects` rebuilds from it. */
+  /** What this project was built from. */
   readonly source: ProjectSource;
   // See `ProjectSource`.
   readonly sourceUri: vscode.Uri;
@@ -562,6 +559,8 @@ export class Project implements vscode.Disposable {
   readonly rstestResolutionDir: string;
   readonly isBridge: boolean;
   #watch?: vscode.Disposable;
+  #configLoad: Promise<void> | undefined;
+  #configDependencyCause: string | undefined;
   constructor(
     private workspaceFolder: vscode.WorkspaceFolder,
     source: ProjectSource,
@@ -587,7 +586,12 @@ export class Project implements vscode.Disposable {
     );
     this.cancellationSource = new vscode.CancellationTokenSource();
 
-    void this.api
+    void this.loadConfig();
+  }
+
+  private loadConfig(): Promise<void> {
+    if (this.#configLoad !== undefined) return this.#configLoad;
+    const pending = this.api
       .getNormalizedConfig()
       .then((result) => {
         if (this.cancellationSource.token.isCancellationRequested) return;
@@ -595,6 +599,8 @@ export class Project implements vscode.Disposable {
           this.reportMissingDependency(result.message);
           return;
         }
+        this.configLoadFailed = false;
+        this.#configDependencyCause = undefined;
         status.installed(this.configDependencyStatusSource);
         this.root = vscode.Uri.file(result.root);
         this.include = result.include;
@@ -606,10 +612,28 @@ export class Project implements vscode.Disposable {
       .catch((error) => {
         if (this.cancellationSource.token.isCancellationRequested) return;
         this.configLoadFailed = true;
+        this.#configDependencyCause = undefined;
+        status.installed(this.configDependencyStatusSource);
         logUnlessReported('Failed to initialize project config', error);
         // Let the manager settle its tree even when a config fails to load.
         this.onConfigResolved?.();
       });
+    this.#configLoad = pending;
+    void pending.then(
+      () => {
+        if (this.#configLoad === pending) this.#configLoad = undefined;
+      },
+      () => {
+        if (this.#configLoad === pending) this.#configLoad = undefined;
+      },
+    );
+    return pending;
+  }
+
+  /** Re-evaluates a failed config without replacing this project. */
+  public retryFailedConfig(): Promise<void> | undefined {
+    if (!this.configLoadFailed) return undefined;
+    return this.loadConfig();
   }
 
   /**
@@ -629,9 +653,16 @@ export class Project implements vscode.Disposable {
   // Latched under this project's key, which `dispose` forgets.
   private reportMissingDependency(cause: string): void {
     this.configLoadFailed = true;
-    logger.warn(
-      formatConfigDependencyMissingLog('rstest', this.sourceUri.fsPath, cause),
-    );
+    if (cause !== this.#configDependencyCause) {
+      logger.warn(
+        formatConfigDependencyMissingLog(
+          'rstest',
+          this.sourceUri.fsPath,
+          cause,
+        ),
+      );
+    }
+    this.#configDependencyCause = cause;
     status.notInstalled(
       formatConfigDependencyMissingStatus(
         'rstest',

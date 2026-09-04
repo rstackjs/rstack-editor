@@ -283,6 +283,16 @@ export class DetectionService implements vscode.Disposable {
     return this.refresh();
   }
 
+  /**
+   * Re-runs package probes and notifies live stacks even when detection's file
+   * signature stays unchanged. This is the same signal a lockfile event sends:
+   * dependencies may now resolve from a newly populated `node_modules`.
+   */
+  refreshForDependencyChange(): Promise<DetectionSnapshot> {
+    this.#notifyUnchanged = true;
+    return this.refresh();
+  }
+
   async refresh(): Promise<DetectionSnapshot> {
     if (this.#running) {
       // Coalesce concurrent refreshes: one extra pass covers every caller that

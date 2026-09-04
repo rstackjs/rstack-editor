@@ -157,6 +157,8 @@ export interface StackController {
    */
   readonly restartOnSettings?: readonly string[];
   register(context: StackContext): Promise<Record<string, unknown> | void>;
+  /** True while at least one owned folder/project needs dependencies installed. */
+  hasNotInstalledState(): boolean;
   /** Teardown may be asynchronous (stopping a language server, workers). */
   dispose(): void | Promise<void>;
 }
@@ -173,6 +175,10 @@ export interface RstackExtensionExports {
    * already did). Rejects nothing: a stack that never activates never settles.
    */
   whenStackActive(stack: StackId): Promise<Record<string, unknown>>;
+  /** E2E only: shorten the shell's dependency-recovery polling interval. */
+  setDependencyPollIntervalForTest(intervalMs: number): void;
+  /** E2E only: completed dependency-recovery detection passes. */
+  getDependencyPollCountForTest(): number;
 }
 
 export type StackControllerFactory = () => StackController;
