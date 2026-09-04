@@ -4,6 +4,7 @@ import {
   CloseAction,
   ErrorAction,
   LanguageClient,
+  ShowMessageNotification,
   State,
   type ErrorHandler,
   type LanguageClientOptions,
@@ -12,6 +13,8 @@ import {
 import { RSTACK_CONFIG_GLOB } from '../../detection';
 import { getConfiguredNodeExecutable } from '../../shared/nodeExecutableSetting';
 import {
+  formatConfigDependencyMissingLog,
+  formatConfigDependencyMissingStatus,
   formatNotInstalledLog,
   formatNotInstalledStatus,
 } from '../../shared/notInstalled';
@@ -41,6 +44,10 @@ import type {
 // no lint behaviour is shared, and the file has no lint imports.
 import { LanguageServerProcessOwner } from '../lint/LanguageServerProcessOwner';
 import { pickBinEntry } from './binEntry';
+import {
+  classifyFmtSessionError,
+  showMessagePresentation,
+} from './sessionError';
 import {
   foldFolderStatus,
   type FmtFolderStatus,
@@ -154,6 +161,10 @@ class FmtFolderRuntime {
   #client: LanguageClient | undefined;
   #defaultErrorHandler: ErrorHandler | undefined;
   #stateWatcher: vscode.Disposable | undefined;
+  #configPath: string | undefined;
+  #configDependencyFingerprint: string | undefined;
+  readonly #configDependencyWarnings: string[] = [];
+  #suppressedShowMessages = 0;
   #closing = false;
   #disposed = false;
   /** True only across `startImpl`'s `client.start()` await — the window `interruptInFlightStart` exists for. */
@@ -173,7 +184,10 @@ class FmtFolderRuntime {
      * stack's one report (`foldFolderStatus`).
      */
     private readonly onDidChangeStatus: () => void,
-  ) {}
+    configPath: string | undefined,
+  ) {
+    this.#configPath = configPath;
+  }
 
   get state(): FmtRuntimeState {
     return this.#state;
@@ -193,6 +207,18 @@ class FmtFolderRuntime {
     return this.folder.uri.fsPath;
   }
 
+  setConfigPath(configPath: string | undefined): void {
+    this.#configPath = configPath;
+  }
+
+  get configDependencyWarnings(): readonly string[] {
+    return this.#configDependencyWarnings;
+  }
+
+  get suppressedShowMessages(): number {
+    return this.#suppressedShowMessages;
+  }
+
   private setState(state: FmtRuntimeState, detail = ''): void {
     this.#state = state;
     this.#detail = detail;
@@ -202,6 +228,48 @@ class FmtFolderRuntime {
   private setAdvisory(message: string): void {
     this.#advisory = message;
     this.onDidChangeStatus();
+  }
+
+  private handleShowMessage(message: {
+    readonly type: number;
+    readonly message: string;
+  }): void {
+    const configPath = this.#configPath;
+    const failure =
+      configPath === undefined
+        ? undefined
+        : classifyFmtSessionError(message, this.folderPath, configPath);
+    if (failure !== undefined) {
+      const fingerprint = `${failure.configPath}\0${failure.cause}`;
+      if (this.#configDependencyFingerprint !== fingerprint) {
+        const warning = formatConfigDependencyMissingLog(
+          'fmt',
+          failure.configPath,
+          failure.cause,
+        );
+        this.context.output.warn(warning);
+        this.#configDependencyWarnings.push(warning);
+      }
+      this.#configDependencyFingerprint = fingerprint;
+      this.#suppressedShowMessages++;
+      this.setState(
+        'disabled',
+        formatConfigDependencyMissingStatus('fmt', failure.configPath),
+      );
+      return;
+    }
+
+    switch (showMessagePresentation(message.type)) {
+      case 'error':
+        void vscode.window.showErrorMessage(message.message);
+        break;
+      case 'warning':
+        void vscode.window.showWarningMessage(message.message);
+        break;
+      case 'information':
+        void vscode.window.showInformationMessage(message.message);
+        break;
+    }
   }
 
   /**
@@ -349,6 +417,13 @@ class FmtFolderRuntime {
       serverOptions,
       this.createClientOptions(),
     );
+    // vscode-languageclient installs pending handlers after initialize with
+    // method-keyed replacement semantics. Registering before start therefore
+    // replaces its default toast handler while leaving unrelated messages on
+    // the same Error/Warning/Info UI path below.
+    client.onNotification(ShowMessageNotification.type, (message) => {
+      this.handleShowMessage(message);
+    });
     // Created once per client, not per callback: the default handler carries
     // the restart budget (N crashes in K minutes), and it can only be created
     // from the client the options were built for.
@@ -632,6 +707,17 @@ class FmtController implements StackController {
             runtime.state,
           ]),
         ),
+      /** E2E only: classified config failures suppressed from showMessage. */
+      suppressedConfigDependencyMessages: (): number =>
+        [...this.#runtimes.values()].reduce(
+          (count, runtime) => count + runtime.suppressedShowMessages,
+          0,
+        ),
+      /** E2E only: one-line warnings emitted for classified config failures. */
+      configDependencyWarnings: (): readonly string[] =>
+        [...this.#runtimes.values()].flatMap(
+          (runtime) => runtime.configDependencyWarnings,
+        ),
     });
   }
 
@@ -649,9 +735,13 @@ class FmtController implements StackController {
       return;
     }
     const detected = new Map(
-      snapshot
-        .foldersFor('fmt')
-        .map((entry) => [entry.folder.uri.fsPath, entry.folder] as const),
+      snapshot.foldersFor('fmt').map((entry) => {
+        const folderPath = entry.folder.uri.fsPath;
+        const configPath = entry.stacks.fmt.rstackConfigFiles.find(
+          (uri) => path.dirname(uri.fsPath) === folderPath,
+        )?.fsPath;
+        return [folderPath, { folder: entry.folder, configPath }] as const;
+      }),
     );
     for (const [folderPath, runtime] of [...this.#runtimes]) {
       if (!detected.has(folderPath)) {
@@ -672,9 +762,10 @@ class FmtController implements StackController {
         this.#retiring.set(folderPath, retirement);
       }
     }
-    for (const [folderPath, folder] of detected) {
+    for (const [folderPath, { folder, configPath }] of detected) {
       const existing = this.#runtimes.get(folderPath);
       if (existing) {
+        existing.setConfigPath(configPath);
         if (isFailedFmtState(existing.state)) {
           // A failed runtime is retried in place, on the same path a config
           // change uses: restart re-runs package resolution, the version
@@ -686,8 +777,11 @@ class FmtController implements StackController {
       // The callback re-reads `#snapshot`, so a server that finishes starting
       // after a detection change reports from the freshest snapshot — and the
       // closure captures nothing beyond `this`.
-      const runtime = new FmtFolderRuntime(folder, context, () =>
-        this.reportStatus(),
+      const runtime = new FmtFolderRuntime(
+        folder,
+        context,
+        () => this.reportStatus(),
+        configPath,
       );
       this.#runtimes.set(folderPath, runtime);
       void runtime.start(this.#retiring.get(folderPath));
