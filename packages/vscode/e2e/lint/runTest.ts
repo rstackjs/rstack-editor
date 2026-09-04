@@ -309,6 +309,11 @@ async function main(): Promise<void> {
       workspace: sharedFixture('rstack'),
       tests: suiteDir('suite-bridge'),
     },
+    {
+      name: 'Missing config dependency tests',
+      workspace: fixture('missing-config-dependency'),
+      tests: suiteDir('suite-missing-config-dependency'),
+    },
   ];
 
   // Optional development filter: `RSTACK_LINT_E2E_SUITES="No config,Monorepo"`

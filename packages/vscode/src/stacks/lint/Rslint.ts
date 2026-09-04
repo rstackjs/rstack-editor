@@ -27,6 +27,10 @@ import {
   State,
 } from 'vscode-languageclient/node';
 import {
+  formatConfigDependencyMissingLog,
+  formatConfigDependencyMissingStatus,
+} from '../../shared/notInstalled';
+import {
   configuredNodeBelowFloor,
   NodePreflightError,
   resolveUserNodeOnce,
@@ -37,6 +41,10 @@ import type { CoreInstallation } from './CoreResolver';
 import { LanguageServerProcessOwner } from './LanguageServerProcessOwner';
 import type { Logger } from './logger';
 import type { RslintMode } from './resolution';
+import {
+  CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
+  type ConfigDependencyStatusNotification,
+} from './worker/configDependencyProtocol';
 import {
   RslintVersionMismatchError,
   runningRslintStatus,
@@ -304,7 +312,15 @@ export interface RslintOptions {
   readonly router: WorkspaceDocumentRouter;
   readonly logger: Logger;
   readonly reportStatus: RslintStatusSink;
+  /** Root Rstack config represented by the worker's physical bridge shim. */
+  readonly bridgeConfigPath?: string;
   readonly onClosed?: () => void;
+}
+
+interface ReportedConfigDependencyFailure {
+  readonly fingerprint: string;
+  readonly displayPath: string;
+  readonly cause: string;
 }
 
 export class Rslint implements Disposable {
@@ -314,10 +330,12 @@ export class Rslint implements Disposable {
   public readonly workspaceFolder: WorkspaceFolder;
   private readonly router: WorkspaceDocumentRouter;
   private readonly reportStatus: RslintStatusSink;
+  private readonly bridgeConfigPath: string | undefined;
   private readonly installation: CoreInstallation;
   private readonly lspOutputChannel: OutputChannel;
   private readonly outputChannel: OutputChannel;
   private readonly onClosed: (() => void) | undefined;
+  private readonly configDependencyWarnings: string[] = [];
   private readonly configWatchers: FileSystemWatcher[] = [];
   private configReloadTimer: ReturnType<typeof setTimeout> | undefined;
   private configReloadChain: Promise<void> = Promise.resolve();
@@ -326,6 +344,7 @@ export class Rslint implements Disposable {
   private stateWatcher: Disposable | undefined;
   private lifecycleEpoch = 0;
   private advisory: string | undefined;
+  private configDependencyFailure: ReportedConfigDependencyFailure | undefined;
   private startPromise: Promise<void> | undefined;
   private startOperation: Promise<void> | undefined;
   private clientStartPromise: Promise<void> | undefined;
@@ -337,6 +356,7 @@ export class Rslint implements Disposable {
     this.workspaceFolder = options.workspaceFolder;
     this.router = options.router;
     this.reportStatus = options.reportStatus;
+    this.bridgeConfigPath = options.bridgeConfigPath;
     this.installation = options.installation;
     this.logger = options.logger;
     this.lspOutputChannel = options.lspOutputChannel;
@@ -350,6 +370,52 @@ export class Rslint implements Disposable {
 
   private reportRunning(): void {
     this.report(runningRslintStatus(this.advisory));
+  }
+
+  private displayConfigPath(configPath: string): string {
+    const physicalPath =
+      configPath === this.installation.shimPath && this.bridgeConfigPath
+        ? this.bridgeConfigPath
+        : configPath;
+    const relative = path.relative(
+      this.workspaceFolder.uri.fsPath,
+      physicalPath,
+    );
+    return relative.length > 0 && !relative.startsWith('..')
+      ? relative
+      : path.basename(physicalPath);
+  }
+
+  private handleConfigDependencyStatus(
+    notification: ConfigDependencyStatusNotification,
+  ): void {
+    const failure = notification.failure;
+    if (failure === null) {
+      const wasMissing = this.configDependencyFailure !== undefined;
+      this.configDependencyFailure = undefined;
+      if (wasMissing && this.isRunning()) this.reportRunning();
+      return;
+    }
+    const displayPath = this.displayConfigPath(failure.configPath);
+    const fingerprint = `${displayPath}\0${failure.cause}`;
+    if (this.configDependencyFailure?.fingerprint !== fingerprint) {
+      const warning = formatConfigDependencyMissingLog(
+        'rslint',
+        displayPath,
+        failure.cause,
+      );
+      this.logger.warn(warning);
+      this.configDependencyWarnings.push(warning);
+    }
+    this.configDependencyFailure = {
+      fingerprint,
+      displayPath,
+      cause: failure.cause,
+    };
+    this.report({
+      kind: 'disabled',
+      reason: formatConfigDependencyMissingStatus('rslint', displayPath),
+    });
   }
 
   public async start(signal: AbortSignal): Promise<void> {
@@ -441,6 +507,12 @@ export class Rslint implements Disposable {
       serverOptions,
       clientOptions,
     );
+    client.onNotification(
+      CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
+      (notification: ConfigDependencyStatusNotification) => {
+        this.handleConfigDependencyStatus(notification);
+      },
+    );
     errorHandlerHolder.current = client.createDefaultErrorHandler();
     this.client = client;
     this.stateWatcher = client.onDidChangeState((event) => {
@@ -454,7 +526,7 @@ export class Rslint implements Disposable {
           detail: 'the Rslint language server stopped',
         });
       } else if (event.newState === State.Running) {
-        this.reportRunning();
+        if (!this.hasConfigDependencyFailure()) this.reportRunning();
       }
     });
 
@@ -492,7 +564,12 @@ export class Rslint implements Disposable {
             );
           },
           (error: unknown) => {
-            this.logger.error('Failed to recover after server restart', error);
+            if (!this.hasConfigDependencyFailure()) {
+              this.logger.error(
+                'Failed to recover after server restart',
+                error,
+              );
+            }
           },
         );
       });
@@ -509,7 +586,7 @@ export class Rslint implements Disposable {
         );
       }
       this.logger.info('Rslint language client started successfully');
-      this.reportRunning();
+      if (!this.hasConfigDependencyFailure()) this.reportRunning();
     } catch (error: unknown) {
       // A close or supersede during start is a planned abort, not a failure;
       // logging it as an error made every teardown race look like a crash.
@@ -575,7 +652,9 @@ export class Rslint implements Disposable {
       this.configReloadTimer = setTimeout(() => {
         this.configReloadTimer = undefined;
         void this.requestConfigRefresh(reason).catch((error: unknown) => {
-          this.logger.error('Failed to refresh config discovery', error);
+          if (!this.hasConfigDependencyFailure()) {
+            this.logger.error('Failed to refresh config discovery', error);
+          }
         });
       }, 300);
     };
@@ -602,6 +681,20 @@ export class Rslint implements Disposable {
     });
     this.configReloadChain = refresh.catch(() => undefined);
     await refresh;
+  }
+
+  public hasConfigDependencyFailure(): boolean {
+    return this.configDependencyFailure !== undefined;
+  }
+
+  public retryConfigDependency(): Promise<void> | undefined {
+    if (!this.hasConfigDependencyFailure()) return undefined;
+    return this.requestConfigRefresh('dependency-change');
+  }
+
+  /** E2E-only observation surfaced through the controller's activation exports. */
+  public getConfigDependencyWarnings(): readonly string[] {
+    return this.configDependencyWarnings;
   }
 
   private isLifecycleCurrent(epoch: number, client: LanguageClient): boolean {

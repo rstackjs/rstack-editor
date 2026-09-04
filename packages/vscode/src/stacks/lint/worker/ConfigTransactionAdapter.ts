@@ -9,11 +9,7 @@ import type {
   LoadConfigsResponse,
 } from '@rslint/core/config-loader';
 import { classifyMissingDependencyMessage } from '../../../shared/missingDependency';
-
-export interface ConfigDependencyFailure {
-  readonly configPath: string;
-  readonly cause: string;
-}
+import type { ConfigDependencyFailure } from './configDependencyProtocol';
 
 interface ConfigDependencyObserver {
   resolveFrom(candidate: ConfigModuleCandidate): string;

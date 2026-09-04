@@ -108,7 +108,7 @@ class RslintController implements StackController {
         // A detection pass fires on config topology and lockfile changes —
         // exactly the moments a document's core may have appeared, moved or
         // changed ownership. This replaces the coordinator's `retryFailedRoots`.
-        this.reconcileOpenDocuments('detection change');
+        this.retryConfigDependenciesThenReconcile();
       }),
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
         this.pruneDepartedFolders();
@@ -177,6 +177,10 @@ class RslintController implements StackController {
           [...this.#folderStates.values()].flatMap((states) => [
             ...states.runtimes,
           ]),
+        ),
+      getConfigDependencyWarnings: (): readonly string[] =>
+        [...this.#runtimes.values()].flatMap((runtime) =>
+          runtime.getConfigDependencyWarnings(),
         ),
     };
   }
@@ -277,6 +281,11 @@ class RslintController implements StackController {
           attributeToCore(state, installation.packageDirectory),
         );
       },
+      bridgeConfigPath:
+        installation.mode === 'bridged'
+          ? this.#snapshot?.forFolder(workspaceFolder)?.stacks.rslint
+              .rstackConfigFiles[0]?.fsPath
+          : undefined,
       onClosed: () => {
         if (this.#runtimes.get(resolved.key) === runtime) {
           this.#runtimes.delete(resolved.key);
@@ -332,6 +341,29 @@ class RslintController implements StackController {
         error,
       );
     });
+  }
+
+  private retryConfigDependenciesThenReconcile(): void {
+    const retries = [...this.#runtimes.values()].flatMap((runtime) => {
+      const retry = runtime.retryConfigDependency();
+      return retry ? [{ runtime, retry }] : [];
+    });
+    void Promise.allSettled(retries.map(({ retry }) => retry)).then(
+      (results) => {
+        results.forEach((result, index) => {
+          if (
+            result.status === 'rejected' &&
+            !retries[index]?.runtime.hasConfigDependencyFailure()
+          ) {
+            this.#logger?.error(
+              'Failed to retry Rslint config dependency discovery',
+              result.reason,
+            );
+          }
+        });
+        this.reconcileOpenDocuments('detection change');
+      },
+    );
   }
 
   private setState(

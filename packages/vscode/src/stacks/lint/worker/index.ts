@@ -11,7 +11,6 @@ import {
 } from 'vscode-jsonrpc/node';
 import {
   LspConfigTransactionAdapter,
-  type ConfigDependencyFailure,
   type ConfigTransactionControlRequest,
 } from './ConfigTransactionAdapter';
 import { PluginLintPool } from './PluginLintPool';
@@ -23,16 +22,18 @@ import {
 import { loadCoreInstallation } from './core';
 import { ActivationFingerprinter } from './fingerprint';
 import { logger } from './logger';
+import {
+  CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
+  type ConfigDependencyFailure,
+} from './configDependencyProtocol';
+
+export {
+  CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
+  type ConfigDependencyStatusNotification,
+} from './configDependencyProtocol';
 
 const GRACEFUL_EXIT_TIMEOUT_MS = 500;
 const FORCED_EXIT_TIMEOUT_MS = 1_500;
-
-export const CONFIG_DEPENDENCY_STATUS_NOTIFICATION =
-  'rstack/rslintConfigDependency';
-
-export interface ConfigDependencyStatusNotification {
-  readonly failure: ConfigDependencyFailure | null;
-}
 
 interface StopRequest {
   readonly exitCode: number;
