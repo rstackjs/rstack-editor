@@ -343,3 +343,27 @@ describe('StatusBar item', () => {
     expect(itemOf().backgroundColor).toBeUndefined();
   });
 });
+
+describe('StatusBar reporter', () => {
+  it('runs the report hook for direct and convenience reports', () => {
+    const { bar } = build();
+    const reports: string[] = [];
+    const reporter = bar.reporterFor('fmt', (state) =>
+      reports.push(state.kind),
+    );
+
+    reporter.report({ kind: 'disabled', reason: 'missing' });
+    reporter.starting();
+    reporter.running();
+    reporter.crashed('stopped');
+    reporter.versionMismatch('old version');
+
+    expect(reports).toEqual([
+      'disabled',
+      'starting',
+      'running',
+      'crashed',
+      'version-mismatch',
+    ]);
+  });
+});

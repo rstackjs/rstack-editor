@@ -226,6 +226,15 @@ class ExtensionShell {
     void this.reconcile();
   }
 
+  private get dependencyPollNeeded(): boolean {
+    return (
+      !this.#disposed &&
+      [...this.#controllers.values()].some((controller) =>
+        controller.hasNotInstalledState(),
+      )
+    );
+  }
+
   /**
    * Starts one recursive timer only while a live controller owns a
    * not-installed state. The timer enters the same shell queue as every
@@ -233,12 +242,7 @@ class ExtensionShell {
    * lockfile change; each stack therefore reuses its existing retry path.
    */
   private syncDependencyPoll(): void {
-    const needed =
-      !this.#disposed &&
-      [...this.#controllers.values()].some((controller) =>
-        controller.hasNotInstalledState(),
-      );
-    if (!needed) {
+    if (!this.dependencyPollNeeded) {
       if (this.#dependencyPollTimer !== undefined) {
         clearTimeout(this.#dependencyPollTimer);
         this.#dependencyPollTimer = undefined;
@@ -255,12 +259,7 @@ class ExtensionShell {
       this.#dependencyPollTimer = undefined;
       this.#dependencyPollInFlight = true;
       void this.enqueue(async () => {
-        if (
-          this.#disposed ||
-          ![...this.#controllers.values()].some((controller) =>
-            controller.hasNotInstalledState(),
-          )
-        ) {
+        if (!this.dependencyPollNeeded) {
           return;
         }
         try {
@@ -281,19 +280,7 @@ class ExtensionShell {
   }
 
   private stackStatusReporter(stack: StackId): StatusReporter {
-    const reporter = this.#statusBar.reporterFor(stack);
-    const report = (state: StackState): void => {
-      reporter.report(state);
-      this.syncDependencyPoll();
-    };
-    return {
-      stack,
-      report,
-      starting: (detail) => report({ kind: 'starting', detail }),
-      running: (detail) => report({ kind: 'running', detail }),
-      crashed: (detail) => report({ kind: 'crashed', detail }),
-      versionMismatch: (detail) => report({ kind: 'version-mismatch', detail }),
-    };
+    return this.#statusBar.reporterFor(stack, () => this.syncDependencyPoll());
   }
 
   /**

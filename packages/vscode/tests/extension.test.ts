@@ -84,6 +84,8 @@ const harness = rs.hoisted(() => {
     configListeners: [] as ((event: {
       affectsConfiguration(section: string): boolean;
     }) => void)[],
+    /** Detection change callbacks, wrapped so tests can publish a fresh snapshot. */
+    detectionListeners: [] as Array<() => void>,
   });
   const state = {
     ...defaults(),
@@ -244,7 +246,18 @@ rs.mock('../src/detection', () => {
     forFolder: () => undefined,
   });
   class DetectionService {
-    readonly onDidChange = () => ({ dispose: () => undefined });
+    readonly onDidChange = (
+      listener: (value: ReturnType<typeof snapshot>) => void,
+    ) => {
+      const emit = () => listener(snapshot());
+      harness.detectionListeners.push(emit);
+      return {
+        dispose: () => {
+          const index = harness.detectionListeners.indexOf(emit);
+          if (index >= 0) harness.detectionListeners.splice(index, 1);
+        },
+      };
+    };
     get snapshot() {
       return snapshot();
     }
@@ -485,6 +498,26 @@ describe('dependency recovery polling', () => {
     const completed = harness.dependencyRefreshes;
     await new Promise((resolve) => setTimeout(resolve, 25));
     expect(harness.dependencyRefreshes).toBe(completed);
+  });
+
+  it('queues a poll tick behind an in-flight reconcile', async () => {
+    const exports = await activate(context);
+    exports.setDependencyPollIntervalForTest(5);
+
+    const blockedRegister = Promise.withResolvers<void>();
+    harness.blockRegister.set('fmt', blockedRegister.promise);
+    harness.detected.add('fmt');
+    for (const emit of harness.detectionListeners) emit();
+    await waitFor(() => harness.registering.has('fmt'));
+
+    harness.notInstalled.add('rslint');
+    harness.reporters.get('rslint')?.report({ kind: 'disabled' });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(harness.dependencyRefreshes).toBe(0);
+
+    blockedRegister.resolve();
+    await waitFor(() => harness.dependencyRefreshes > 0);
+    expect(harness.overlaps).toEqual([]);
   });
 });
 

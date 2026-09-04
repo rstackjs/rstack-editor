@@ -31,6 +31,7 @@ async function launch({
   workspace,
   profileSuffix,
 }: LaunchOptions): Promise<void> {
+  // A short user-data dir keeps the Unix socket paths below the macOS limit.
   const hash = createHash('sha1')
     .update(`${extensionDevelopmentPath}\0${profileSuffix}`)
     .digest('hex')
@@ -38,15 +39,31 @@ async function launch({
   const userDataDir = mkdtempSync(path.join(tmpdir(), `rstack-${hash}-`));
 
   await runTests({
+    // Pinnable for CI; `stable` locally. `runTests` forwards the whole options
+    // object to the downloader, so `version`/`timeout`/`vscodeExecutablePath`
+    // all apply to it.
     version: process.env.VSCODE_TEST_VERSION ?? 'stable',
+    // The default per-request timeout is 15s, which a 300 MB download on a slow
+    // or proxied link loses to before it ever starts making progress.
     timeout: 60_000,
+    // Escape hatch for offline / restricted environments: point at an existing
+    // VS Code (`.../Visual Studio Code.app/Contents/MacOS/Electron`, `Code.exe`,
+    // `code`) and nothing is downloaded at all.
     vscodeExecutablePath: process.env.VSCODE_TEST_EXECUTABLE || undefined,
     extensionDevelopmentPath,
     extensionTestsPath,
     launchArgs: [
       workspace,
+      // Keep VS Code's CI-only extension inventory and AgentHost info logs out
+      // of test output while preserving an opt-in for verbose diagnosis.
       `--log=${process.env.VSCODE_TEST_LOG_LEVEL ?? 'warn'}`,
+      // Only the extension under development runs: no user extension may
+      // register a competing formatter, test controller or language client.
       '--disable-extensions',
+      // The fixtures spawn project-local binaries, which Restricted Mode
+      // forbids by design. Trust is granted up front so the
+      // suite tests the trusted path; the Restricted Mode path needs its own
+      // launch and is not covered in phase 1.
       '--disable-workspace-trust',
       '--disable-updates',
       '--skip-welcome',
