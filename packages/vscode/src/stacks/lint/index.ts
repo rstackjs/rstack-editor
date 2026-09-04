@@ -39,16 +39,6 @@ import { WorkspaceDocumentRouter } from './WorkspaceDocumentRouter';
  * the per-folder status fold the shell requires.
  */
 
-/**
- * The one core-topology signal the shell's detection watcher does not carry:
- * a core swapped in place. Lockfiles — upstream's other half of this glob —
- * are already detection's business, and a detection pass notifies this stack
- * even when the folder set is unchanged. `files.watcherExclude` hides
- * `node_modules` by default, so in practice the lockfile path is the one that
- * fires; this watcher costs nothing and covers the rest.
- */
-const CORE_TOPOLOGY_GLOB = '**/node_modules/@rslint/core/package.json';
-
 /** Everything one detected folder contributes to its status fold. */
 interface FolderStates {
   /** One entry per live Lint runtime, keyed by its runtime key. */
@@ -127,18 +117,6 @@ class RslintController implements StackController {
       vscode.workspace.onDidCloseTextDocument((document) => {
         this.#runtimeManager?.documentClosed(document);
       }),
-    );
-
-    const topologyWatcher =
-      vscode.workspace.createFileSystemWatcher(CORE_TOPOLOGY_GLOB);
-    const onTopologyChange = () => {
-      this.reconcileOpenDocuments('dependency change');
-    };
-    this.#subscriptions.push(
-      topologyWatcher,
-      topologyWatcher.onDidCreate(onTopologyChange),
-      topologyWatcher.onDidChange(onTopologyChange),
-      topologyWatcher.onDidDelete(onTopologyChange),
     );
 
     this.publishStatus();

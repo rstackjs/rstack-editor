@@ -368,10 +368,8 @@ class FmtFolderRuntime {
 
     const pkgJsonPath = findPackageJsonUncached('rstack', folderRoot);
     if (!pkgJsonPath) {
-      // The trailing hint covers the one recovery path no watcher sees: an
-      // install that changes no lockfile (a fresh clone whose lockfile is
-      // already current) fires no file event, so nothing rebuilds this
-      // runtime — the status message is where the way out has to live.
+      // The shell polls while this state remains disabled. The trailing restart
+      // hint stays as the explicit fallback if recovery is delayed.
       this.setState('disabled', formatNotInstalledStatus('fmt', 'rstack'));
       if (this.#missingPackage !== 'rstack') {
         context.output.warn(

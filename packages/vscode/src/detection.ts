@@ -34,8 +34,9 @@ export const DEFAULT_RSTEST_CONFIG_GLOBS = [
 
 /**
  * Lockfiles are watched as a proxy for dependency changes — the pattern Rslint
- * already uses. Watching `node_modules` directly is unreliable (pnpm symlinks)
- * and is not attempted.
+ * already uses — and remain the low-latency path. A direct `node_modules`
+ * watcher is not attempted: pnpm installs produced no matching per-file event
+ * in either isolated or hoisted layout (ADR 0005).
  */
 export const LOCKFILE_NAMES = [
   'package-lock.json',
@@ -244,9 +245,9 @@ export class DetectionService implements vscode.Disposable {
   // out identical while every project-resolved package (Rslint binary, Rstest
   // core, the rstack shim) may now resolve differently. Such a pass must
   // notify subscribers even when the signature is unchanged, or failed
-  // resolutions are never retried until a window reload. Set by the lockfile
-  // watcher only — a caller that drives the rebuild itself does not need the
-  // event, it already has the fresh snapshot.
+  // resolutions would wait for the polling fallback. Set by the lockfile
+  // watcher and by `refreshForDependencyChange`; a caller that drives the
+  // rebuild itself does not need the event, it already has the fresh snapshot.
   #notifyUnchanged = false;
   #watchers: vscode.Disposable[] = [];
   #debounce: ReturnType<typeof setTimeout> | undefined;

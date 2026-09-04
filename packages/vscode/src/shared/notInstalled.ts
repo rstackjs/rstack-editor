@@ -13,10 +13,9 @@ import {
  * `formatVersionMismatch` — each keeps its own status machinery, but what
  * the user reads is one sentence, not three near-copies.
  *
- * The trailing hint covers the recovery no watcher sees: an install that
- * changes no lockfile (a fresh clone whose lockfile is already current) fires
- * no detection pass, so the restart command is the way out and the status is
- * where it has to be named (ADR 0002).
+ * A shell-owned poll now covers installs that change no lockfile. The trailing
+ * restart hint remains the explicit fallback when recovery is delayed or the
+ * project stays broken for another reason (ADR 0005).
  */
 const restartHint = (stack: StackId): string =>
   `then run "${COMMAND_CATEGORY}: ${stackCommandTitle(stack)}" if this status stays`;
