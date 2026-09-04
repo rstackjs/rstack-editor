@@ -2,11 +2,23 @@ import type {
   ActivateConfigsRequest,
   ActivateConfigsResponse,
   ConfigModuleActivationPlan,
+  ConfigModuleCandidate,
   ConfigModuleEslintPluginEntry,
   ConfigModulePluginDescriptor,
   LoadConfigsRequest,
   LoadConfigsResponse,
 } from '@rslint/core/config-loader';
+import { classifyMissingDependencyMessage } from '../../../shared/missingDependency';
+
+export interface ConfigDependencyFailure {
+  readonly configPath: string;
+  readonly cause: string;
+}
+
+interface ConfigDependencyObserver {
+  resolveFrom(candidate: ConfigModuleCandidate): string;
+  report(failure: ConfigDependencyFailure): void;
+}
 
 interface ConfigActivationWireResponse {
   transactionId: string;
@@ -88,6 +100,7 @@ export class LspConfigTransactionAdapter {
     private readonly pluginLintPool: PluginLintPoolAdapter,
     private readonly fingerprint: (plan: ConfigModuleActivationPlan) => string,
     private readonly protocolVersion: number,
+    private readonly configDependencyObserver?: ConfigDependencyObserver,
   ) {}
 
   async loadConfigs(
@@ -106,7 +119,41 @@ export class LspConfigTransactionAdapter {
       );
       this.assertActive();
       throwIfAborted(signal);
-      return response;
+      let classified = false;
+      return {
+        ...response,
+        results: response.results.map((result, index) => {
+          if (classified || result.status !== 'failed') return result;
+          const candidate = request.candidates[index];
+          if (
+            candidate === undefined ||
+            (result.error.code !== 'ERR_MODULE_NOT_FOUND' &&
+              result.error.code !== 'MODULE_NOT_FOUND')
+          ) {
+            return result;
+          }
+          const cause = classifyMissingDependencyMessage(
+            result.error.message,
+            this.configDependencyObserver?.resolveFrom(candidate) ??
+              candidate.configDirectory,
+          );
+          if (cause === undefined) return result;
+          classified = true;
+          this.configDependencyObserver?.report({
+            configPath: candidate.configPath,
+            cause,
+          });
+          return {
+            ...result,
+            error: {
+              ...result.error,
+              // Keep the classified result to one line so Go cannot echo a
+              // CJS require stack beside the policy's one-warn-line report.
+              message: cause,
+            },
+          };
+        }),
+      };
     } catch (error) {
       this.cleanup(transactionId);
       throw error;

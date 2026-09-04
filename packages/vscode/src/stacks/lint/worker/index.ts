@@ -11,6 +11,7 @@ import {
 } from 'vscode-jsonrpc/node';
 import {
   LspConfigTransactionAdapter,
+  type ConfigDependencyFailure,
   type ConfigTransactionControlRequest,
 } from './ConfigTransactionAdapter';
 import { PluginLintPool } from './PluginLintPool';
@@ -25,6 +26,13 @@ import { logger } from './logger';
 
 const GRACEFUL_EXIT_TIMEOUT_MS = 500;
 const FORCED_EXIT_TIMEOUT_MS = 1_500;
+
+export const CONFIG_DEPENDENCY_STATUS_NOTIFICATION =
+  'rstack/rslintConfigDependency';
+
+export interface ConfigDependencyStatusNotification {
+  readonly failure: ConfigDependencyFailure | null;
+}
 
 interface StopRequest {
   readonly exitCode: number;
@@ -136,6 +144,8 @@ function forwardRequest(
 interface EditorProxyOptions {
   readonly protocolVersion: number;
   readonly configPath?: string;
+  beginConfigRefresh(): void;
+  takeConfigDependencyFailure(): ConfigDependencyFailure | undefined;
   observeRefresh(reason: unknown): void;
   requestStop(request: StopRequest): void;
 }
@@ -148,16 +158,30 @@ export function registerEditorProxy(
   editorConnection.onRequest(async (method, params, token) => {
     if (method === 'rslint/configRefresh') {
       const refresh = params as ConfigRefreshParams;
+      options.beginConfigRefresh();
       options.observeRefresh(refresh?.reason);
-      return goConnection.sendRequest(
-        method,
-        stampConfigRefresh(
-          refresh,
-          options.protocolVersion,
-          options.configPath,
-        ),
-        token,
-      );
+      try {
+        const result = await goConnection.sendRequest(
+          method,
+          stampConfigRefresh(
+            refresh,
+            options.protocolVersion,
+            options.configPath,
+          ),
+          token,
+        );
+        await editorConnection.sendNotification(
+          CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
+          { failure: options.takeConfigDependencyFailure() ?? null },
+        );
+        return result;
+      } catch (error) {
+        await editorConnection.sendNotification(
+          CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
+          { failure: options.takeConfigDependencyFailure() ?? null },
+        );
+        throw error;
+      }
     }
     return forwardRequest(goConnection, method, params, token);
   });
@@ -193,11 +217,21 @@ export async function runLintWorker(
     logger,
     installation.createPluginLintHost,
   );
+  let configDependencyFailure: ConfigDependencyFailure | undefined;
   const adapter = new LspConfigTransactionAdapter(
     installation.createConfigModuleHost(),
     pluginLintPool,
     (activation) => fingerprinter.compute(activation),
     installation.protocolVersion,
+    {
+      resolveFrom: (candidate) =>
+        candidate.configPath === options.configPath
+          ? process.cwd()
+          : candidate.configDirectory,
+      report: (failure) => {
+        configDependencyFailure ??= failure;
+      },
+    },
   );
 
   const stop = deferred<StopRequest>();
@@ -212,6 +246,10 @@ export async function runLintWorker(
   registerEditorProxy(editorConnection, goConnection, {
     protocolVersion: installation.protocolVersion,
     configPath: options.configPath,
+    beginConfigRefresh: () => {
+      configDependencyFailure = undefined;
+    },
+    takeConfigDependencyFailure: () => configDependencyFailure,
     observeRefresh: (reason) => fingerprinter.observeRefresh(reason),
     requestStop,
   });

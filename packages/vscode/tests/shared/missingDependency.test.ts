@@ -2,7 +2,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from '@rstest/core';
-import { missingDependencyCauseOf } from '../../src/shared/missingDependency';
+import {
+  classifyMissingDependencyMessage,
+  missingDependencyCauseOf,
+} from '../../src/shared/missingDependency';
 
 // Resolve for real rather than hand-building an error object: the classifier
 // reads a code and a message Node owns, so a fake error would only assert
@@ -99,5 +102,33 @@ describe('missingDependencyCauseOf', () => {
     expect(classify(new Error("Cannot find package 'x'"))).toBe(undefined);
     expect(classify("Cannot find package 'x'")).toBe(undefined);
     expect(classify(undefined)).toBe(undefined);
+  });
+});
+
+describe('classifyMissingDependencyMessage', () => {
+  it('classifies loader messages without requiring an Error code', () => {
+    expect(
+      classifyMissingDependencyMessage(
+        "Cannot find package '@scope/missing' imported from /project/config.mjs",
+        __dirname,
+      ),
+    ).toBe(
+      "Cannot find package '@scope/missing' imported from /project/config.mjs",
+    );
+    expect(
+      classifyMissingDependencyMessage(
+        "Cannot find module 'missing-package'\nRequire stack:\n- /project/config.cjs",
+        __dirname,
+      ),
+    ).toBe("Cannot find module 'missing-package'");
+  });
+
+  it('rejects non-loader messages even without the Error-code gate', () => {
+    expect(
+      classifyMissingDependencyMessage(
+        "Configuration says Cannot find package 'missing'",
+        __dirname,
+      ),
+    ).toBe(undefined);
   });
 });
