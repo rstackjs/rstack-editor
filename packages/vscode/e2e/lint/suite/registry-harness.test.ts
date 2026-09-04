@@ -1,5 +1,6 @@
-// Ported verbatim from web-infra-dev/rslint
-// `packages/vscode-extension/__tests__/suite/registry-harness.test.ts` (origin/main).
+// Ported from web-infra-dev/rslint
+// `packages/vscode-extension/__tests__/suite/registry-harness.test.ts` (origin/main),
+// with startup-deadline hardening documented inline.
 import * as assert from 'assert';
 import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
@@ -125,10 +126,12 @@ suite('VS Code test harness fail-closed guards', function () {
           attempts += 1;
           return new Promise<void>(() => {});
         },
-        Date.now() + 50,
+        // Deviation from upstream (50ms): leave enough headroom for a stalled
+        // CI runner to start the operation before its shared deadline.
+        Date.now() + 500,
         'the injected startup operation',
       ),
-      /Timed out waiting for the injected startup operation.*shared startup deadline/,
+      /Timed out waiting for the injected startup operation before the shared startup deadline/,
     );
     assert.strictEqual(
       attempts,
