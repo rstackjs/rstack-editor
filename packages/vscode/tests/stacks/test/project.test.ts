@@ -74,7 +74,10 @@ rs.mock('vscode', () => {
       }),
     },
     CancellationTokenSource: class {
-      token = { isCancellationRequested: false };
+      token = {
+        isCancellationRequested: false,
+        onCancellationRequested: () => ({ dispose: () => {} }),
+      };
       cancel() {
         this.token.isCancellationRequested = true;
       }
@@ -153,6 +156,59 @@ const createProject = async (source: any) => {
 };
 
 describe('Project config/cwd/package-resolution decoupling', () => {
+  it('re-resolves a core lost after successful config loading on a dependency pass', async () => {
+    const config = uri('/repo/pkg/rstest.config.ts');
+    const { reporter, reported } = createStatusRecorder();
+    status.bind(reporter);
+    const loaded: NormalizedConfigResult = {
+      ok: true,
+      root: '/repo/pkg',
+      include: ['**/*.test.ts'],
+      exclude: [],
+      childProjects: [],
+    };
+    normalizedConfigResult = loaded;
+    const { project } = await createProject({ sourceUri: config });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(project.configLoadFailed).toBe(false);
+
+      // listTests -> createChildProcess -> resolveRstestPath reports this core
+      // source, without going through Project.loadConfig's failure handler.
+      project.api.listTests = rs.fn(async () => {
+        status.notInstalled('@rstest/core is not installed', config.toString());
+        throw new ReportedRstestResolutionError();
+      });
+      await expect(project.api.listTests()).rejects.toThrow(
+        'Failed to resolve rstest path',
+      );
+      expect(project.configLoadFailed).toBe(false);
+      expect(project.hasNotInstalledDependencies).toBe(true);
+
+      // A new config request resolves the core before its worker RPC. Model
+      // successful resolution's versionOk, which clears the core-source latch.
+      const reResolve = rs
+        .spyOn(project.api, 'getNormalizedConfig')
+        .mockImplementation(async () => {
+          status.versionOk(config.toString());
+          return loaded;
+        });
+      const { WorkspaceManager } =
+        await import('../../../src/stacks/test/project');
+      WorkspaceManager.prototype.retryFailedProjects.call({
+        projects: new Map([['config', project]]),
+      } as never);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(reResolve).toHaveBeenCalledTimes(1);
+      expect(project.hasNotInstalledDependencies).toBe(false);
+      expect(reported.at(-1)).toEqual({ kind: 'running', detail: undefined });
+      expect(loggedErrors).toEqual([]);
+    } finally {
+      project.dispose();
+      status.unbind();
+    }
+  });
+
   it('retries a core-missing project on a dependency pass', async () => {
     const config = uri('/repo/pkg/rstest.config.ts');
     const { reporter } = createStatusRecorder();

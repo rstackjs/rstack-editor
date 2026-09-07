@@ -654,9 +654,10 @@ export class Project implements vscode.Disposable {
     );
   }
 
-  /** Re-evaluates a failed config without replacing this project. */
+  /** Re-evaluates a failed config or a core lost after loading, in place. */
   public retryFailedConfig(): Promise<void> | undefined {
-    if (!this.configLoadFailed) return undefined;
+    if (!this.configLoadFailed && !this.hasNotInstalledDependencies)
+      return undefined;
     return this.loadConfig();
   }
 
