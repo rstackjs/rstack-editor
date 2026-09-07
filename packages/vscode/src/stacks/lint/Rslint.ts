@@ -326,7 +326,6 @@ export class Rslint implements Disposable {
   private advisory: string | undefined;
   private readonly configDependencyEpisode = new NotInstalledEpisode();
   private configRefreshFailed = false;
-  private reportedConfigErrors = 0;
   private startPromise: Promise<void> | undefined;
   private startOperation: Promise<void> | undefined;
   private clientStartPromise: Promise<void> | undefined;
@@ -374,7 +373,6 @@ export class Rslint implements Disposable {
   ): void {
     if (notification.kind === 'error') {
       this.configRefreshFailed = true;
-      this.reportedConfigErrors++;
       this.report({ kind: 'crashed', detail: notification.message });
       this.configDependencyEpisode.clear();
       this.logger.error(
@@ -681,9 +679,17 @@ export class Rslint implements Disposable {
     if (!client) return;
     const refresh = this.configReloadChain.then(async () => {
       if (!this.isLifecycleCurrent(epoch, client)) return;
-      const reportedBefore = this.reportedConfigErrors;
+      const wasFailed = this.configRefreshFailed;
+      this.configRefreshFailed = false;
       try {
         await client.sendRequest('rslint/configRefresh', { reason });
+        if (
+          wasFailed &&
+          !this.configRefreshFailed &&
+          !this.hasConfigDependencyFailure() &&
+          this.isRunning()
+        )
+          this.reportRunning();
       } catch (error) {
         // The worker verdict already surfaced this rejection as a real config
         // error. Keep the live runtime for config edits without duplicate logs
@@ -691,9 +697,11 @@ export class Rslint implements Disposable {
         // Source-change races must still reach the existing startup retry.
         if (
           isConfigSourceChangeDuringTransaction(error) ||
-          this.reportedConfigErrors === reportedBefore
-        )
+          !this.configRefreshFailed
+        ) {
+          this.configRefreshFailed = wasFailed;
           throw error;
+        }
       }
     });
     this.configReloadChain = refresh.catch(() => undefined);
