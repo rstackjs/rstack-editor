@@ -850,6 +850,10 @@ export class Rslint implements Disposable {
     return this.client?.state === State.Running;
   }
 
+  public isStopped(): boolean {
+    return this.client?.state === State.Stopped;
+  }
+
   public serverAdvertisesHover(): boolean {
     return Boolean(this.client?.initializeResult?.capabilities.hoverProvider);
   }

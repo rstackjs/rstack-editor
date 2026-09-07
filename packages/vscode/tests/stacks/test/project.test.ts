@@ -209,6 +209,58 @@ describe('Project config/cwd/package-resolution decoupling', () => {
     }
   });
 
+  it('retries a worker crash after successful config loading only until it recovers', async () => {
+    const config = uri('/repo/pkg/rstest.config.ts');
+    const { reporter, reported } = createStatusRecorder();
+    status.bind(reporter);
+    const loaded: NormalizedConfigResult = {
+      ok: true,
+      root: '/repo/pkg',
+      include: ['**/*.test.ts'],
+      exclude: [],
+      childProjects: [],
+    };
+    normalizedConfigResult = loaded;
+    const { project } = await createProject({ sourceUri: config });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(project.configLoadFailed).toBe(false);
+
+      // createChildProcess reports unexpected worker errors and exits against
+      // the project source, independently of the successful config load.
+      status.crashed('worker process exited unexpectedly', config.toString());
+      expect(project.configLoadFailed).toBe(false);
+      expect(project.hasFailedState).toBe(true);
+
+      // A config retry creates a fresh worker. Model its spawn notification,
+      // which retires the crash recorded for this project source.
+      const retry = rs
+        .spyOn(project.api, 'getNormalizedConfig')
+        .mockImplementation(async () => {
+          status.workerSpawned(config.toString());
+          return loaded;
+        });
+      const { WorkspaceManager } =
+        await import('../../../src/stacks/test/project');
+      const manager = {
+        projects: new Map([['config', project]]),
+      } as never;
+
+      WorkspaceManager.prototype.retryFailedProjects.call(manager);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(retry).toHaveBeenCalledTimes(1);
+      expect(project.hasFailedState).toBe(false);
+      expect(reported.at(-1)).toEqual({ kind: 'running', detail: undefined });
+
+      WorkspaceManager.prototype.retryFailedProjects.call(manager);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(retry).toHaveBeenCalledTimes(1);
+    } finally {
+      project.dispose();
+      status.unbind();
+    }
+  });
+
   it('retries a core-missing project on a dependency pass', async () => {
     const config = uri('/repo/pkg/rstest.config.ts');
     const { reporter } = createStatusRecorder();
