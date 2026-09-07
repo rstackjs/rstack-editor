@@ -182,11 +182,11 @@ export const detectFolder = async (
       ),
     ] as const);
 
-  const rootRstackConfigPath = rstackConfigFiles.find((uri) =>
-    RSTACK_CONFIG_NAMES.some(
-      (name) =>
-        vscode.Uri.joinPath(folder.uri, name).toString() === uri.toString(),
-    ),
+  // Match the shim's loader precedence, not findFiles discovery order.
+  const rootRstackConfigPath = RSTACK_CONFIG_NAMES.map((name) =>
+    vscode.Uri.joinPath(folder.uri, name),
+  ).find((candidate) =>
+    rstackConfigFiles.some((uri) => uri.toString() === candidate.toString()),
   )?.fsPath;
   const rslintMode = decideRslintMode({
     nativeConfigPaths: rslintConfigFiles.map((uri) => uri.fsPath),

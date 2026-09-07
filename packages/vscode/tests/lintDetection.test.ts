@@ -34,6 +34,26 @@ rs.mock('vscode', () => {
 });
 
 describe('Rslint folder ownership', () => {
+  it('selects the root config by loader precedence rather than discovery order', async () => {
+    const folder = path.resolve('/workspace');
+    const ts = path.join(folder, 'rstack.config.ts');
+    const js = path.join(folder, 'rstack.config.js');
+    const workspaceFolder = {
+      uri: vscode.Uri.file(folder),
+      name: 'workspace',
+      index: 0,
+    };
+    for (const ordered of [
+      [js, ts],
+      [ts, js],
+    ]) {
+      configPaths = ordered;
+      expect((await detectFolder(workspaceFolder)).rootRstackConfigPath).toBe(
+        ts,
+      );
+    }
+  });
+
   it('attributes bridge failures to the root config regardless of discovery order', async () => {
     const folder = path.resolve('/workspace');
     const root = path.join(folder, 'rstack.config.ts');
