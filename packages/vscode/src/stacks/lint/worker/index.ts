@@ -141,7 +141,6 @@ function forwardRequest(
 interface EditorProxyOptions {
   readonly protocolVersion: number;
   readonly configPath?: string;
-  beginConfigRefresh(): void;
   takeConfigDependencyFailure(): ConfigDependencyFailure | undefined;
   observeRefresh(reason: unknown): void;
   requestStop(request: StopRequest): void;
@@ -155,7 +154,6 @@ export function registerEditorProxy(
   editorConnection.onRequest(async (method, params, token) => {
     if (method === 'rslint/configRefresh') {
       const refresh = params as ConfigRefreshParams;
-      options.beginConfigRefresh();
       options.observeRefresh(refresh?.reason);
       try {
         const result = await goConnection.sendRequest(
@@ -174,11 +172,11 @@ export function registerEditorProxy(
         );
         return result;
       } catch (error) {
+        const failure = options.takeConfigDependencyFailure();
         // The editor already retries this transaction race during startup.
         // Leave its rejection untouched and send no premature failure (or
         // success) verdict; the startup catch reports once if retries exhaust.
         if (isConfigSourceChangeDuringTransaction(error)) throw error;
-        const failure = options.takeConfigDependencyFailure();
         await editorConnection.sendNotification(
           CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
           failure
@@ -257,10 +255,11 @@ export async function runLintWorker(
   registerEditorProxy(editorConnection, goConnection, {
     protocolVersion: installation.protocolVersion,
     configPath: options.configPath,
-    beginConfigRefresh: () => {
+    takeConfigDependencyFailure: () => {
+      const failure = configDependencyFailure;
       configDependencyFailure = undefined;
+      return failure;
     },
-    takeConfigDependencyFailure: () => configDependencyFailure,
     observeRefresh: (reason) => fingerprinter.observeRefresh(reason),
     requestStop,
   });

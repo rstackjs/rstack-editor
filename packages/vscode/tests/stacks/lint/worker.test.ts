@@ -170,8 +170,11 @@ describe('lint worker config refresh', () => {
       registerEditorProxy(workerConnection, goConnection, {
         protocolVersion: 2,
         configPath,
-        beginConfigRefresh: () => undefined,
-        takeConfigDependencyFailure: () => activeFailure,
+        takeConfigDependencyFailure: () => {
+          const failure = activeFailure;
+          activeFailure = undefined;
+          return failure;
+        },
         observeRefresh: (reason) => observedReasons.push(reason),
         requestStop: () => undefined,
       });
@@ -204,7 +207,6 @@ describe('lint worker config refresh', () => {
         { kind: 'missing', failure: notificationFailure },
       ]);
 
-      activeFailure = undefined;
       await expect(
         editorConnection.sendRequest('rslint/configRefresh', {
           reason: 'reject',
@@ -216,12 +218,18 @@ describe('lint worker config refresh', () => {
         { kind: 'error', message: 'refresh rejected' },
       ]);
 
+      activeFailure = notificationFailure;
       await expect(
         editorConnection.sendRequest('rslint/configRefresh', {
           reason: 'changed',
         }),
       ).rejects.toThrow('config changed while loading');
       expect(notifications).toHaveLength(2);
+
+      await editorConnection.sendRequest('rslint/configRefresh', {
+        reason: 'initial',
+      });
+      expect(notifications.at(-1)).toEqual({ kind: 'ok' });
 
       const shutdown = await editorConnection.sendRequest<{
         readonly method: string;
