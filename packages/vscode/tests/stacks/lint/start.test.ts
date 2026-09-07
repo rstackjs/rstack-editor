@@ -94,6 +94,7 @@ rs.mock('vscode-languageclient/node', () => ({
           {
             protocolVersion: 2,
             takeConfigDependencyFailure: () => undefined,
+            takeConfigError: () => undefined,
             observeRefresh() {},
             requestStop() {},
           },

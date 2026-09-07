@@ -175,6 +175,7 @@ describe('lint worker config refresh', () => {
           activeFailure = undefined;
           return failure;
         },
+        takeConfigError: () => undefined,
         observeRefresh: (reason) => observedReasons.push(reason),
         requestStop: () => undefined,
       });
@@ -255,6 +256,99 @@ describe('lint worker config refresh', () => {
 });
 
 describe('lint worker config dependency classification', () => {
+  it('prefers a real candidate error over a missing dependency in the same refresh', async () => {
+    let missing: { configPath: string; cause: string } | undefined;
+    let configError: string | undefined;
+    const observer = {
+      resolveFrom: () => '/project',
+      report: (failure: NonNullable<typeof missing>) => {
+        missing = failure;
+      },
+      reportError: (message: string) => {
+        configError ??= message;
+      },
+    };
+    const adapter = new LspConfigTransactionAdapter(
+      {
+        loadConfigs: async () => ({
+          transactionId: 'mixed',
+          results: [
+            {
+              id: 'missing',
+              status: 'failed' as const,
+              error: {
+                code: 'ERR_MODULE_NOT_FOUND',
+                message: "Cannot find package 'absent'",
+              },
+            },
+            {
+              id: 'broken',
+              status: 'failed' as const,
+              error: {
+                code: 'SyntaxError',
+                message: 'SyntaxError: Unexpected token\n    at config.ts:1',
+              },
+            },
+          ],
+        }),
+        activateConfigs: async () => {
+          throw new Error('unused');
+        },
+        deleteSession: () => true,
+      },
+      {
+        prepare: async () => true,
+        commit: async () => true,
+        abort: async () => {},
+      },
+      () => 'fingerprint',
+      3,
+      observer,
+    );
+    const notifications: unknown[] = [];
+    let refresh!: (method: string, params: unknown) => Promise<unknown>;
+    const options = {
+      protocolVersion: 3,
+      takeConfigDependencyFailure: () => missing,
+      takeConfigError: () => configError,
+      observeRefresh() {},
+      requestStop() {},
+    };
+    registerEditorProxy(
+      {
+        onRequest: (handler: typeof refresh) => {
+          refresh = handler;
+        },
+        onNotification() {},
+        sendNotification: async (_method: string, value: unknown) => {
+          notifications.push(value);
+        },
+      } as never,
+      {
+        sendRequest: async () => {
+          await adapter.loadConfigs({
+            protocolVersion: 3,
+            transactionId: 'mixed',
+            loadMode: 'fresh',
+            candidates: ['missing', 'broken'].map((id) => ({
+              id,
+              configPath: `/project/${id}.config.ts`,
+              configDirectory: '/project',
+            })),
+          });
+          throw new Error('config refresh failed');
+        },
+      } as never,
+      options,
+    );
+    await expect(
+      refresh('rslint/configRefresh', { reason: 'initial' }),
+    ).rejects.toThrow('config refresh failed');
+    expect(notifications).toEqual([
+      { kind: 'error', message: 'SyntaxError: Unexpected token' },
+    ]);
+  });
+
   it('reports and truncates only the first classified failed candidate', async () => {
     const firstMessage =
       "Cannot find module 'first-missing'\nRequire stack:\n- /project/first.config.cjs";
@@ -295,6 +389,9 @@ describe('lint worker config dependency classification', () => {
       {
         resolveFrom: (candidate) => candidate.configDirectory,
         report: (failure) => failures.push(failure),
+        reportError: () => {
+          throw new Error('unexpected config error');
+        },
       },
     );
     const request: LoadConfigsRequest = {
@@ -373,6 +470,8 @@ describe('lint worker config dependency classification', () => {
       {
         resolveFrom: () => '/project',
         report: (failure) => failures.push(failure),
+        reportError: (message) =>
+          expect(message).toBe("Cannot find package './relative.js'"),
       },
     );
 

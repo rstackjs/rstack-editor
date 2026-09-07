@@ -285,6 +285,7 @@ suite('LSP config discovery transactions', () => {
       {
         resolveFrom: (candidate) => candidate.configDirectory,
         report: () => assert.fail('unexpected missing dependency'),
+        reportError: () => assert.fail('unexpected config error'),
       },
     );
 
@@ -334,6 +335,7 @@ suite('LSP config discovery transactions', () => {
       {
         resolveFrom: (candidate) => candidate.configDirectory,
         report: () => assert.fail('unexpected missing dependency'),
+        reportError: () => assert.fail('unexpected config error'),
       },
     );
 
@@ -400,6 +402,7 @@ suite('LSP config discovery transactions', () => {
       {
         resolveFrom: (candidate) => candidate.configDirectory,
         report: () => assert.fail('unexpected missing dependency'),
+        reportError: () => assert.fail('unexpected config error'),
       },
     );
 
@@ -439,6 +442,7 @@ suite('LSP config discovery transactions', () => {
       {
         resolveFrom: (candidate) => candidate.configDirectory,
         report: () => assert.fail('unexpected missing dependency'),
+        reportError: () => assert.fail('unexpected config error'),
       },
     );
 
@@ -467,6 +471,7 @@ suite('LSP config discovery transactions', () => {
       {
         resolveFrom: (candidate) => candidate.configDirectory,
         report: () => assert.fail('unexpected missing dependency'),
+        reportError: () => assert.fail('unexpected config error'),
       },
     );
 
@@ -508,6 +513,7 @@ suite('LSP config discovery transactions', () => {
       {
         resolveFrom: (candidate) => candidate.configDirectory,
         report: () => assert.fail('unexpected missing dependency'),
+        reportError: () => assert.fail('unexpected config error'),
       },
     );
 

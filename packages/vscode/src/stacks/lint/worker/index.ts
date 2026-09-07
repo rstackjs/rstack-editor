@@ -142,6 +142,7 @@ interface EditorProxyOptions {
   readonly protocolVersion: number;
   readonly configPath?: string;
   takeConfigDependencyFailure(): ConfigDependencyFailure | undefined;
+  takeConfigError(): string | undefined;
   observeRefresh(reason: unknown): void;
   requestStop(request: StopRequest): void;
 }
@@ -166,28 +167,36 @@ export function registerEditorProxy(
           token,
         );
         const failure = options.takeConfigDependencyFailure();
+        const configError = options.takeConfigError();
         await editorConnection.sendNotification(
           CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
-          failure ? { kind: 'missing', failure } : { kind: 'ok' },
+          configError !== undefined
+            ? { kind: 'error', message: configError }
+            : failure
+              ? { kind: 'missing', failure }
+              : { kind: 'ok' },
         );
         return result;
       } catch (error) {
         const failure = options.takeConfigDependencyFailure();
+        const configError = options.takeConfigError();
         // The editor already retries this transaction race during startup.
         // Leave its rejection untouched and send no premature failure (or
         // success) verdict; the startup catch reports once if retries exhaust.
         if (isConfigSourceChangeDuringTransaction(error)) throw error;
         await editorConnection.sendNotification(
           CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
-          failure
-            ? { kind: 'missing', failure }
-            : {
-                kind: 'error',
-                message: (error instanceof Error
-                  ? error.message
-                  : String(error)
-                ).split('\n', 1)[0],
-              },
+          configError !== undefined
+            ? { kind: 'error', message: configError }
+            : failure
+              ? { kind: 'missing', failure }
+              : {
+                  kind: 'error',
+                  message: (error instanceof Error
+                    ? error.message
+                    : String(error)
+                  ).split('\n', 1)[0],
+                },
         );
         throw error;
       }
@@ -227,6 +236,7 @@ export async function runLintWorker(
     installation.createPluginLintHost,
   );
   let configDependencyFailure: ConfigDependencyFailure | undefined;
+  let configError: string | undefined;
   const adapter = new LspConfigTransactionAdapter(
     installation.createConfigModuleHost(),
     pluginLintPool,
@@ -239,6 +249,9 @@ export async function runLintWorker(
           : candidate.configDirectory,
       report: (failure) => {
         configDependencyFailure ??= failure;
+      },
+      reportError: (message) => {
+        configError ??= message;
       },
     },
   );
@@ -259,6 +272,11 @@ export async function runLintWorker(
       const failure = configDependencyFailure;
       configDependencyFailure = undefined;
       return failure;
+    },
+    takeConfigError: () => {
+      const message = configError;
+      configError = undefined;
+      return message;
     },
     observeRefresh: (reason) => fingerprinter.observeRefresh(reason),
     requestStop,

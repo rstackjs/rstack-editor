@@ -14,6 +14,7 @@ import type { ConfigDependencyFailure } from '../../../shared/notInstalled';
 interface ConfigDependencyObserver {
   resolveFrom(candidate: ConfigModuleCandidate): string;
   report(failure: ConfigDependencyFailure): void;
+  reportError(message: string): void;
 }
 
 interface ConfigActivationWireResponse {
@@ -119,20 +120,26 @@ export class LspConfigTransactionAdapter {
       return {
         ...response,
         results: response.results.map((result, index) => {
-          if (classified || result.status !== 'failed') return result;
+          if (result.status !== 'failed') return result;
           const candidate = request.candidates[index];
-          if (
-            candidate === undefined ||
-            (result.error.code !== 'ERR_MODULE_NOT_FOUND' &&
-              result.error.code !== 'MODULE_NOT_FOUND')
-          ) {
+          const cause =
+            candidate !== undefined &&
+            (result.error.code === 'ERR_MODULE_NOT_FOUND' ||
+              result.error.code === 'MODULE_NOT_FOUND')
+              ? classifyMissingDependencyMessage(
+                  result.error.message,
+                  this.configDependencyObserver.resolveFrom(candidate),
+                )
+              : undefined;
+          // Scan every failure: a later real error must not be hidden by the
+          // first missing dependency, even though only that result is rewritten.
+          if (cause === undefined || candidate === undefined) {
+            this.configDependencyObserver.reportError(
+              result.error.message.split('\n', 1)[0],
+            );
             return result;
           }
-          const cause = classifyMissingDependencyMessage(
-            result.error.message,
-            this.configDependencyObserver.resolveFrom(candidate),
-          );
-          if (cause === undefined) return result;
+          if (classified) return result;
           classified = true;
           this.configDependencyObserver.report({
             configPath: candidate.configPath,
