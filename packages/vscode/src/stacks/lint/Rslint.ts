@@ -47,7 +47,6 @@ export { isConfigSourceChangeDuringTransaction } from './worker/configDependency
 import {
   RslintVersionMismatchError,
   runningRslintStatus,
-  shouldReportRslintStartFailure,
   statusForRslintStartFailure,
 } from './status';
 import {
@@ -430,12 +429,7 @@ export class Rslint implements Disposable {
   }
 
   private reportStartFailure(error: unknown): void {
-    if (
-      !shouldReportRslintStartFailure(
-        this.isPlannedStartAbort(error),
-        this.hasConfigDependencyFailure(),
-      )
-    ) {
+    if (this.isPlannedStartAbort(error) || this.hasConfigDependencyFailure()) {
       return;
     }
     this.report(statusForRslintStartFailure(error));
@@ -598,10 +592,8 @@ export class Rslint implements Disposable {
       // A close or supersede during start is a planned abort, not a failure;
       // logging it as an error made every teardown race look like a crash.
       if (
-        shouldReportRslintStartFailure(
-          this.isPlannedStartAbort(error),
-          this.hasConfigDependencyFailure(),
-        )
+        !this.isPlannedStartAbort(error) &&
+        !this.hasConfigDependencyFailure()
       ) {
         this.logger.error('Failed to start Rslint language client', error);
       }
