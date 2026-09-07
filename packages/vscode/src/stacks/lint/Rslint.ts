@@ -323,6 +323,7 @@ export class Rslint implements Disposable {
   private lifecycleEpoch = 0;
   private advisory: string | undefined;
   private readonly configDependencyEpisode = new NotInstalledEpisode();
+  private configDependencyRetryPending = false;
   private configRefreshFailed = false;
   private configError: string | undefined;
   private startPromise: Promise<void> | undefined;
@@ -720,9 +721,17 @@ export class Rslint implements Disposable {
   }
 
   public retryConfigDependency(): Promise<void> | undefined {
-    if (!this.hasConfigDependencyFailure() && !this.configRefreshFailed)
+    if (
+      this.configDependencyRetryPending ||
+      (!this.hasConfigDependencyFailure() && !this.configRefreshFailed)
+    )
       return undefined;
-    return this.requestConfigRefresh('dependency-change');
+    // Polls must not queue more requests behind a user config that never
+    // settles. The first caller already observes this retry's outcome.
+    this.configDependencyRetryPending = true;
+    return this.requestConfigRefresh('dependency-change').finally(() => {
+      this.configDependencyRetryPending = false;
+    });
   }
 
   private isLifecycleCurrent(epoch: number, client: LanguageClient): boolean {

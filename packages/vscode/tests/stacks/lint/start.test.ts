@@ -10,6 +10,9 @@ import { registerEditorProxy } from '../../../src/stacks/lint/worker/index';
 
 let refreshOutcome:
   'missing' | 'broken' | 'fixed' | 'changed' | 'changed-once' = 'missing';
+let pendingRefresh: Promise<void> | undefined;
+let refreshCalls = 0;
+let reconciles = 0;
 
 rs.mock('vscode', () => {
   const api = {
@@ -41,7 +44,9 @@ rs.mock('../../../src/stacks/lint/RuntimeManager', () => ({
     }
     initialize() {}
     clearResolutionCache() {}
-    async reconcileOpenDocuments() {}
+    async reconcileOpenDocuments() {
+      reconciles++;
+    }
   },
 }));
 rs.mock('../../../src/stacks/lint/CoreResolver', () => ({
@@ -72,6 +77,8 @@ rs.mock('vscode-languageclient/node', () => ({
     }
     async start() {}
     async sendRequest() {
+      refreshCalls++;
+      if (pendingRefresh) return pendingRefresh;
       if (refreshOutcome === 'changed' || refreshOutcome === 'changed-once') {
         if (refreshOutcome === 'changed-once') refreshOutcome = 'fixed';
         let request!: (method: string, params: unknown) => Promise<unknown>;
@@ -124,6 +131,50 @@ rs.mock('vscode-languageclient/node', () => ({
 
 import { Rslint } from '../../../src/stacks/lint/Rslint';
 import { createRslintController } from '../../../src/stacks/lint';
+
+it('reconciles documents on every detection pass even while a config refresh is hung', async () => {
+  const folder = {
+    name: 'project',
+    uri: { fsPath: '/project', toString: () => 'file:///project' },
+  };
+  const entry = { folder, stacks: { rslint: { mode: 'native' } } };
+  const snapshot = {
+    forFolder: () => entry,
+    foldersFor: () => [entry],
+  } as unknown as DetectionSnapshot;
+  let onDetection!: (snapshot: DetectionSnapshot) => void;
+  const controller = createRslintController();
+  await controller.register({
+    detection: snapshot,
+    onDidChangeDetection: (listener: typeof onDetection) => {
+      onDetection = listener;
+      return { dispose() {} };
+    },
+    output: { debug() {}, info() {}, warn() {}, error() {} },
+    status: { report() {} },
+  } as unknown as StackContext);
+  const runtime = runtimeFactory({
+    key: 'core',
+    workspaceFolder: folder,
+    installation: { mode: 'native', packageDirectory: '/project/core' },
+  } as unknown as ResolvedCoreRuntime);
+  const hung = Promise.withResolvers<void>();
+  const retry = rs
+    .spyOn(runtime, 'retryConfigDependency')
+    .mockReturnValue(hung.promise);
+  const before = reconciles;
+  try {
+    onDetection(snapshot);
+    await Promise.resolve();
+    expect(reconciles).toBe(before + 1);
+    onDetection(snapshot);
+    await Promise.resolve();
+    expect(reconciles).toBe(before + 2);
+  } finally {
+    hung.resolve();
+    retry.mockRestore();
+  }
+});
 
 it('updates a surviving bridge runtime attribution before the next config failure', async () => {
   const folder = {
@@ -202,6 +253,31 @@ function createRuntime() {
 
   return { runtime, states, warnings, errors };
 }
+
+it('keeps dependency retries single-flight until a hung refresh settles', async () => {
+  refreshOutcome = 'missing';
+  const { runtime, states } = createRuntime();
+  await runtime.start(new AbortController().signal);
+  const gate = Promise.withResolvers<void>();
+  pendingRefresh = gate.promise;
+  const before = refreshCalls;
+  const first = runtime.retryConfigDependency();
+  try {
+    await rs.waitUntil(() => refreshCalls === before + 1);
+    for (let tick = 0; tick < 5; tick++) {
+      expect(runtime.retryConfigDependency()).toBeUndefined();
+    }
+    expect(refreshCalls).toBe(before + 1);
+  } finally {
+    pendingRefresh = undefined;
+    refreshOutcome = 'fixed';
+    gate.resolve();
+    await first;
+  }
+  await runtime.retryConfigDependency();
+  expect(refreshCalls).toBe(before + 2);
+  expect(states.at(-1)?.kind).toBe('running');
+});
 
 it('keeps an initialized runtime disabled when initial configRefresh rejects', async () => {
   refreshOutcome = 'missing';

@@ -71,6 +71,15 @@ class Rstest implements vscode.Disposable {
     return this.ctrl;
   }
 
+  hasFailedState(): boolean {
+    for (const workspace of this.workspaces.values()) {
+      for (const project of workspace.projects.values()) {
+        if (project.hasFailedState) return true;
+      }
+    }
+    return false;
+  }
+
   /**
    * What upstream's `activate()` effectively exported (the `Rstest` instance):
    * the E2E suites (`e2e/rstest/`) consume `testController`, `runProfile`
@@ -557,7 +566,7 @@ class RstestController implements StackController {
   }
 
   hasFailedState(): boolean {
-    return status.hasFailed();
+    return status.hasFailed() || (this.#rstest?.hasFailedState() ?? false);
   }
 
   dispose(): void {

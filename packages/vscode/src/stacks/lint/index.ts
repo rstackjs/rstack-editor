@@ -103,7 +103,7 @@ class RslintController implements StackController {
         // A detection pass fires on config topology and lockfile changes —
         // exactly the moments a document's core may have appeared, moved or
         // changed ownership. This replaces the coordinator's `retryFailedRoots`.
-        this.retryConfigDependenciesThenReconcile();
+        this.retryConfigDependenciesAndReconcile();
       }),
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
         this.pruneDepartedFolders();
@@ -335,27 +335,21 @@ class RslintController implements StackController {
     });
   }
 
-  private retryConfigDependenciesThenReconcile(): void {
-    const retries = [...this.#runtimes.values()].flatMap((runtime) => {
+  private retryConfigDependenciesAndReconcile(): void {
+    for (const runtime of this.#runtimes.values()) {
       const retry = runtime.retryConfigDependency();
-      return retry ? [{ runtime, retry }] : [];
-    });
-    void Promise.allSettled(retries.map(({ retry }) => retry)).then(
-      (results) => {
-        results.forEach((result, index) => {
-          if (
-            result.status === 'rejected' &&
-            !retries[index]?.runtime.hasConfigDependencyFailure()
-          ) {
-            this.#logger?.error(
-              'Failed to retry Rslint config dependency discovery',
-              result.reason,
-            );
-          }
-        });
-        this.reconcileOpenDocuments('detection change');
-      },
-    );
+      void retry?.catch((error: unknown) => {
+        if (!runtime.hasConfigDependencyFailure()) {
+          this.#logger?.error(
+            'Failed to retry Rslint config dependency discovery',
+            error,
+          );
+        }
+      });
+    }
+    // A user config can hang indefinitely. Other documents must still
+    // re-resolve their cores on this pass; refreshes run independently.
+    this.reconcileOpenDocuments('detection change');
   }
 
   private setState(
