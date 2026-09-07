@@ -309,7 +309,7 @@ export class Rslint implements Disposable {
   public readonly workspaceFolder: WorkspaceFolder;
   private readonly router: WorkspaceDocumentRouter;
   private readonly reportStatus: RslintStatusSink;
-  private readonly bridgeConfigPath: string | undefined;
+  private bridgeConfigPath: string | undefined;
   private readonly installation: CoreInstallation;
   private readonly lspOutputChannel: OutputChannel;
   private readonly outputChannel: OutputChannel;
@@ -341,6 +341,11 @@ export class Rslint implements Disposable {
     this.lspOutputChannel = options.lspOutputChannel;
     this.outputChannel = options.outputChannel;
     this.onClosed = options.onClosed;
+  }
+
+  public setBridgeConfigPath(configPath: string | undefined): void {
+    if (this.installation.mode === 'bridged')
+      this.bridgeConfigPath = configPath;
   }
 
   private report(state: StackState): void {

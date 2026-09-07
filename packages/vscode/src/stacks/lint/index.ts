@@ -94,6 +94,11 @@ class RslintController implements StackController {
     this.#subscriptions.push(
       context.onDidChangeDetection((snapshot) => {
         this.#snapshot = snapshot;
+        for (const runtime of this.#runtimes.values()) {
+          runtime.setBridgeConfigPath(
+            snapshot.forFolder(runtime.workspaceFolder)?.rootRstackConfigPath,
+          );
+        }
         this.pruneDepartedFolders();
         // A detection pass fires on config topology and lockfile changes —
         // exactly the moments a document's core may have appeared, moved or

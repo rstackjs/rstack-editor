@@ -1,21 +1,54 @@
 import { expect, it, rs } from '@rstest/core';
-import type { StackState } from '../../../src/types';
+import type {
+  DetectionSnapshot,
+  StackContext,
+  StackState,
+} from '../../../src/types';
 import type { RslintOptions } from '../../../src/stacks/lint/Rslint';
+import type { ResolvedCoreRuntime } from '../../../src/stacks/lint/CoreResolver';
 import { registerEditorProxy } from '../../../src/stacks/lint/worker/index';
 
 let refreshOutcome:
   'missing' | 'broken' | 'fixed' | 'changed' | 'changed-once' = 'missing';
 
-rs.mock('vscode', () => ({
-  RelativePattern: class {},
-  workspace: {
-    createFileSystemWatcher: () => ({
-      onDidCreate() {},
-      onDidChange() {},
-      onDidDelete() {},
-    }),
+rs.mock('vscode', () => {
+  const api = {
+    RelativePattern: class {},
+    workspace: {
+      textDocuments: [],
+      onDidChangeWorkspaceFolders: () => ({ dispose() {} }),
+      onDidOpenTextDocument: () => ({ dispose() {} }),
+      onDidCloseTextDocument: () => ({ dispose() {} }),
+      createFileSystemWatcher: () => ({
+        onDidCreate() {},
+        onDidChange() {},
+        onDidDelete() {},
+      }),
+    },
+    env: {},
+  };
+  return { ...api, default: api };
+});
+let runtimeFactory: (resolved: ResolvedCoreRuntime) => Rslint;
+rs.mock('../../../src/stacks/lint/RuntimeManager', () => ({
+  RuntimeManager: class {
+    constructor(
+      _router: unknown,
+      _resolver: unknown,
+      create: typeof runtimeFactory,
+    ) {
+      runtimeFactory = create;
+    }
+    initialize() {}
+    clearResolutionCache() {}
+    async reconcileOpenDocuments() {}
   },
-  env: {},
+}));
+rs.mock('../../../src/stacks/lint/CoreResolver', () => ({
+  CoreResolver: class {},
+}));
+rs.mock('../../../src/stacks/lint/ruleDocumentationProviders', () => ({
+  registerRuleDocumentationProviders: () => [],
 }));
 rs.mock('../../../src/shared/nodeExecutableSetting', () => ({
   getConfiguredNodeExecutable: () => undefined,
@@ -89,6 +122,64 @@ rs.mock('vscode-languageclient/node', () => ({
 }));
 
 import { Rslint } from '../../../src/stacks/lint/Rslint';
+import { createRslintController } from '../../../src/stacks/lint';
+
+it('updates a surviving bridge runtime attribution before the next config failure', async () => {
+  const folder = {
+    name: 'project',
+    uri: { fsPath: '/project', toString: () => 'file:///project' },
+  };
+  const snapshot = (configPath: string): DetectionSnapshot => {
+    const entry = {
+      folder,
+      rootRstackConfigPath: configPath,
+      stacks: { rslint: { mode: 'bridged' } },
+    };
+    return {
+      forFolder: () => entry,
+      foldersFor: () => [entry],
+    } as unknown as DetectionSnapshot;
+  };
+  let onDetection!: (snapshot: DetectionSnapshot) => void;
+  const warnings: string[] = [];
+  const states: StackState[] = [];
+  const controller = createRslintController();
+  await controller.register({
+    detection: snapshot('/project/rstack.config.js'),
+    onDidChangeDetection: (listener: typeof onDetection) => {
+      onDetection = listener;
+      return { dispose() {} };
+    },
+    output: { warn: (message: string) => warnings.push(message) },
+    status: { report: (state: StackState) => states.push(state) },
+  } as unknown as StackContext);
+  const shimPath = '/project/node_modules/rstack/dist/rslintConfig.js';
+  const runtime = runtimeFactory({
+    key: 'bridge',
+    workspaceFolder: folder,
+    installation: {
+      mode: 'bridged',
+      packageDirectory: '/project/core',
+      shimPath,
+    },
+  } as unknown as ResolvedCoreRuntime);
+
+  onDetection(snapshot('/project/rstack.config.ts'));
+  // Deliver the next worker verdict to the same runtime, not a replacement.
+  (
+    runtime as unknown as { handleConfigDependencyStatus(value: unknown): void }
+  ).handleConfigDependencyStatus({
+    kind: 'missing',
+    failure: { configPath: shimPath, cause: "Cannot find package 'missing'" },
+  });
+  expect(states.at(-1)).toMatchObject({
+    kind: 'disabled',
+    reason: expect.stringContaining('rstack.config.ts'),
+  });
+  expect(warnings).toHaveLength(1);
+  expect(warnings[0]).toContain('Cannot load rstack.config.ts:');
+  expect(warnings[0]).not.toContain('rstack.config.js');
+});
 
 function createRuntime() {
   const states: StackState[] = [];
