@@ -210,7 +210,7 @@ describe('lint worker config refresh', () => {
       expect(observedReasons).toEqual(['config-change', 'reject']);
       expect(notifications).toEqual([
         { failure: notificationFailure },
-        { failure: null },
+        { failure: null, error: 'refresh rejected' },
       ]);
 
       const shutdown = await editorConnection.sendRequest<{

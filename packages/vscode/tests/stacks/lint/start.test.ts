@@ -2,6 +2,8 @@ import { expect, it, rs } from '@rstest/core';
 import type { StackState } from '../../../src/types';
 import type { RslintOptions } from '../../../src/stacks/lint/Rslint';
 
+let refreshOutcome: 'missing' | 'broken' | 'fixed' = 'missing';
+
 rs.mock('vscode', () => ({
   RelativePattern: class {},
   workspace: {
@@ -35,6 +37,14 @@ rs.mock('vscode-languageclient/node', () => ({
     }
     async start() {}
     async sendRequest() {
+      if (refreshOutcome !== 'missing') {
+        this.notification?.({
+          failure: null,
+          ...(refreshOutcome === 'broken' ? { error: 'Invalid config' } : {}),
+        });
+        if (refreshOutcome === 'broken') throw new Error('Invalid config');
+        return;
+      }
       this.notification?.({
         failure: {
           configPath: '/project/rslint.config.mjs',
@@ -75,4 +85,25 @@ it('keeps an initialized runtime disabled when initial configRefresh rejects', a
     'configRefresh rejected',
   );
   expect(warnings).toHaveLength(1);
+
+  refreshOutcome = 'broken';
+  const beforeBroken = states.length;
+  await runtime.retryConfigDependency();
+  expect(states.slice(beforeBroken).map((state) => state.kind)).toEqual([
+    'crashed',
+  ]);
+  expect(runtime.hasConfigDependencyFailure()).toBe(false);
+  expect(errors).toEqual([
+    ['Failed to refresh config discovery: Invalid config'],
+  ]);
+
+  refreshOutcome = 'fixed';
+  // Config-file events use this same refresh path after dependency polling stops.
+  await (
+    runtime as unknown as {
+      requestConfigRefresh(reason: string): Promise<void>;
+    }
+  ).requestConfigRefresh('config-change');
+  expect(states.at(-1)?.kind).toBe('running');
+  expect(errors).toHaveLength(1);
 });

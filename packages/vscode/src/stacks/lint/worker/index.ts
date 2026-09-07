@@ -177,9 +177,20 @@ export function registerEditorProxy(
         );
         return result;
       } catch (error) {
+        const failure = options.takeConfigDependencyFailure() ?? null;
         await editorConnection.sendNotification(
           CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
-          { failure: options.takeConfigDependencyFailure() ?? null },
+          {
+            failure,
+            ...(failure === null
+              ? {
+                  error: (error instanceof Error
+                    ? error.message
+                    : String(error)
+                  ).split('\n', 1)[0],
+                }
+              : {}),
+          },
         );
         throw error;
       }

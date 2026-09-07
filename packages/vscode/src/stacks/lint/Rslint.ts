@@ -337,6 +337,8 @@ export class Rslint implements Disposable {
   private lifecycleEpoch = 0;
   private advisory: string | undefined;
   private readonly configDependencyEpisode = new ConfigDependencyEpisode();
+  private configRefreshFailed = false;
+  private reportedConfigErrors = 0;
   private startPromise: Promise<void> | undefined;
   private startOperation: Promise<void> | undefined;
   private clientStartPromise: Promise<void> | undefined;
@@ -361,6 +363,7 @@ export class Rslint implements Disposable {
   }
 
   private reportRunning(): void {
+    if (this.configRefreshFailed) return;
     this.report(runningRslintStatus(this.advisory));
   }
 
@@ -381,10 +384,22 @@ export class Rslint implements Disposable {
   private handleConfigDependencyStatus(
     notification: ConfigDependencyStatusNotification,
   ): void {
+    if (notification.error !== undefined) {
+      this.configRefreshFailed = true;
+      this.reportedConfigErrors++;
+      this.report({ kind: 'crashed', detail: notification.error });
+      this.configDependencyEpisode.clear();
+      this.logger.error(
+        `Failed to refresh config discovery: ${notification.error}`,
+      );
+      return;
+    }
+    const wasFailed = this.configRefreshFailed;
+    this.configRefreshFailed = false;
     const failure = notification.failure;
     if (failure === null) {
       const wasMissing = this.configDependencyEpisode.clear();
-      if (wasMissing && this.isRunning()) this.reportRunning();
+      if ((wasMissing || wasFailed) && this.isRunning()) this.reportRunning();
       return;
     }
     const displayPath = this.displayConfigPath(failure.configPath);
@@ -685,7 +700,15 @@ export class Rslint implements Disposable {
     if (!client) return;
     const refresh = this.configReloadChain.then(async () => {
       if (!this.isLifecycleCurrent(epoch, client)) return;
-      await client.sendRequest('rslint/configRefresh', { reason });
+      const reportedBefore = this.reportedConfigErrors;
+      try {
+        await client.sendRequest('rslint/configRefresh', { reason });
+      } catch (error) {
+        // The worker verdict already surfaced this rejection as a real config
+        // error. Keep the live runtime for config edits without duplicate logs
+        // or a generic startup failure replacing its precise status.
+        if (this.reportedConfigErrors === reportedBefore) throw error;
+      }
     });
     this.configReloadChain = refresh.catch(() => undefined);
     await refresh;

@@ -8,4 +8,6 @@ export interface ConfigDependencyFailure {
 
 export interface ConfigDependencyStatusNotification {
   readonly failure: ConfigDependencyFailure | null;
+  /** Present only when refresh rejected without a classified dependency cause. */
+  readonly error?: string;
 }
