@@ -153,6 +153,27 @@ const createProject = async (source: any) => {
 };
 
 describe('Project config/cwd/package-resolution decoupling', () => {
+  it('retries a core-missing project on a dependency pass', async () => {
+    const config = uri('/repo/pkg/rstest.config.ts');
+    const { reporter } = createStatusRecorder();
+    status.bind(reporter);
+    // RstestApi reports this source before rejecting with its reported marker.
+    status.notInstalled('@rstest/core is not installed', config.toString());
+    normalizedConfigFailure = new ReportedRstestResolutionError();
+    const { project } = await createProject({ sourceUri: config });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const { WorkspaceManager } =
+      await import('../../../src/stacks/test/project');
+    WorkspaceManager.prototype.retryFailedProjects.call({
+      projects: new Map([['config', project]]),
+    } as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(normalizedConfigCalls).toBe(2);
+    expect(loggedErrors).toEqual([]);
+    project.dispose();
+    status.unbind();
+  });
+
   it('keeps the upstream derivation for a native rstest config', async () => {
     const configFile = uri(path.join('/repo', 'pkg', 'rstest.config.ts'));
 
@@ -332,12 +353,14 @@ describe('Project config/cwd/package-resolution decoupling', () => {
     const { WorkspaceManager } =
       await import('../../../src/stacks/test/project');
     const callsBeforePoll = normalizedConfigCalls;
+    status.notInstalled('another project is missing core', 'other-project');
     WorkspaceManager.prototype.retryFailedProjects.call({
       projects: new Map([['config', project]]),
     } as never);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(normalizedConfigCalls).toBe(callsBeforePoll);
     expect(loggedErrors).toHaveLength(1);
+    status.forget('other-project');
 
     normalizedConfigFailure = undefined;
     normalizedConfigResult = {

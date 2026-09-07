@@ -18,7 +18,13 @@
  * the shell probe never runs.
  */
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { runTests } from '@vscode/test-electron';
@@ -80,7 +86,7 @@ async function main() {
     )}\n`,
   );
 
-  await runTests({
+  const launchOptions = {
     // Pinnable for CI; `stable` locally. `runTests` forwards the whole options
     // object to the downloader, so `version`/`timeout`/`vscodeExecutablePath`
     // all apply to it. A cached download under `.vscode-test/` is reused.
@@ -114,7 +120,39 @@ async function main() {
       '--user-data-dir',
       scratchDir,
     ],
-  });
+  };
+  await runTests(launchOptions);
+
+  // Reuse setupFixtures.mjs's exact published pin and generated lockfile,
+  // but start this isolated workspace with no inherited node_modules.
+  const recoveryRoot = mkdtempSync(path.join(tmpdir(), 'rst-recovery-'));
+  const recoveryWorkspace = path.join(recoveryRoot, 'workspace');
+  try {
+    cpSync(path.join(fixturesRoot, 'workspace-1'), recoveryWorkspace, {
+      recursive: true,
+      filter: (source) => path.basename(source) !== 'node_modules',
+    });
+    await runTests({
+      ...launchOptions,
+      extensionTestsPath: path.resolve(
+        __dirname,
+        './suite-dependency-recovery/index',
+      ),
+      launchArgs: [
+        recoveryWorkspace,
+        ...launchOptions.launchArgs.slice(1, -2),
+        '--user-data-dir',
+        path.join(recoveryRoot, 'profile'),
+      ],
+    });
+  } finally {
+    rmSync(recoveryRoot, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 200,
+    });
+  }
 }
 
 main().catch((error) => {

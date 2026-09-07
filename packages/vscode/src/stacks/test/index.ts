@@ -82,6 +82,7 @@ class Rstest implements vscode.Disposable {
    */
   buildExports(): Record<string, unknown> {
     return {
+      hasNotInstalledState: () => status.hasNotInstalled(),
       testController: this.ctrl,
       runProfile: this.runProfile,
       startTestRun: this.startTestRun,
