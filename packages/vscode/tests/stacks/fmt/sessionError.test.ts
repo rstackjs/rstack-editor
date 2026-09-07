@@ -86,6 +86,7 @@ describe('handleFmtShowMessage', () => {
           showErrorMessage: unexpected,
           showWarningMessage: unexpected,
           onConfigDependency: unexpected,
+          onConfigError: unexpected,
         },
       );
       expect(information).toHaveBeenCalledExactlyOnceWith('message');
@@ -96,6 +97,9 @@ describe('handleFmtShowMessage', () => {
     const shown: string[] = [];
     let stateChanges = 0;
     const handler = {
+      onConfigError: () => {
+        stateChanges += 1;
+      },
       onConfigDependency: () => {
         stateChanges += 1;
       },
@@ -113,6 +117,7 @@ describe('handleFmtShowMessage', () => {
       handleFmtShowMessage(message, '/project', '/project/rstack.config.ts', {
         ...vscode.window,
         onConfigDependency: handler.onConfigDependency,
+        onConfigError: handler.onConfigError,
       });
       handleFmtShowMessage(
         message,

@@ -135,6 +135,7 @@ export class RstestApi {
   private lastResolvedRstestPath?: string;
   private readonly coreMissingEpisode = new NotInstalledEpisode();
   private lastUnsupportedCoreMessage?: string;
+  private lastResolutionErrorMessage?: string;
 
   constructor(
     private workspace: vscode.WorkspaceFolder,
@@ -348,6 +349,12 @@ export class RstestApi {
     status.notInstalled(CORE_NOT_INSTALLED_STATUS, this.statusSource);
   }
 
+  private reportResolutionError(message: string): void {
+    if (message === this.lastResolutionErrorMessage) return;
+    vscode.window.showErrorMessage(message);
+    this.lastResolutionErrorMessage = message;
+  }
+
   // Returns '' when resolution failed. Every such branch has already reported
   // itself — silently for a missing core, with a notification otherwise — so
   // callers must fail quietly rather than report again.
@@ -369,7 +376,7 @@ export class RstestApi {
             paths: [this.cwd],
           });
         } catch (e) {
-          vscode.window.showErrorMessage(
+          this.reportResolutionError(
             'Failed to resolve @rstest/core/package.json. Please upgrade @rstest/core to the latest version.',
           );
           logger.error('Failed to resolve @rstest/core/package.json', e);
@@ -434,9 +441,10 @@ export class RstestApi {
       }
 
       this.lastResolvedRstestPath = nodeExport;
+      this.lastResolutionErrorMessage = undefined;
       return nodeExport;
     } catch (e) {
-      vscode.window.showErrorMessage(toErrorMessage(e));
+      this.reportResolutionError(toErrorMessage(e));
       throw e;
     }
   }

@@ -164,6 +164,8 @@ class FmtFolderRuntime {
   readonly #packageEpisode = new NotInstalledEpisode();
   readonly #configDependencyEpisode = new NotInstalledEpisode();
   #startError: string | undefined;
+  #sessionError: string | undefined;
+  #sessionErrorCount = 0;
   suppressedShowMessages = 0;
   #closing = false;
   #disposed = false;
@@ -222,6 +224,7 @@ class FmtFolderRuntime {
   private handleShowMessage(message: ShowMessageParams): void {
     handleFmtShowMessage(message, this.folderPath, this.#configPath, {
       onConfigDependency: (failure) => {
+        this.#sessionError = undefined;
         const report = this.#configDependencyEpisode.observe(
           'fmt',
           failure.configPath,
@@ -232,6 +235,13 @@ class FmtFolderRuntime {
         }
         this.suppressedShowMessages++;
         this.setState('disabled', report.reason);
+      },
+      onConfigError: (message) => {
+        this.#sessionErrorCount++;
+        this.#configDependencyEpisode.clear();
+        if (this.#sessionError !== message) this.context.output.error(message);
+        this.#sessionError = message;
+        this.setState('crashed', message);
       },
       showErrorMessage: (text) => {
         void vscode.window.showErrorMessage(text);
@@ -413,12 +423,12 @@ class FmtFolderRuntime {
         // owner's call; either way this folder is currently not formatting.
         this.setState('crashed', 'the rs fmt language server stopped');
       } else if (event.newState === State.Running) {
-        // The one writer for `running`. It fires on the first start
-        // (synchronously, before `client.start()` resolves) and again when
-        // vscode-languageclient's error handler restarts a crashed server —
-        // the way back out of `crashed`, the same transition the lint stack's
-        // state watcher makes.
-        this.setState('running');
+        // Initialize does not load config. Keep a known real config error
+        // polling across restarts until formatting actually produces edits.
+        this.setState(
+          this.#sessionError === undefined ? 'running' : 'crashed',
+          this.#sessionError,
+        );
       }
     });
 
@@ -555,18 +565,26 @@ class FmtFolderRuntime {
           token,
           next,
         ) => {
-          const suppressedBeforeRequest = this.suppressedShowMessages;
+          const failuresBeforeRequest =
+            this.suppressedShowMessages + this.#sessionErrorCount;
           const edits = await next(document, options, token);
+          const hadConfigDependency = this.#configDependencyEpisode.active;
           if (
             clearEpisodeAfterSuccessfulFormatting(
               this.#configDependencyEpisode,
-              suppressedBeforeRequest,
-              this.suppressedShowMessages,
+              failuresBeforeRequest,
+              this.suppressedShowMessages + this.#sessionErrorCount,
               edits?.length ?? 0,
-            ) &&
-            this.#state === 'disabled'
+            )
           ) {
-            this.setState('running');
+            const hadSessionError = this.#sessionError !== undefined;
+            this.#sessionError = undefined;
+            if (
+              (hadConfigDependency && this.#state === 'disabled') ||
+              (hadSessionError && this.#state === 'crashed')
+            ) {
+              this.setState('running');
+            }
           }
           return edits;
         },

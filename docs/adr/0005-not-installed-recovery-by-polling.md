@@ -22,7 +22,7 @@ The watcher's original rationale was also factually wrong. At Microsoft VS Code 
 
 The aggregate status is deliberately not the predicate: every owned raw failure needs recovery. A retry landing mid-install can read half-written `node_modules` and fail with a syntax error instead of a missing dependency. Continuing every minute through that real error makes the transient harmless without a provisional-error heuristic. Real errors still replace not-installed in status and Output; persistent error messages and not-installed warnings are deduplicated so retries do not log every minute. The restart hint remains in the status as an explicit fallback.
 
-fmt has one tool-forced limitation. Restarting `rs fmt --lsp` re-runs package resolution, but the server loads project config lazily on the next formatting request. A poll can therefore move the folder to `running` before config loading has been proved; the next format either succeeds or reports the same config failure and returns the folder to `disabled`, which restarts polling.
+fmt has one tool-forced limitation. Restarting `rs fmt --lsp` re-runs package resolution, but the server loads project config lazily on the next formatting request. After a missing dependency, a poll can therefore move the folder to `running` before config loading has been proved; the next format either succeeds or reports the same config failure and returns the folder to `disabled`, which restarts polling. A known real config error instead remains `crashed` across restarts until a format produces edits.
 
 ## Considered options
 

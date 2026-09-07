@@ -365,6 +365,33 @@ describe('RstestApi with an unresolvable rstestPackagePath', () => {
     expect(shownMessages[0]).toContain(configured);
   });
 
+  it('deduplicates a resolution error until resolution succeeds', () => {
+    const root = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), 'rstest-vscode-')),
+    );
+    const installed = writeCoreInstall(root);
+    const api = createApi(root);
+    const resolve = () => (api as any).resolveRstestPath() as string;
+
+    try {
+      expect(resolve).toThrow();
+      expect(resolve).toThrow();
+      expect(shownMessages).toHaveLength(1);
+
+      settings.rstestPackagePath = path.join(
+        installed.packageDir,
+        'package.json',
+      );
+      expect(resolve()).toBe(installed.entry);
+
+      settings.rstestPackagePath = configured;
+      expect(resolve).toThrow();
+      expect(shownMessages).toHaveLength(2);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('should notify for a terminal run', () => {
     createApi().runInTerminal({});
     expect(shownMessages).toHaveLength(1);

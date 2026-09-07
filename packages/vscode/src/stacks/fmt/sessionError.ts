@@ -28,6 +28,7 @@ interface ShowMessagePresenter {
 
 interface FmtShowMessageHandler extends ShowMessagePresenter {
   onConfigDependency(failure: ConfigDependencyFailure): void;
+  onConfigError(message: string): void;
 }
 
 export function classifyFmtSessionError(
@@ -54,7 +55,7 @@ export function classifyFmtSessionError(
   };
 }
 
-/** Filters the one stack-owned state transition and passes every other server UI request through. */
+/** Reports config failures as state, suppressing only missing-dependency UI requests. */
 export const handleFmtShowMessage = (
   message: ShowMessageParams,
   workspaceRoot: string,
@@ -71,6 +72,13 @@ export const handleFmtShowMessage = (
   }
   switch (message.type) {
     case MessageType.Error:
+      if (message.message.startsWith(FMT_SESSION_ERROR_PREFIX)) {
+        handler.onConfigError(
+          message.message
+            .slice(FMT_SESSION_ERROR_PREFIX.length)
+            .split('\n', 1)[0],
+        );
+      }
       handler.showErrorMessage(message.message);
       break;
     case MessageType.Warning:
@@ -89,10 +97,12 @@ export const handleFmtShowMessage = (
  */
 export const clearEpisodeAfterSuccessfulFormatting = (
   episode: NotInstalledEpisode,
-  suppressedBeforeRequest: number,
-  suppressedAfterRequest: number,
+  failuresBeforeRequest: number,
+  failuresAfterRequest: number,
   editCount: number,
-): boolean =>
-  editCount > 0 &&
-  suppressedBeforeRequest === suppressedAfterRequest &&
+): boolean => {
+  if (editCount <= 0 || failuresBeforeRequest !== failuresAfterRequest)
+    return false;
   episode.clear();
+  return true;
+};
