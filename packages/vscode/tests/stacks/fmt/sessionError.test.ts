@@ -3,7 +3,7 @@ import vscode from 'vscode';
 import { NotInstalledEpisode } from '../../../src/shared/notInstalled';
 import {
   classifyFmtSessionError,
-  finishSuccessfulFormatting,
+  clearEpisodeAfterSuccessfulFormatting,
   FMT_SESSION_ERROR_PREFIX,
   handleFmtShowMessage,
 } from '../../../src/stacks/fmt/sessionError';
@@ -140,17 +140,17 @@ describe('handleFmtShowMessage', () => {
   });
 });
 
-describe('finishSuccessfulFormatting', () => {
+describe('clearEpisodeAfterSuccessfulFormatting', () => {
   it('clears the warning latch only after a request without a config failure', () => {
     const episode = new NotInstalledEpisode();
     episode.observe('fmt', 'rstack.config.ts', "Cannot find package 'missing'");
 
-    expect(finishSuccessfulFormatting(episode, 0, 1, 0)).toBe(false);
+    expect(clearEpisodeAfterSuccessfulFormatting(episode, 0, 1, 0)).toBe(false);
     expect(episode.active).toBe(true);
-    expect(finishSuccessfulFormatting(episode, 1, 1, 0)).toBe(false);
+    expect(clearEpisodeAfterSuccessfulFormatting(episode, 1, 1, 0)).toBe(false);
     expect(episode.active).toBe(true);
 
-    expect(finishSuccessfulFormatting(episode, 1, 1, 1)).toBe(true);
+    expect(clearEpisodeAfterSuccessfulFormatting(episode, 1, 1, 1)).toBe(true);
     expect(episode.active).toBe(false);
     expect(
       episode.observe(

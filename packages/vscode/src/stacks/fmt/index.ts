@@ -44,7 +44,7 @@ import type {
 import { LanguageServerProcessOwner } from '../lint/LanguageServerProcessOwner';
 import { pickBinEntry } from './binEntry';
 import {
-  finishSuccessfulFormatting,
+  clearEpisodeAfterSuccessfulFormatting,
   handleFmtShowMessage,
 } from './sessionError';
 import {
@@ -549,7 +549,7 @@ class FmtFolderRuntime {
           const suppressedBeforeRequest = this.suppressedShowMessages;
           const edits = await next(document, options, token);
           if (
-            finishSuccessfulFormatting(
+            clearEpisodeAfterSuccessfulFormatting(
               this.#configDependencyEpisode,
               suppressedBeforeRequest,
               this.suppressedShowMessages,

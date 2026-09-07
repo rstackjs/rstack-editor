@@ -87,7 +87,7 @@ export const handleFmtShowMessage = (
  * server also returns them on failure and deduplicates showMessage, so absence
  * of a new notification cannot prove recovery on a repeated request.
  */
-export const finishSuccessfulFormatting = (
+export const clearEpisodeAfterSuccessfulFormatting = (
   episode: NotInstalledEpisode,
   suppressedBeforeRequest: number,
   suppressedAfterRequest: number,
