@@ -1,5 +1,8 @@
 import path from 'node:path';
-import type { MessageType as LspMessageType } from 'vscode-languageclient/node';
+import type {
+  MessageType as LspMessageType,
+  ShowMessageParams,
+} from 'vscode-languageclient';
 import { classifyMissingDependencyMessage } from '../../shared/missingDependency';
 import type { ConfigDependencyEpisode } from '../../shared/notInstalled';
 
@@ -14,23 +17,18 @@ const MessageType = {
   Info: 3 as LspMessageType,
 };
 
-export interface FmtConfigDependencyFailure {
+interface FmtConfigDependencyFailure {
   readonly configPath: string;
   readonly cause: string;
 }
 
-export interface ShowMessageParams {
-  readonly type: LspMessageType;
-  readonly message: string;
-}
-
-export interface ShowMessagePresenter {
+interface ShowMessagePresenter {
   showErrorMessage(message: string): void;
   showWarningMessage(message: string): void;
   showInformationMessage(message: string): void;
 }
 
-export interface FmtShowMessageHandler extends ShowMessagePresenter {
+interface FmtShowMessageHandler extends ShowMessagePresenter {
   onConfigDependency(failure: FmtConfigDependencyFailure): void;
 }
 
@@ -58,37 +56,6 @@ export function classifyFmtSessionError(
   };
 }
 
-export const showMessagePresentation = (
-  type: LspMessageType,
-): 'error' | 'warning' | 'information' => {
-  switch (type) {
-    case MessageType.Error:
-      return 'error';
-    case MessageType.Warning:
-      return 'warning';
-    default:
-      return 'information';
-  }
-};
-
-/** Reproduces vscode-languageclient's default show-message UI routing. */
-export const presentShowMessage = (
-  message: ShowMessageParams,
-  presenter: ShowMessagePresenter,
-): void => {
-  switch (showMessagePresentation(message.type)) {
-    case 'error':
-      presenter.showErrorMessage(message.message);
-      break;
-    case 'warning':
-      presenter.showWarningMessage(message.message);
-      break;
-    case 'information':
-      presenter.showInformationMessage(message.message);
-      break;
-  }
-};
-
 /** Filters the one stack-owned state transition and passes every other server UI request through. */
 export const handleFmtShowMessage = (
   message: ShowMessageParams,
@@ -104,7 +71,17 @@ export const handleFmtShowMessage = (
     handler.onConfigDependency(failure);
     return;
   }
-  presentShowMessage(message, handler);
+  switch (message.type) {
+    case MessageType.Error:
+      handler.showErrorMessage(message.message);
+      break;
+    case MessageType.Warning:
+      handler.showWarningMessage(message.message);
+      break;
+    default:
+      handler.showInformationMessage(message.message);
+      break;
+  }
 };
 
 /**

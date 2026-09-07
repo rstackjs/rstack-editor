@@ -1,5 +1,6 @@
 import path from 'node:path';
 import vscode from 'vscode';
+import type { ShowMessageParams } from 'vscode-languageclient';
 import {
   CloseAction,
   ErrorAction,
@@ -46,7 +47,6 @@ import { pickBinEntry } from './binEntry';
 import {
   finishSuccessfulFormatting,
   handleFmtShowMessage,
-  type ShowMessageParams,
 } from './sessionError';
 import {
   foldFolderStatus,

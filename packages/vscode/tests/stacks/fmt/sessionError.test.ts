@@ -6,7 +6,6 @@ import {
   finishSuccessfulFormatting,
   FMT_SESSION_ERROR_PREFIX,
   handleFmtShowMessage,
-  showMessagePresentation,
 } from '../../../src/stacks/fmt/sessionError';
 
 rs.mock('vscode', () => ({
@@ -73,17 +72,26 @@ describe('classifyFmtSessionError', () => {
   });
 });
 
-describe('showMessagePresentation', () => {
-  it('matches vscode-languageclient default show-message routing', () => {
-    expect(showMessagePresentation(1)).toBe('error');
-    expect(showMessagePresentation(2)).toBe('warning');
-    expect(showMessagePresentation(3)).toBe('information');
-    expect(showMessagePresentation(4)).toBe('information');
-    expect(showMessagePresentation(5)).toBe('information');
-  });
-});
-
 describe('handleFmtShowMessage', () => {
+  it('routes other message types to information without changing state', () => {
+    for (const type of [4, 5] as const) {
+      const information = rs.fn();
+      const unexpected = rs.fn();
+      handleFmtShowMessage(
+        { type, message: 'message' },
+        '/project',
+        undefined,
+        {
+          showInformationMessage: information,
+          showErrorMessage: unexpected,
+          showWarningMessage: unexpected,
+          onConfigDependency: unexpected,
+        },
+      );
+      expect(information).toHaveBeenCalledExactlyOnceWith('message');
+      expect(unexpected).not.toHaveBeenCalled();
+    }
+  });
   it('re-presents non-classified Error, Warning and Info messages without state changes', () => {
     const shown: string[] = [];
     let stateChanges = 0;
