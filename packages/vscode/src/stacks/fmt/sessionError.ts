@@ -4,7 +4,10 @@ import type {
   ShowMessageParams,
 } from 'vscode-languageclient';
 import { classifyMissingDependencyMessage } from '../../shared/missingDependency';
-import type { ConfigDependencyEpisode } from '../../shared/notInstalled';
+import type {
+  ConfigDependencyEpisode,
+  ConfigDependencyFailure,
+} from '../../shared/notInstalled';
 
 export const FMT_SESSION_ERROR_PREFIX = 'rs fmt cannot format this workspace: ';
 
@@ -17,11 +20,6 @@ const MessageType = {
   Info: 3 as LspMessageType,
 };
 
-interface FmtConfigDependencyFailure {
-  readonly configPath: string;
-  readonly cause: string;
-}
-
 interface ShowMessagePresenter {
   showErrorMessage(message: string): void;
   showWarningMessage(message: string): void;
@@ -29,14 +27,14 @@ interface ShowMessagePresenter {
 }
 
 interface FmtShowMessageHandler extends ShowMessagePresenter {
-  onConfigDependency(failure: FmtConfigDependencyFailure): void;
+  onConfigDependency(failure: ConfigDependencyFailure): void;
 }
 
 export function classifyFmtSessionError(
   message: ShowMessageParams,
   workspaceRoot: string,
   configPath: string,
-): FmtConfigDependencyFailure | undefined {
+): ConfigDependencyFailure | undefined {
   if (
     message.type !== MessageType.Error ||
     !message.message.startsWith(FMT_SESSION_ERROR_PREFIX)

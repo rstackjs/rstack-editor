@@ -25,8 +25,8 @@ import { logger } from './logger';
 import {
   CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
   isConfigSourceChangeDuringTransaction,
-  type ConfigDependencyFailure,
 } from './configDependencyProtocol';
+import type { ConfigDependencyFailure } from '../../../shared/notInstalled';
 
 export {
   CONFIG_DEPENDENCY_STATUS_NOTIFICATION,

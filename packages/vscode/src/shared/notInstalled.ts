@@ -50,6 +50,11 @@ export const formatConfigDependencyMissingLog = (
 ): string =>
   `Cannot load ${configPath}: ${cause}. Install the project dependencies to enable ${STACK_LABELS[stack]} for this config.`;
 
+export interface ConfigDependencyFailure {
+  readonly configPath: string;
+  readonly cause: string;
+}
+
 export interface ConfigDependencyEpisodeReport {
   readonly reason: string;
   readonly warning: string | undefined;
