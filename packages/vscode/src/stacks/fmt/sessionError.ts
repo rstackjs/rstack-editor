@@ -108,13 +108,16 @@ export const handleFmtShowMessage = (
 };
 
 /**
- * Ends the warning episode only when this formatting request completed
- * without another classified show-message notification. A failed config load
- * also resolves with empty edits, so the response alone is not success.
+ * Nonempty edits prove formatting succeeded. Empty edits are ambiguous: the
+ * server also returns them on failure and deduplicates showMessage, so absence
+ * of a new notification cannot prove recovery on a repeated request.
  */
 export const finishSuccessfulFormatting = (
   episode: ConfigDependencyEpisode,
   suppressedBeforeRequest: number,
   suppressedAfterRequest: number,
+  editCount: number,
 ): boolean =>
-  suppressedBeforeRequest === suppressedAfterRequest && episode.clear();
+  editCount > 0 &&
+  suppressedBeforeRequest === suppressedAfterRequest &&
+  episode.clear();

@@ -604,7 +604,7 @@ export class Project implements vscode.Disposable {
         }
         this.configLoadFailed = false;
         this.#configDependencyCause = undefined;
-        status.installed(this.configDependencyStatusSource);
+        status.forget(this.configDependencyStatusSource);
         this.root = vscode.Uri.file(result.root);
         this.include = result.include;
         this.exclude = result.exclude;

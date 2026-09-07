@@ -568,6 +568,7 @@ class FmtFolderRuntime {
               this.#configDependencyEpisode,
               suppressedBeforeRequest,
               this.#suppressedShowMessages,
+              edits?.length ?? 0,
             ) &&
             this.#state === 'disabled'
           ) {

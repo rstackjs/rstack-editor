@@ -329,6 +329,17 @@ describe('Project config/cwd/package-resolution decoupling', () => {
         'Cannot load templates/app/rstest.config.ts: Unexpected token export',
     });
 
+    normalizedConfigFailure = undefined;
+    normalizedConfigResult = {
+      ok: true,
+      root: '/repo/templates/app',
+      include: ['**/*.test.ts'],
+      exclude: [],
+      childProjects: [],
+    };
+    await project.retryFailedConfig();
+    expect(reported.at(-1)).toEqual({ kind: 'running', detail: undefined });
+
     project.dispose();
     status.unbind();
   });

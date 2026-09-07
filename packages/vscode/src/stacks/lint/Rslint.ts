@@ -581,6 +581,16 @@ export class Rslint implements Disposable {
       this.logger.info('Rslint language client started successfully');
       if (!this.hasConfigDependencyFailure()) this.reportRunning();
     } catch (error: unknown) {
+      // Keep the initialized runtime available for configRefresh retries.
+      // Rethrowing this classified rejection would make RuntimeManager close
+      // it and onDocumentFailure replace disabled with a generic crash.
+      if (
+        !this.isPlannedStartAbort(error) &&
+        this.hasConfigDependencyFailure() &&
+        client.state === State.Running
+      ) {
+        return;
+      }
       // A close or supersede during start is a planned abort, not a failure;
       // logging it as an error made every teardown race look like a crash.
       if (

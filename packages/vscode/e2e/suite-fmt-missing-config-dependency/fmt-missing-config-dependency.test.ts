@@ -59,5 +59,15 @@ suite('fmt missing config dependency', () => {
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /missing-fmt-config-dependency/);
     assert.ok(!warnings[0].includes('\n'), 'warning must remain one line');
+
+    // The server deduplicates identical showMessage errors, but still returns
+    // empty edits. A silent second response must not clear the warning latch.
+    await vscode.commands.executeCommand(
+      'vscode.executeFormatDocumentProvider',
+      uri,
+      { tabSize: 2, insertSpaces: true },
+    );
+    assert.equal(sampleState(), 'disabled');
+    assert.equal(configDependencyWarnings().length, 1);
   });
 });

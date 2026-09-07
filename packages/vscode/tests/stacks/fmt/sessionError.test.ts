@@ -1,4 +1,5 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it, rs } from '@rstest/core';
+import vscode from 'vscode';
 import { ConfigDependencyEpisode } from '../../../src/shared/notInstalled';
 import {
   classifyFmtSessionError,
@@ -7,6 +8,16 @@ import {
   handleFmtShowMessage,
   showMessagePresentation,
 } from '../../../src/stacks/fmt/sessionError';
+
+rs.mock('vscode', () => ({
+  default: {
+    window: {
+      showErrorMessage: rs.fn(),
+      showWarningMessage: rs.fn(),
+      showInformationMessage: rs.fn(),
+    },
+  },
+}));
 
 describe('classifyFmtSessionError', () => {
   const root = '/project';
@@ -91,7 +102,16 @@ describe('handleFmtShowMessage', () => {
       { type: 2 as const, message: 'deprecated option' },
       { type: 3 as const, message: 'formatter ready' },
     ]) {
-      handleFmtShowMessage(message, '/project', undefined, handler);
+      handleFmtShowMessage(message, '/project', '/project/rstack.config.ts', {
+        ...vscode.window,
+        onConfigDependency: handler.onConfigDependency,
+      });
+      handleFmtShowMessage(
+        message,
+        '/project',
+        '/project/rstack.config.ts',
+        handler,
+      );
     }
 
     expect(shown).toEqual([
@@ -100,6 +120,15 @@ describe('handleFmtShowMessage', () => {
       'information:formatter ready',
     ]);
     expect(stateChanges).toBe(0);
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledExactlyOnceWith(
+      'bad config syntax',
+    );
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledExactlyOnceWith(
+      'deprecated option',
+    );
+    expect(
+      vscode.window.showInformationMessage,
+    ).toHaveBeenCalledExactlyOnceWith('formatter ready');
   });
 });
 
@@ -108,10 +137,12 @@ describe('finishSuccessfulFormatting', () => {
     const episode = new ConfigDependencyEpisode();
     episode.observe('fmt', 'rstack.config.ts', "Cannot find package 'missing'");
 
-    expect(finishSuccessfulFormatting(episode, 0, 1)).toBe(false);
+    expect(finishSuccessfulFormatting(episode, 0, 1, 0)).toBe(false);
+    expect(episode.active).toBe(true);
+    expect(finishSuccessfulFormatting(episode, 1, 1, 0)).toBe(false);
     expect(episode.active).toBe(true);
 
-    expect(finishSuccessfulFormatting(episode, 1, 1)).toBe(true);
+    expect(finishSuccessfulFormatting(episode, 1, 1, 1)).toBe(true);
     expect(episode.active).toBe(false);
     expect(
       episode.observe(
