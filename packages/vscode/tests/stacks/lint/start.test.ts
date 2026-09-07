@@ -1,8 +1,10 @@
 import { expect, it, rs } from '@rstest/core';
 import type { StackState } from '../../../src/types';
 import type { RslintOptions } from '../../../src/stacks/lint/Rslint';
+import { registerEditorProxy } from '../../../src/stacks/lint/worker/index';
 
-let refreshOutcome: 'missing' | 'broken' | 'fixed' | 'changed' = 'missing';
+let refreshOutcome:
+  'missing' | 'broken' | 'fixed' | 'changed' | 'changed-once' = 'missing';
 
 rs.mock('vscode', () => ({
   RelativePattern: class {},
@@ -37,12 +39,34 @@ rs.mock('vscode-languageclient/node', () => ({
     }
     async start() {}
     async sendRequest() {
-      if (refreshOutcome === 'changed') {
-        this.notification?.({
-          failure: null,
-          error: 'config changed while loading',
-        });
-        throw new Error('config changed while loading');
+      if (refreshOutcome === 'changed' || refreshOutcome === 'changed-once') {
+        if (refreshOutcome === 'changed-once') refreshOutcome = 'fixed';
+        let request!: (method: string, params: unknown) => Promise<unknown>;
+        // Use the real worker proxy so the test observes its notification
+        // ordering, not a mock of the behavior being fixed.
+        registerEditorProxy(
+          {
+            onRequest: (handler: typeof request) => {
+              request = handler;
+            },
+            onNotification() {},
+            sendNotification: (_method: string, params: unknown) =>
+              this.notification?.(params),
+          } as never,
+          {
+            sendRequest: async () => {
+              throw new Error('config changed while loading');
+            },
+          } as never,
+          {
+            protocolVersion: 2,
+            beginConfigRefresh() {},
+            takeConfigDependencyFailure: () => undefined,
+            observeRefresh() {},
+            requestStop() {},
+          },
+        );
+        return request('rslint/configRefresh', { reason: 'initial' });
       }
       if (refreshOutcome !== 'missing') {
         this.notification?.({
@@ -65,7 +89,7 @@ rs.mock('vscode-languageclient/node', () => ({
 
 import { Rslint } from '../../../src/stacks/lint/Rslint';
 
-it('keeps an initialized runtime disabled when initial configRefresh rejects', async () => {
+function createRuntime() {
   const states: StackState[] = [];
   const warnings: string[] = [];
   const errors: unknown[] = [];
@@ -82,6 +106,13 @@ it('keeps an initialized runtime disabled when initial configRefresh rejects', a
     },
     reportStatus: (state: StackState) => states.push(state),
   } as unknown as RslintOptions);
+
+  return { runtime, states, warnings, errors };
+}
+
+it('keeps an initialized runtime disabled when initial configRefresh rejects', async () => {
+  refreshOutcome = 'missing';
+  const { runtime, states, warnings, errors } = createRuntime();
 
   await runtime.start(new AbortController().signal);
   expect(states.at(-1)?.kind).toBe('disabled');
@@ -122,4 +153,23 @@ it('keeps an initialized runtime disabled when initial configRefresh rejects', a
       }
     ).requestConfigRefresh('initial'),
   ).rejects.toThrow('config changed while loading');
+});
+
+it('recovers a startup config source race without a crash or error log', async () => {
+  refreshOutcome = 'changed-once';
+  const { runtime, states, errors } = createRuntime();
+  await runtime.start(new AbortController().signal);
+  expect(states.some((state) => state.kind === 'crashed')).toBe(false);
+  expect(states.at(-1)?.kind).toBe('running');
+  expect(errors).toEqual([]);
+});
+
+it('reports one startup crash when the config source retry is exhausted', async () => {
+  refreshOutcome = 'changed';
+  const { runtime, states, errors } = createRuntime();
+  await expect(runtime.start(new AbortController().signal)).rejects.toThrow(
+    'config changed while loading',
+  );
+  expect(states.filter((state) => state.kind === 'crashed')).toHaveLength(1);
+  expect(errors).toHaveLength(1);
 });

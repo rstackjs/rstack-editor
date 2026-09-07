@@ -24,6 +24,7 @@ import { ActivationFingerprinter } from './fingerprint';
 import { logger } from './logger';
 import {
   CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
+  isConfigSourceChangeDuringTransaction,
   type ConfigDependencyFailure,
 } from './configDependencyProtocol';
 
@@ -177,6 +178,10 @@ export function registerEditorProxy(
         );
         return result;
       } catch (error) {
+        // The editor already retries this transaction race during startup.
+        // Leave its rejection untouched and send no premature failure (or
+        // success) verdict; the startup catch reports once if retries exhaust.
+        if (isConfigSourceChangeDuringTransaction(error)) throw error;
         const failure = options.takeConfigDependencyFailure() ?? null;
         await editorConnection.sendNotification(
           CONFIG_DEPENDENCY_STATUS_NOTIFICATION,

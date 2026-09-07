@@ -40,12 +40,13 @@ function handle(message) {
   const hasParams = Object.prototype.hasOwnProperty.call(message, 'params');
   if (
     message.method === 'rslint/configRefresh' &&
-    message.params?.reason === 'reject'
+    ['reject', 'changed'].includes(message.params?.reason)
   ) {
     send({
       jsonrpc: '2.0',
       id: message.id,
-      error: { code: -32603, message: 'refresh rejected' },
+      error: { code: -32603, message: message.params.reason === 'changed'
+        ? 'config changed while loading' : 'refresh rejected' },
     });
     return;
   }
@@ -212,6 +213,13 @@ describe('lint worker config refresh', () => {
         { failure: notificationFailure },
         { failure: null, error: 'refresh rejected' },
       ]);
+
+      await expect(
+        editorConnection.sendRequest('rslint/configRefresh', {
+          reason: 'changed',
+        }),
+      ).rejects.toThrow('config changed while loading');
+      expect(notifications).toHaveLength(2);
 
       const shutdown = await editorConnection.sendRequest<{
         readonly method: string;

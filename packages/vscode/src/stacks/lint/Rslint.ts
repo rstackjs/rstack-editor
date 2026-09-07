@@ -40,8 +40,10 @@ import type { Logger } from './logger';
 import type { RslintMode } from './resolution';
 import {
   CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
+  isConfigSourceChangeDuringTransaction,
   type ConfigDependencyStatusNotification,
 } from './worker/configDependencyProtocol';
+export { isConfigSourceChangeDuringTransaction } from './worker/configDependencyProtocol';
 import {
   RslintVersionMismatchError,
   runningRslintStatus,
@@ -131,19 +133,6 @@ export function configRefreshReasonForPath(
   return (LOCKFILE_NAMES as readonly string[]).includes(path.basename(filePath))
     ? 'dependency-change'
     : 'config-change';
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-export function isConfigSourceChangeDuringTransaction(error: unknown): boolean {
-  if (!isRecord(error)) return false;
-  return (
-    error.code === 'CONFIG_CHANGED_DURING_LOAD' ||
-    (typeof error.message === 'string' &&
-      error.message.includes('config changed while'))
-  );
 }
 
 export async function retryConfigRefreshOnSourceChange(
