@@ -12,7 +12,6 @@ import { extensionExports } from '../utils/extension';
 function lintExports(): {
   getFolderStates(): ReadonlyMap<string, StackState>;
   getRuntimeStates(): ReadonlyMap<string, StackState>;
-  getConfigDependencyWarnings(): readonly string[];
 } {
   const exports = extensionExports().getStackExports('rslint');
   assert.ok(exports, 'lint stack exports are unavailable');
@@ -63,7 +62,7 @@ suite('Rslint missing config dependency', function () {
     assert.ok(runtimeStates.every((state) => state.kind === 'disabled'));
     assert.deepStrictEqual(getRslintDiagnostics(document), []);
 
-    const warnings = lintExports().getConfigDependencyWarnings();
+    const warnings = extensionExports().getRecordedWarnings('rslint');
     assert.strictEqual(warnings.length, 1);
     assert.match(warnings[0], /missing-rslint-config-dependency/);
     assert.ok(!warnings[0].includes('\n'), 'warning must remain one line');
@@ -82,7 +81,7 @@ suite('Rslint missing config dependency', function () {
     );
     await waitForRuntimeKind('disabled');
     assert.strictEqual(
-      lintExports().getConfigDependencyWarnings().length,
+      extensionExports().getRecordedWarnings('rslint').length,
       warnings.length + 1,
       'the new missing-dependency episode must add exactly one warning',
     );

@@ -13,8 +13,6 @@ suite('fmt missing config dependency', () => {
     const folderStates = exports.folderStates as () => Record<string, string>;
     const suppressedConfigDependencyMessages =
       exports.suppressedConfigDependencyMessages as () => number;
-    const configDependencyWarnings =
-      exports.configDependencyWarnings as () => readonly string[];
     const folder = vscode.workspace.workspaceFolders?.[0];
     assert.ok(folder, 'fmt fixture workspace is unavailable');
     const observedStates: string[] = [];
@@ -55,7 +53,7 @@ suite('fmt missing config dependency', () => {
     // outside it: a transient crash must not disappear behind later recovery.
     assert.ok(!observedStates.includes('crashed'), observedStates.join(' -> '));
     assert.equal(suppressedConfigDependencyMessages(), 1);
-    const warnings = configDependencyWarnings();
+    const warnings = api.getRecordedWarnings('fmt');
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /missing-fmt-config-dependency/);
     assert.ok(!warnings[0].includes('\n'), 'warning must remain one line');
@@ -68,6 +66,6 @@ suite('fmt missing config dependency', () => {
       { tabSize: 2, insertSpaces: true },
     );
     assert.equal(sampleState(), 'disabled');
-    assert.equal(configDependencyWarnings().length, 1);
+    assert.equal(api.getRecordedWarnings('fmt').length, 1);
   });
 });

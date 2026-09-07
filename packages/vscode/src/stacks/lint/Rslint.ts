@@ -314,7 +314,6 @@ export class Rslint implements Disposable {
   private readonly lspOutputChannel: OutputChannel;
   private readonly outputChannel: OutputChannel;
   private readonly onClosed: (() => void) | undefined;
-  private readonly configDependencyWarnings: string[] = [];
   private readonly configWatchers: FileSystemWatcher[] = [];
   private configReloadTimer: ReturnType<typeof setTimeout> | undefined;
   private configReloadChain: Promise<void> = Promise.resolve();
@@ -396,7 +395,6 @@ export class Rslint implements Disposable {
     if (report.warning !== undefined) {
       const warning = report.warning;
       this.logger.warn(warning);
-      this.configDependencyWarnings.push(warning);
     }
     this.report({
       kind: 'disabled',
@@ -714,11 +712,6 @@ export class Rslint implements Disposable {
   public retryConfigDependency(): Promise<void> | undefined {
     if (!this.hasConfigDependencyFailure()) return undefined;
     return this.requestConfigRefresh('dependency-change');
-  }
-
-  /** E2E-only observation surfaced through the controller's activation exports. */
-  public getConfigDependencyWarnings(): readonly string[] {
-    return this.configDependencyWarnings;
   }
 
   private isLifecycleCurrent(epoch: number, client: LanguageClient): boolean {

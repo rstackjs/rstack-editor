@@ -520,6 +520,7 @@ class ExtensionShell {
 
   buildExports(): RstackExtensionExports {
     return {
+      getRecordedWarnings: (stack) => this.#channels.getRecordedWarnings(stack),
       getStackExports: (stack) => this.#stackExports.get(stack),
       whenStackActive: (stack) => {
         const current = this.#stackExports.get(stack);

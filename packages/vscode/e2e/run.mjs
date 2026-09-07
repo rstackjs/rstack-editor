@@ -63,7 +63,7 @@ const run = (command, args, opts = {}) => {
   const result = spawnSync(command, args, {
     cwd: packageRoot,
     stdio: 'inherit',
-    env: process.env,
+    env: { ...process.env, RSTACK_E2E_RECORD_WARNINGS: '1' },
     // With `shell: true` Node concatenates command and args UNESCAPED, so a
     // path containing spaces (the checkout, `process.execPath`) would fall
     // apart into several arguments — callers opt in only where the command

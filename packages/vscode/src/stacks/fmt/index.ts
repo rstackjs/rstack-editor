@@ -163,8 +163,7 @@ class FmtFolderRuntime {
   #configPath: string | undefined;
   readonly #packageEpisode = new NotInstalledEpisode();
   readonly #configDependencyEpisode = new NotInstalledEpisode();
-  readonly #configDependencyWarnings: string[] = [];
-  #suppressedShowMessages = 0;
+  suppressedShowMessages = 0;
   #closing = false;
   #disposed = false;
   /** True only across `startImpl`'s `client.start()` await — the window `interruptInFlightStart` exists for. */
@@ -208,14 +207,6 @@ class FmtFolderRuntime {
     this.#configPath = configPath;
   }
 
-  get configDependencyWarnings(): readonly string[] {
-    return this.#configDependencyWarnings;
-  }
-
-  get suppressedShowMessages(): number {
-    return this.#suppressedShowMessages;
-  }
-
   private setState(state: FmtRuntimeState, detail = ''): void {
     this.#state = state;
     this.#detail = detail;
@@ -237,9 +228,8 @@ class FmtFolderRuntime {
         );
         if (report.warning !== undefined) {
           this.context.output.warn(report.warning);
-          this.#configDependencyWarnings.push(report.warning);
         }
-        this.#suppressedShowMessages++;
+        this.suppressedShowMessages++;
         this.setState('disabled', report.reason);
       },
       showErrorMessage: (text) => {
@@ -556,13 +546,13 @@ class FmtFolderRuntime {
           token,
           next,
         ) => {
-          const suppressedBeforeRequest = this.#suppressedShowMessages;
+          const suppressedBeforeRequest = this.suppressedShowMessages;
           const edits = await next(document, options, token);
           if (
             finishSuccessfulFormatting(
               this.#configDependencyEpisode,
               suppressedBeforeRequest,
-              this.#suppressedShowMessages,
+              this.suppressedShowMessages,
               edits?.length ?? 0,
             ) &&
             this.#state === 'disabled'
@@ -719,11 +709,6 @@ class FmtController implements StackController {
         [...this.#runtimes.values()].reduce(
           (count, runtime) => count + runtime.suppressedShowMessages,
           0,
-        ),
-      /** E2E only: one-line warnings emitted for classified config failures. */
-      configDependencyWarnings: (): readonly string[] =>
-        [...this.#runtimes.values()].flatMap(
-          (runtime) => runtime.configDependencyWarnings,
         ),
     });
   }

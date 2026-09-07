@@ -68,8 +68,6 @@ class RslintController implements StackController {
   #snapshot: DetectionSnapshot | undefined;
   readonly #subscriptions: vscode.Disposable[] = [];
   readonly #folderStates = new Map<string, FolderStates>();
-  /** E2E-only record of the controller-level not-installed warning episodes. */
-  readonly #notInstalledWarnings: string[] = [];
   // Mirror of the live runtimes, kept here (not on the router) so answering
   // "does this document's server advertise hover?" needs no new surface on the
   // upstream-copied WorkspaceDocumentRouter. Reachability is still gated by
@@ -158,13 +156,6 @@ class RslintController implements StackController {
             ...states.runtimes,
           ]),
         ),
-      getConfigDependencyWarnings: (): readonly string[] =>
-        [...this.#runtimes.values()].flatMap((runtime) =>
-          runtime.getConfigDependencyWarnings(),
-        ),
-      getNotInstalledWarnings: (): readonly string[] => [
-        ...this.#notInstalledWarnings,
-      ],
     };
   }
 
@@ -213,7 +204,6 @@ class RslintController implements StackController {
                 `${document.uri} ${keeping ? `keeps ${keeping}` : 'will not lint'} until it is installed`,
               );
               logger.warn(warning);
-              this.#notInstalledWarnings.push(warning);
             }
           } else {
             logger.error(

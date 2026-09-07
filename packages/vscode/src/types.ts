@@ -169,6 +169,8 @@ export interface StackController {
  * tests; not a stable API for other extensions.
  */
 export interface RstackExtensionExports {
+  /** E2E only: warnings captured when RSTACK_E2E_RECORD_WARNINGS is enabled. */
+  getRecordedWarnings(stack: StackId): readonly string[];
   /** Live exports the stack published at registration; undefined when inactive. */
   getStackExports(stack: StackId): Record<string, unknown> | undefined;
   /**

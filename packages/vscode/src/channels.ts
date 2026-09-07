@@ -19,6 +19,7 @@ export class Channels implements vscode.Disposable {
   readonly shell: vscode.LogOutputChannel;
 
   readonly #stacks: Record<StackId, vscode.LogOutputChannel>;
+  readonly #recordedWarnings = new Map<StackId, string[]>();
 
   constructor() {
     this.shell = vscode.window.createOutputChannel(CHANNEL_NAMES.shell, {
@@ -30,6 +31,22 @@ export class Channels implements vscode.Disposable {
         vscode.window.createOutputChannel(CHANNEL_NAMES[stack], { log: true }),
       ]),
     ) as Record<StackId, vscode.LogOutputChannel>;
+    if (process.env.RSTACK_E2E_RECORD_WARNINGS === '1') {
+      for (const stack of STACK_IDS) {
+        const channel = this.#stacks[stack];
+        const warnings: string[] = [];
+        this.#recordedWarnings.set(stack, warnings);
+        const warn = channel.warn.bind(channel);
+        channel.warn = (message, ...args) => {
+          warnings.push(message);
+          warn(message, ...args);
+        };
+      }
+    }
+  }
+
+  getRecordedWarnings(stack: StackId): readonly string[] {
+    return [...(this.#recordedWarnings.get(stack) ?? [])];
   }
 
   forStack(stack: StackId): vscode.LogOutputChannel {

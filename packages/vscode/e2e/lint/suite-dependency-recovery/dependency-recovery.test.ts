@@ -12,7 +12,6 @@ const execFile = promisify(execFileCallback);
 
 function lintExports(): {
   getFolderStates(): ReadonlyMap<string, StackState>;
-  getNotInstalledWarnings(): readonly string[];
 } {
   const exports = extensionExports().getStackExports('rslint');
   assert.ok(exports, 'lint stack exports are unavailable');
@@ -54,7 +53,7 @@ suite('Rslint dependency polling recovery', function () {
     );
     await vscode.window.showTextDocument(document);
     await waitForFolderKind('disabled');
-    const warnings = lintExports().getNotInstalledWarnings();
+    const warnings = api.getRecordedWarnings('rslint');
     assert.strictEqual(warnings.length, 1);
     assert.match(warnings[0], /@rslint\/core is not installed/);
 
@@ -88,7 +87,7 @@ suite('Rslint dependency polling recovery', function () {
     await waitForRslintDiagnostics(document, undefined, 90_000);
     await waitForFolderKind('running');
     assert.strictEqual(
-      lintExports().getNotInstalledWarnings().length,
+      api.getRecordedWarnings('rslint').length,
       1,
       'poll retries must not repeat the unresolved episode warning',
     );
