@@ -26,7 +26,7 @@ import {
   type ServerOptions,
   State,
 } from 'vscode-languageclient/node';
-import { ConfigDependencyEpisode } from '../../shared/notInstalled';
+import { NotInstalledEpisode } from '../../shared/notInstalled';
 import {
   configuredNodeBelowFloor,
   NodePreflightError,
@@ -324,7 +324,7 @@ export class Rslint implements Disposable {
   private stateWatcher: Disposable | undefined;
   private lifecycleEpoch = 0;
   private advisory: string | undefined;
-  private readonly configDependencyEpisode = new ConfigDependencyEpisode();
+  private readonly configDependencyEpisode = new NotInstalledEpisode();
   private configRefreshFailed = false;
   private reportedConfigErrors = 0;
   private startPromise: Promise<void> | undefined;

@@ -19,7 +19,7 @@ import {
 } from '../../shared/nodeExecutableSetting';
 import { CONFIG_SECTION, getConfigValue } from './config';
 import {
-  formatNotInstalledLog,
+  NotInstalledEpisode,
   formatNotInstalledStatus,
 } from '../../shared/notInstalled';
 import {
@@ -133,7 +133,7 @@ export class RstestApi {
   // `createChildProcess`.
   private disposed = false;
   private lastResolvedRstestPath?: string;
-  private reportedCoreMissingFrom?: string;
+  private readonly coreMissingEpisode = new NotInstalledEpisode();
 
   constructor(
     private workspace: vscode.WorkspaceFolder,
@@ -337,17 +337,13 @@ export class RstestApi {
   // out plus one warn line — the normal state of a repository whose
   // dependencies are not installed yet, never a notification.
   private reportCoreNotInstalled(searchedFrom: string): void {
-    if (this.reportedCoreMissingFrom !== searchedFrom) {
-      logger.warn(
-        formatNotInstalledLog(
-          '@rstest/core',
-          this.workspace.name,
-          searchedFrom,
-          CORE_NOT_INSTALLED_CONSEQUENCE,
-        ),
-      );
-    }
-    this.reportedCoreMissingFrom = searchedFrom;
+    const warning = this.coreMissingEpisode.observePackage(
+      '@rstest/core',
+      this.workspace.name,
+      searchedFrom,
+      CORE_NOT_INSTALLED_CONSEQUENCE,
+    );
+    if (warning !== undefined) logger.warn(warning);
     status.notInstalled(CORE_NOT_INSTALLED_STATUS, this.statusSource);
   }
 
@@ -401,7 +397,7 @@ export class RstestApi {
         if (!nodeExport) return '';
       }
 
-      this.reportedCoreMissingFrom = undefined;
+      this.coreMissingEpisode.clear();
 
       const coreVersion = readPackageVersion(corePackageJsonPath);
 

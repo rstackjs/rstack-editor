@@ -5,7 +5,7 @@ import type {
 } from 'vscode-languageclient';
 import { classifyMissingDependencyMessage } from '../../shared/missingDependency';
 import type {
-  ConfigDependencyEpisode,
+  NotInstalledEpisode,
   ConfigDependencyFailure,
 } from '../../shared/notInstalled';
 
@@ -88,7 +88,7 @@ export const handleFmtShowMessage = (
  * of a new notification cannot prove recovery on a repeated request.
  */
 export const finishSuccessfulFormatting = (
-  episode: ConfigDependencyEpisode,
+  episode: NotInstalledEpisode,
   suppressedBeforeRequest: number,
   suppressedAfterRequest: number,
   editCount: number,

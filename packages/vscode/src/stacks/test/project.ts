@@ -7,7 +7,7 @@ import { RSTACK_CONFIG_NAMES } from '../../detection';
 import { resolveRstackShim } from './bridge';
 import { watchConfigValue } from './config';
 import {
-  formatConfigDependencyMissingLog,
+  NotInstalledEpisode,
   formatConfigDependencyMissingStatus,
 } from '../../shared/notInstalled';
 import {
@@ -563,7 +563,7 @@ export class Project implements vscode.Disposable {
   readonly isBridge: boolean;
   #watch?: vscode.Disposable;
   #configLoad: Promise<void> | undefined;
-  #configDependencyCause: string | undefined;
+  readonly #configDependencyEpisode = new NotInstalledEpisode();
   constructor(
     private workspaceFolder: vscode.WorkspaceFolder,
     source: ProjectSource,
@@ -603,7 +603,7 @@ export class Project implements vscode.Disposable {
           return;
         }
         this.configLoadFailed = false;
-        this.#configDependencyCause = undefined;
+        this.#configDependencyEpisode.clear();
         status.forget(this.configDependencyStatusSource);
         this.root = vscode.Uri.file(result.root);
         this.include = result.include;
@@ -615,7 +615,7 @@ export class Project implements vscode.Disposable {
       .catch((error) => {
         if (this.cancellationSource.token.isCancellationRequested) return;
         this.configLoadFailed = true;
-        this.#configDependencyCause = undefined;
+        this.#configDependencyEpisode.clear();
         if (!(error instanceof ReportedRstestResolutionError)) {
           const cause =
             error instanceof Error
@@ -677,16 +677,12 @@ export class Project implements vscode.Disposable {
   // Latched under this project's key, which `dispose` forgets.
   private reportMissingDependency(cause: string): void {
     this.configLoadFailed = true;
-    if (cause !== this.#configDependencyCause) {
-      logger.warn(
-        formatConfigDependencyMissingLog(
-          'rstest',
-          this.sourceUri.fsPath,
-          cause,
-        ),
-      );
-    }
-    this.#configDependencyCause = cause;
+    const report = this.#configDependencyEpisode.observe(
+      'rstest',
+      this.sourceUri.fsPath,
+      cause,
+    );
+    if (report.warning !== undefined) logger.warn(report.warning);
     status.notInstalled(
       formatConfigDependencyMissingStatus(
         'rstest',

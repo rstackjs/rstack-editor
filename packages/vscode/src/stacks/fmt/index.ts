@@ -14,8 +14,7 @@ import {
 import { RSTACK_CONFIG_GLOB } from '../../detection';
 import { getConfiguredNodeExecutable } from '../../shared/nodeExecutableSetting';
 import {
-  ConfigDependencyEpisode,
-  formatNotInstalledLog,
+  NotInstalledEpisode,
   formatNotInstalledStatus,
 } from '../../shared/notInstalled';
 import {
@@ -162,8 +161,8 @@ class FmtFolderRuntime {
   #defaultErrorHandler: ErrorHandler | undefined;
   #stateWatcher: vscode.Disposable | undefined;
   #configPath: string | undefined;
-  #missingPackage: string | undefined;
-  readonly #configDependencyEpisode = new ConfigDependencyEpisode();
+  readonly #packageEpisode = new NotInstalledEpisode();
+  readonly #configDependencyEpisode = new NotInstalledEpisode();
   readonly #configDependencyWarnings: string[] = [];
   #suppressedShowMessages = 0;
   #closing = false;
@@ -356,15 +355,15 @@ class FmtFolderRuntime {
       // The shell polls while this state remains disabled. The trailing restart
       // hint stays as the explicit fallback if recovery is delayed.
       this.setState('disabled', formatNotInstalledStatus('fmt', 'rstack'));
-      if (this.#missingPackage !== 'rstack') {
-        context.output.warn(
-          formatNotInstalledLog('rstack', this.folder.name, folderRoot),
-        );
-      }
-      this.#missingPackage = 'rstack';
+      const warning = this.#packageEpisode.observePackage(
+        'rstack',
+        this.folder.name,
+        folderRoot,
+      );
+      if (warning !== undefined) context.output.warn(warning);
       return;
     }
-    this.#missingPackage = undefined;
+    this.#packageEpisode.clear();
 
     // One read for the version and the bin entry; `readPackageJson` re-reads
     // from disk by design, so a reinstall is picked up on the next start.

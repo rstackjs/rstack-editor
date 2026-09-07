@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@rstest/core';
 import {
-  ConfigDependencyEpisode,
+  NotInstalledEpisode,
   formatConfigDependencyMissingLog,
   formatConfigDependencyMissingStatus,
   formatNotInstalledLog,
@@ -53,9 +53,9 @@ describe('not-installed wording', () => {
   });
 });
 
-describe('ConfigDependencyEpisode', () => {
+describe('NotInstalledEpisode', () => {
   it('warns once until success clears the episode', () => {
-    const episode = new ConfigDependencyEpisode();
+    const episode = new NotInstalledEpisode();
     const first = episode.observe(
       'fmt',
       'rstack.config.ts',
@@ -84,11 +84,27 @@ describe('ConfigDependencyEpisode', () => {
   });
 
   it('starts a new warning when the missing dependency changes', () => {
-    const episode = new ConfigDependencyEpisode();
+    const episode = new NotInstalledEpisode();
     episode.observe('rslint', 'rslint.config.ts', "Cannot find package 'a'");
     expect(
       episode.observe('rslint', 'rslint.config.ts', "Cannot find package 'b'")
         .warning,
     ).toContain("Cannot find package 'b'");
+  });
+
+  it('deduplicates package warnings by package and search directory until cleared', () => {
+    const episode = new NotInstalledEpisode();
+    expect(episode.observePackage('rstack', 'app', '/app')).toBe(
+      formatNotInstalledLog('rstack', 'app', '/app'),
+    );
+    expect(episode.observePackage('rstack', 'app', '/app')).toBeUndefined();
+    expect(episode.observePackage('rstack', 'app', '/other')).toBeDefined();
+    expect(
+      episode.observePackage('@rstest/core', 'app', '/other'),
+    ).toBeDefined();
+    episode.clear();
+    expect(
+      episode.observePackage('@rstest/core', 'app', '/other'),
+    ).toBeDefined();
   });
 });

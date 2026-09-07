@@ -1,6 +1,6 @@
 import { describe, expect, it, rs } from '@rstest/core';
 import vscode from 'vscode';
-import { ConfigDependencyEpisode } from '../../../src/shared/notInstalled';
+import { NotInstalledEpisode } from '../../../src/shared/notInstalled';
 import {
   classifyFmtSessionError,
   finishSuccessfulFormatting,
@@ -142,7 +142,7 @@ describe('handleFmtShowMessage', () => {
 
 describe('finishSuccessfulFormatting', () => {
   it('clears the warning latch only after a request without a config failure', () => {
-    const episode = new ConfigDependencyEpisode();
+    const episode = new NotInstalledEpisode();
     episode.observe('fmt', 'rstack.config.ts', "Cannot find package 'missing'");
 
     expect(finishSuccessfulFormatting(episode, 0, 1, 0)).toBe(false);

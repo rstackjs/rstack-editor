@@ -55,17 +55,17 @@ export interface ConfigDependencyFailure {
   readonly cause: string;
 }
 
-export interface ConfigDependencyEpisodeReport {
+interface NotInstalledEpisodeReport {
   readonly reason: string;
   readonly warning: string | undefined;
 }
 
 /**
- * Deduplicates one config-dependency warning until a successful load ends the
- * episode. Lint and fmt receive their failures over different protocols, but
+ * Deduplicates one not-installed warning until a successful load ends the
+ * episode. Stacks receive their failures over different protocols, but
  * the latch semantics and the user-facing words are the same.
  */
-export class ConfigDependencyEpisode {
+export class NotInstalledEpisode {
   #fingerprint: string | undefined;
 
   get active(): boolean {
@@ -76,8 +76,8 @@ export class ConfigDependencyEpisode {
     stack: StackId,
     configPath: string,
     cause: string,
-  ): ConfigDependencyEpisodeReport {
-    const fingerprint = `${configPath}\0${cause}`;
+  ): NotInstalledEpisodeReport {
+    const fingerprint = `config\0${configPath}\0${cause}`;
     const warning =
       fingerprint === this.#fingerprint
         ? undefined
@@ -87,6 +87,26 @@ export class ConfigDependencyEpisode {
       reason: formatConfigDependencyMissingStatus(stack, configPath),
       warning,
     };
+  }
+
+  observePackage(
+    packageName: string,
+    folderName: string,
+    searchedFrom: string,
+    consequence?: string,
+  ): string | undefined {
+    const fingerprint = `package\0${packageName}\0${searchedFrom}`;
+    const warning =
+      fingerprint === this.#fingerprint
+        ? undefined
+        : formatNotInstalledLog(
+            packageName,
+            folderName,
+            searchedFrom,
+            consequence,
+          );
+    this.#fingerprint = fingerprint;
+    return warning;
   }
 
   clear(): boolean {
