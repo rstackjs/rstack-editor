@@ -472,12 +472,14 @@ export class RstestApi {
 
   public async getNormalizedConfig() {
     const { worker, rstestPath } = await this.createChildProcess();
-    const result = await worker.getNormalizedConfig({
-      rstestPath,
-      configFilePath: this.configFilePath,
-    });
-    worker.$close();
-    return result;
+    try {
+      return await worker.getNormalizedConfig({
+        rstestPath,
+        configFilePath: this.configFilePath,
+      });
+    } finally {
+      worker.$close();
+    }
   }
 
   public async listTests(include?: string[]) {

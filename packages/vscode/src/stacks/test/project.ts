@@ -238,14 +238,14 @@ export class WorkspaceManager implements vscode.Disposable {
     );
   }
   /**
-   * Retries projects whose config evaluation failed — dependencies may have
+   * Retries projects whose config dependency is missing — dependencies may have
    * been installed since. The project keeps its identity and the retry is
    * single-flight, so repeated dependency signals cannot overlap workers or
    * repeat an unchanged not-installed warning.
    */
   public retryFailedProjects() {
     for (const project of this.projects.values()) {
-      if (!project.configLoadFailed) continue;
+      if (!project.hasConfigDependencyFailure) continue;
       void project.retryFailedConfig();
     }
   }
@@ -645,6 +645,10 @@ export class Project implements vscode.Disposable {
       },
     );
     return pending;
+  }
+
+  get hasConfigDependencyFailure(): boolean {
+    return this.#configDependencyCause !== undefined;
   }
 
   /** Re-evaluates a failed config without replacing this project. */

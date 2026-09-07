@@ -545,3 +545,23 @@ describe('RstestApi worker spawn failures', () => {
     expect(crashes()).toEqual([]);
   });
 });
+
+it('closes the config worker when config evaluation rejects', async () => {
+  const api = createApi();
+  const close = rs.fn();
+  rs.spyOn(api, 'createChildProcess').mockResolvedValue({
+    rstestPath: '/project/rstest',
+    worker: {
+      getNormalizedConfig: async () => {
+        throw new SyntaxError('Invalid config');
+      },
+      $close: close,
+    },
+  } as never);
+  try {
+    await expect(api.getNormalizedConfig()).rejects.toThrow('Invalid config');
+    expect(close).toHaveBeenCalledTimes(1);
+  } finally {
+    api.dispose();
+  }
+});

@@ -329,6 +329,16 @@ describe('Project config/cwd/package-resolution decoupling', () => {
         'Cannot load templates/app/rstest.config.ts: Unexpected token export',
     });
 
+    const { WorkspaceManager } =
+      await import('../../../src/stacks/test/project');
+    const callsBeforePoll = normalizedConfigCalls;
+    WorkspaceManager.prototype.retryFailedProjects.call({
+      projects: new Map([['config', project]]),
+    } as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(normalizedConfigCalls).toBe(callsBeforePoll);
+    expect(loggedErrors).toHaveLength(1);
+
     normalizedConfigFailure = undefined;
     normalizedConfigResult = {
       ok: true,
