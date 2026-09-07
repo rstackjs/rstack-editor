@@ -707,7 +707,12 @@ export class Rslint implements Disposable {
         // The worker verdict already surfaced this rejection as a real config
         // error. Keep the live runtime for config edits without duplicate logs
         // or a generic startup failure replacing its precise status.
-        if (this.reportedConfigErrors === reportedBefore) throw error;
+        // Source-change races must still reach the existing startup retry.
+        if (
+          isConfigSourceChangeDuringTransaction(error) ||
+          this.reportedConfigErrors === reportedBefore
+        )
+          throw error;
       }
     });
     this.configReloadChain = refresh.catch(() => undefined);

@@ -2,7 +2,7 @@ import { expect, it, rs } from '@rstest/core';
 import type { StackState } from '../../../src/types';
 import type { RslintOptions } from '../../../src/stacks/lint/Rslint';
 
-let refreshOutcome: 'missing' | 'broken' | 'fixed' = 'missing';
+let refreshOutcome: 'missing' | 'broken' | 'fixed' | 'changed' = 'missing';
 
 rs.mock('vscode', () => ({
   RelativePattern: class {},
@@ -37,6 +37,13 @@ rs.mock('vscode-languageclient/node', () => ({
     }
     async start() {}
     async sendRequest() {
+      if (refreshOutcome === 'changed') {
+        this.notification?.({
+          failure: null,
+          error: 'config changed while loading',
+        });
+        throw new Error('config changed while loading');
+      }
       if (refreshOutcome !== 'missing') {
         this.notification?.({
           failure: null,
@@ -106,4 +113,13 @@ it('keeps an initialized runtime disabled when initial configRefresh rejects', a
   ).requestConfigRefresh('config-change');
   expect(states.at(-1)?.kind).toBe('running');
   expect(errors).toHaveLength(1);
+
+  refreshOutcome = 'changed';
+  await expect(
+    (
+      runtime as unknown as {
+        requestConfigRefresh(reason: string): Promise<void>;
+      }
+    ).requestConfigRefresh('initial'),
+  ).rejects.toThrow('config changed while loading');
 });
