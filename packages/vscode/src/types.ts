@@ -158,8 +158,8 @@ export interface StackController {
    */
   readonly restartOnSettings?: readonly string[];
   register(context: StackContext): Promise<Record<string, unknown> | void>;
-  /** True while at least one owned folder/project needs dependencies installed. */
-  hasNotInstalledState(): boolean;
+  /** True while an owned folder/project is disabled, crashed or version-mismatched. */
+  hasFailedState(): boolean;
   /** Teardown may be asynchronous (stopping a language server, workers). */
   dispose(): void | Promise<void>;
 }

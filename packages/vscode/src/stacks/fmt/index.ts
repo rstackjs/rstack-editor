@@ -163,6 +163,7 @@ class FmtFolderRuntime {
   #configPath: string | undefined;
   readonly #packageEpisode = new NotInstalledEpisode();
   readonly #configDependencyEpisode = new NotInstalledEpisode();
+  #startError: string | undefined;
   suppressedShowMessages = 0;
   #closing = false;
   #disposed = false;
@@ -451,9 +452,17 @@ class FmtFolderRuntime {
           error instanceof Error ? error.message : String(error)
         }`,
       );
-      context.output.error('Failed to start the rs fmt language server', error);
+      const message = error instanceof Error ? error.message : String(error);
+      if (this.#startError !== message) {
+        this.#startError = message;
+        context.output.error(
+          'Failed to start the rs fmt language server',
+          error,
+        );
+      }
       return;
     }
+    this.#startError = undefined;
     context.output.info(`rs fmt language server started for ${folderRoot}`);
   }
 
@@ -804,9 +813,9 @@ class FmtController implements StackController {
     );
   }
 
-  hasNotInstalledState(): boolean {
-    return [...this.#runtimes.values()].some(
-      (runtime) => runtime.state === 'disabled',
+  hasFailedState(): boolean {
+    return [...this.#runtimes.values()].some((runtime) =>
+      isFailedFmtState(runtime.state),
     );
   }
 

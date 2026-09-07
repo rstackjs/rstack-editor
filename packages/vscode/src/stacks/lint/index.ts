@@ -193,10 +193,13 @@ class RslintController implements StackController {
           // lints, so its consequence says what it keeps, not "will not".
           const missing = missingPackageOf(error);
           const status = statusForRslintStartFailure(error);
+          const attributed = resolved
+            ? attributeToCore(status, resolved.installation.packageDirectory)
+            : status;
+          const previous = this.#folderStates
+            .get(folderKeyOf(workspaceFolder))
+            ?.failures.get(document.uri.toString());
           if (missing !== undefined) {
-            const previous = this.#folderStates
-              .get(folderKeyOf(workspaceFolder))
-              ?.failures.get(document.uri.toString());
             if (
               previous?.kind !== 'disabled' ||
               previous.reason !==
@@ -210,7 +213,12 @@ class RslintController implements StackController {
               );
               logger.warn(warning);
             }
-          } else {
+          } else if (
+            previous?.kind !== attributed.kind ||
+            !('detail' in previous) ||
+            !('detail' in attributed) ||
+            previous.detail !== attributed.detail
+          ) {
             logger.error(
               formatCoreSelectionFailure(document.uri.toString(), keeping),
               error,
@@ -224,9 +232,7 @@ class RslintController implements StackController {
             folderKeyOf(workspaceFolder),
             'failures',
             document.uri.toString(),
-            resolved
-              ? attributeToCore(status, resolved.installation.packageDirectory)
-              : status,
+            attributed,
           );
         },
         onDocumentSettled: (document) => {
@@ -400,10 +406,13 @@ class RslintController implements StackController {
     );
   }
 
-  hasNotInstalledState(): boolean {
+  hasFailedState(): boolean {
     return [...this.#folderStates.values()].some((states) =>
       [...states.runtimes.values(), ...states.failures.values()].some(
-        (state) => state.kind === 'disabled',
+        (state) =>
+          state.kind === 'disabled' ||
+          state.kind === 'crashed' ||
+          state.kind === 'version-mismatch',
       ),
     );
   }

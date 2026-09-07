@@ -228,25 +228,15 @@ it('keeps an initialized runtime disabled when initial configRefresh rejects', a
     ['Failed to refresh config discovery: Invalid config'],
   ]);
 
-  await (
-    runtime as unknown as {
-      requestConfigRefresh(reason: string): Promise<void>;
-    }
-  ).requestConfigRefresh('config-change');
+  await runtime.retryConfigDependency();
   expect(errors).toEqual([
-    ['Failed to refresh config discovery: Invalid config'],
     ['Failed to refresh config discovery: Invalid config'],
   ]);
 
   refreshOutcome = 'fixed';
-  // Config-file events use this same refresh path after dependency polling stops.
-  await (
-    runtime as unknown as {
-      requestConfigRefresh(reason: string): Promise<void>;
-    }
-  ).requestConfigRefresh('config-change');
+  await runtime.retryConfigDependency();
   expect(states.at(-1)?.kind).toBe('running');
-  expect(errors).toHaveLength(2);
+  expect(errors).toHaveLength(1);
 
   refreshOutcome = 'changed';
   await expect(

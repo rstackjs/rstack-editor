@@ -183,7 +183,7 @@ describe('Project config/cwd/package-resolution decoupling', () => {
         'Failed to resolve rstest path',
       );
       expect(project.configLoadFailed).toBe(false);
-      expect(project.hasNotInstalledDependencies).toBe(true);
+      expect(project.hasFailedState).toBe(true);
 
       // A new config request resolves the core before its worker RPC. Model
       // successful resolution's versionOk, which clears the core-source latch.
@@ -200,7 +200,7 @@ describe('Project config/cwd/package-resolution decoupling', () => {
       } as never);
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(reResolve).toHaveBeenCalledTimes(1);
-      expect(project.hasNotInstalledDependencies).toBe(false);
+      expect(project.hasFailedState).toBe(false);
       expect(reported.at(-1)).toEqual({ kind: 'running', detail: undefined });
       expect(loggedErrors).toEqual([]);
     } finally {
@@ -379,7 +379,7 @@ describe('Project config/cwd/package-resolution decoupling', () => {
     status.unbind();
   });
 
-  it('replaces not installed with a logged config error when a retry rejects', async () => {
+  it('keeps retrying a real config error on dependency passes and deduplicates it', async () => {
     const config = uri('/repo/templates/app/rstest.config.ts');
     normalizedConfigResult = {
       ok: false,
@@ -390,13 +390,13 @@ describe('Project config/cwd/package-resolution decoupling', () => {
     const { project } = await createProject({ sourceUri: config });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(status.hasNotInstalled()).toBe(true);
+    expect(status.hasFailed()).toBe(true);
     normalizedConfigResult = undefined;
     normalizedConfigFailure = new SyntaxError('Unexpected token export');
     await project.retryFailedConfig();
 
     expect(project.configLoadFailed).toBe(true);
-    expect(status.hasNotInstalled()).toBe(false);
+    expect(status.hasFailed()).toBe(true);
     expect(loggedWarnings).toHaveLength(1);
     expect(loggedErrors).toHaveLength(1);
     expect(loggedErrors[0]).toContain('Failed to initialize project config');
@@ -408,15 +408,19 @@ describe('Project config/cwd/package-resolution decoupling', () => {
 
     const { WorkspaceManager } =
       await import('../../../src/stacks/test/project');
-    const callsBeforePoll = normalizedConfigCalls;
-    status.notInstalled('another project is missing core', 'other-project');
     WorkspaceManager.prototype.retryFailedProjects.call({
       projects: new Map([['config', project]]),
     } as never);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(normalizedConfigCalls).toBe(callsBeforePoll);
+    expect(normalizedConfigCalls).toBe(3);
     expect(loggedErrors).toHaveLength(1);
-    status.forget('other-project');
+
+    normalizedConfigFailure = new SyntaxError('Unexpected token import');
+    WorkspaceManager.prototype.retryFailedProjects.call({
+      projects: new Map([['config', project]]),
+    } as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(loggedErrors).toHaveLength(2);
 
     normalizedConfigFailure = undefined;
     normalizedConfigResult = {
@@ -428,6 +432,12 @@ describe('Project config/cwd/package-resolution decoupling', () => {
     };
     await project.retryFailedConfig();
     expect(reported.at(-1)).toEqual({ kind: 'running', detail: undefined });
+
+    normalizedConfigResult = undefined;
+    normalizedConfigFailure = new SyntaxError('Unexpected token export');
+    status.crashed('retry this recovered project', config.toString());
+    await project.retryFailedConfig();
+    expect(loggedErrors).toHaveLength(3);
 
     project.dispose();
     status.unbind();

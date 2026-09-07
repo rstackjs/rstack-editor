@@ -324,6 +324,7 @@ export class Rslint implements Disposable {
   private advisory: string | undefined;
   private readonly configDependencyEpisode = new NotInstalledEpisode();
   private configRefreshFailed = false;
+  private configError: string | undefined;
   private startPromise: Promise<void> | undefined;
   private startOperation: Promise<void> | undefined;
   private clientStartPromise: Promise<void> | undefined;
@@ -378,11 +379,15 @@ export class Rslint implements Disposable {
       this.configRefreshFailed = true;
       this.report({ kind: 'crashed', detail: notification.message });
       this.configDependencyEpisode.clear();
-      this.logger.error(
-        `Failed to refresh config discovery: ${notification.message}`,
-      );
+      if (this.configError !== notification.message) {
+        this.configError = notification.message;
+        this.logger.error(
+          `Failed to refresh config discovery: ${notification.message}`,
+        );
+      }
       return;
     }
+    this.configError = undefined;
     const wasFailed = this.configRefreshFailed;
     this.configRefreshFailed = false;
     if (notification.kind === 'ok') {
@@ -715,7 +720,8 @@ export class Rslint implements Disposable {
   }
 
   public retryConfigDependency(): Promise<void> | undefined {
-    if (!this.hasConfigDependencyFailure()) return undefined;
+    if (!this.hasConfigDependencyFailure() && !this.configRefreshFailed)
+      return undefined;
     return this.requestConfigRefresh('dependency-change');
   }
 

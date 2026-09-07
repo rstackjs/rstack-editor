@@ -28,7 +28,7 @@ const STACK_FACTORIES: Readonly<Record<StackId, StackControllerFactory>> = {
 /** Stacks that run project-loading children on the shared User Node runtime. */
 const USER_NODE_STACKS: readonly StackId[] = ['rslint', 'rstest', 'fmt'];
 
-const DEFAULT_DEPENDENCY_POLL_INTERVAL_MS = 10_000;
+const DEFAULT_DEPENDENCY_POLL_INTERVAL_MS = 60_000;
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? (error.stack ?? error.message) : String(error);
@@ -229,14 +229,14 @@ class ExtensionShell {
     return (
       !this.#disposed &&
       [...this.#controllers.values()].some((controller) =>
-        controller.hasNotInstalledState(),
+        controller.hasFailedState(),
       )
     );
   }
 
   /**
    * Starts one recursive timer only while a live controller owns a
-   * not-installed state. The timer enters the same shell queue as every
+   * failed state. The timer enters the same shell queue as every
    * reconcile/restart, then sends the same forced detection event as a
    * lockfile change; each stack therefore reuses its existing retry path.
    */

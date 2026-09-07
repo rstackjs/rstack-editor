@@ -155,13 +155,24 @@ describe('StatusHolder failure latches', () => {
     expect(calls).toEqual(['report:disabled']);
   });
 
-  it('exposes a missing install even when a crash outranks it', () => {
+  it('exposes every raw failure state', () => {
     bindRecorder();
     status.notInstalled('core missing', '/a');
-    status.crashed('worker stopped', '/b');
-    expect(status.hasNotInstalled()).toBe(true);
+    expect(status.hasFailed()).toBe(true);
+    expect(status.hasFailed('/a')).toBe(true);
     status.installed('/a');
-    expect(status.hasNotInstalled()).toBe(false);
+    expect(status.hasFailed()).toBe(false);
+
+    status.versionMismatch('core too old', '/a');
+    expect(status.hasFailed()).toBe(true);
+    status.versionOk('/a');
+    expect(status.hasFailed()).toBe(false);
+
+    status.crashed('worker stopped', '/b');
+    expect(status.hasFailed()).toBe(true);
+    expect(status.hasFailed('/b')).toBe(true);
+    status.workerSpawned('/b');
+    expect(status.hasFailed()).toBe(false);
   });
 
   it('ranks a missing install below a mismatch and a crash', () => {

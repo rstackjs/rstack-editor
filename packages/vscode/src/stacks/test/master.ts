@@ -134,6 +134,7 @@ export class RstestApi {
   private disposed = false;
   private lastResolvedRstestPath?: string;
   private readonly coreMissingEpisode = new NotInstalledEpisode();
+  private lastUnsupportedCoreMessage?: string;
 
   constructor(
     private workspace: vscode.WorkspaceFolder,
@@ -421,10 +422,13 @@ export class RstestApi {
             this.statusSource,
           )
         ) {
-          logger.error(
-            `Unsupported @rstest/core version ${coreVersion ?? 'unknown'} resolved from ${this.cwd}`,
-          );
+          const message = `Unsupported @rstest/core version ${coreVersion ?? 'unknown'} resolved from ${this.cwd}`;
+          if (message !== this.lastUnsupportedCoreMessage) {
+            logger.error(message);
+            this.lastUnsupportedCoreMessage = message;
+          }
         } else {
+          this.lastUnsupportedCoreMessage = undefined;
           status.versionOk(this.statusSource);
         }
       }

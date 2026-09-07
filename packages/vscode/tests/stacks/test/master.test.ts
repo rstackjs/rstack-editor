@@ -150,7 +150,7 @@ const createApi = (cwd = noCoreDir, rstestResolutionDir = cwd) => {
   );
 };
 
-const writeCoreInstall = (root: string) => {
+const writeCoreInstall = (root: string, version = '0.11.8') => {
   const packageDir = path.join(root, 'node_modules', '@rstest', 'core');
   const entry = path.join(packageDir, 'index.js');
   const bin = path.join(packageDir, 'bin', 'rstest.js');
@@ -159,7 +159,7 @@ const writeCoreInstall = (root: string) => {
     path.join(packageDir, 'package.json'),
     JSON.stringify({
       name: '@rstest/core',
-      version: '0.11.8',
+      version,
       main: 'index.js',
       bin: { rstest: 'bin/rstest.js' },
     }),
@@ -189,6 +189,7 @@ describe('RstestApi package-resolution anchor', () => {
     storeEntry = path.join(cwd, 'node_modules', '.pnpm', 'rstack@0.6.1');
     rstackDir = path.join(storeEntry, 'node_modules', 'rstack');
     fs.mkdirSync(rstackDir, { recursive: true });
+    loggedErrors.length = 0;
   });
 
   afterEach(() => {
@@ -227,6 +228,32 @@ describe('RstestApi package-resolution anchor', () => {
       entry: configured.entry,
       bin: configured.bin,
     });
+  });
+
+  it('deduplicates each unsupported-version message until a supported version resolves', () => {
+    writeCoreInstall(cwd, '0.5.0');
+    const api = createApi(cwd);
+
+    resolveRstestPaths(api);
+    resolveRstestPaths(api);
+    expect(loggedErrors).toEqual([
+      `Unsupported @rstest/core version 0.5.0 resolved from ${cwd}`,
+    ]);
+
+    writeCoreInstall(cwd, '0.4.0');
+    resolveRstestPaths(api);
+    expect(loggedErrors.at(-1)).toBe(
+      `Unsupported @rstest/core version 0.4.0 resolved from ${cwd}`,
+    );
+
+    writeCoreInstall(cwd);
+    resolveRstestPaths(api);
+    writeCoreInstall(cwd, '0.4.0');
+    resolveRstestPaths(api);
+    expect(loggedErrors).toHaveLength(3);
+
+    resolveRstestPaths(createApi(cwd));
+    expect(loggedErrors).toHaveLength(4);
   });
 });
 

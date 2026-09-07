@@ -21,7 +21,7 @@ interface FakeController {
   register(context: {
     status: StatusReporter;
   }): Promise<Record<string, unknown>>;
-  hasNotInstalledState(): boolean;
+  hasFailedState(): boolean;
   dispose(): Promise<void>;
 }
 
@@ -76,8 +76,8 @@ const harness = rs.hoisted(() => {
     settings: new Map<string, unknown>(),
     /** How often `runRestart` reset the host-scoped User Node memo. */
     nodeResets: 0,
-    /** Stacks whose raw controller state currently says not installed. */
-    notInstalled: new Set<string>(),
+    /** Stacks with a raw failed state, independent of the aggregate report. */
+    failed: new Set<string>(),
     /** Shell-wrapped reporters handed to the fake controllers. */
     reporters: new Map<string, StatusReporter>(),
     /** Every configuration listener the shell installed. */
@@ -109,7 +109,7 @@ const harness = rs.hoisted(() => {
           }
           return { stack };
         },
-        hasNotInstalledState: () => state.notInstalled.has(stack),
+        hasFailedState: () => state.failed.has(stack),
         dispose: async () => {
           state.events.push(`dispose:${stack}`);
           state.reporters.delete(stack);
@@ -484,21 +484,41 @@ describe('dependency recovery polling', () => {
     await deactivate();
   });
 
-  it('polls through the forced detection path only while not installed', async () => {
-    const exports = await activate(context);
-    exports.setDependencyPollIntervalForTest(5);
-    harness.notInstalled.add('rslint');
-    harness.reporters.get('rslint')?.report({ kind: 'disabled' });
-
-    await waitFor(() => harness.dependencyRefreshes > 0);
-    expect(harness.refreshes).toBe(0);
-
-    harness.notInstalled.delete('rslint');
-    harness.reporters.get('rslint')?.running();
-    const completed = harness.dependencyRefreshes;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    expect(harness.dependencyRefreshes).toBe(completed);
+  it('uses a one-minute default interval', async () => {
+    const timer = rs.spyOn(globalThis, 'setTimeout');
+    try {
+      await activate(context);
+      harness.failed.add('rslint');
+      harness.reporters.get('rslint')?.report({ kind: 'disabled' });
+      expect(timer.mock.calls.some(([, delay]) => delay === 60_000)).toBe(true);
+      expect(harness.dependencyRefreshes).toBe(0);
+    } finally {
+      timer.mockRestore();
+    }
   });
+
+  it.each(['disabled', 'crashed', 'version-mismatch'] as const)(
+    'polls through the forced detection path while %s',
+    async (kind) => {
+      const exports = await activate(context);
+      exports.setDependencyPollIntervalForTest(5);
+      harness.failed.add('rslint');
+      harness.reporters.get('rslint')?.report({ kind, detail: 'retry needed' });
+
+      await waitFor(() => harness.dependencyRefreshes > 0);
+      expect(harness.refreshes).toBe(0);
+
+      const beforeRealError = harness.dependencyRefreshes;
+      harness.reporters.get('rslint')?.crashed('half-written package');
+      await waitFor(() => harness.dependencyRefreshes > beforeRealError);
+
+      harness.failed.delete('rslint');
+      harness.reporters.get('rslint')?.running();
+      const completed = harness.dependencyRefreshes;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(harness.dependencyRefreshes).toBe(completed);
+    },
+  );
 
   it('queues a poll tick behind an in-flight reconcile', async () => {
     const exports = await activate(context);
@@ -510,7 +530,7 @@ describe('dependency recovery polling', () => {
     for (const emit of harness.detectionListeners) emit();
     await waitFor(() => harness.registering.has('fmt'));
 
-    harness.notInstalled.add('rslint');
+    harness.failed.add('rslint');
     harness.reporters.get('rslint')?.report({ kind: 'disabled' });
     await new Promise((resolve) => setTimeout(resolve, 25));
     expect(harness.dependencyRefreshes).toBe(0);

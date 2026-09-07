@@ -70,10 +70,17 @@ class StatusHolder implements StatusReporter {
     this.#reporter = undefined;
   }
 
-  public hasNotInstalled(source?: string): boolean {
-    return source === undefined
-      ? this.#notInstalled.size > 0
-      : this.#notInstalled.has(source);
+  public hasFailed(source?: string): boolean {
+    if (source === undefined) return this.#latched;
+    return (
+      this.#crashes.has(source) ||
+      this.#mismatches.has(source) ||
+      this.#notInstalled.has(source)
+    );
+  }
+
+  public hasNotInstalled(): boolean {
+    return this.#notInstalled.size > 0;
   }
 
   get #latched(): boolean {

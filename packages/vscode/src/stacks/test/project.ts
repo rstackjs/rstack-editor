@@ -238,14 +238,14 @@ export class WorkspaceManager implements vscode.Disposable {
     );
   }
   /**
-   * Retries projects whose core or config dependency is missing — dependencies may have
-   * been installed since. The project keeps its identity and the retry is
-   * single-flight, so repeated dependency signals cannot overlap workers or
-   * repeat an unchanged not-installed warning.
+   * Retries failed projects after a dependency change. Installs and upgrades
+   * can recover missing packages, version mismatches, worker failures and real
+   * config errors alike. The project keeps its identity and the retry is
+   * single-flight.
    */
   public retryFailedProjects() {
     for (const project of this.projects.values()) {
-      if (!project.hasNotInstalledDependencies) continue;
+      if (!project.hasFailedState) continue;
       void project.retryFailedConfig();
     }
   }
@@ -564,6 +564,7 @@ export class Project implements vscode.Disposable {
   #watch?: vscode.Disposable;
   #configLoad: Promise<void> | undefined;
   readonly #configDependencyEpisode = new NotInstalledEpisode();
+  readonly #reportedConfigErrors = new Set<string>();
   constructor(
     private workspaceFolder: vscode.WorkspaceFolder,
     source: ProjectSource,
@@ -604,6 +605,7 @@ export class Project implements vscode.Disposable {
         }
         this.configLoadFailed = false;
         this.#configDependencyEpisode.clear();
+        this.#reportedConfigErrors.clear();
         status.forget(this.configDependencyStatusSource);
         this.root = vscode.Uri.file(result.root);
         this.include = result.include;
@@ -631,7 +633,14 @@ export class Project implements vscode.Disposable {
           );
         }
         status.installed(this.configDependencyStatusSource);
-        logUnlessReported('Failed to initialize project config', error);
+        const errorKey =
+          error instanceof Error
+            ? `${error.name}:${error.message}`
+            : String(error);
+        if (!this.#reportedConfigErrors.has(errorKey)) {
+          this.#reportedConfigErrors.add(errorKey);
+          logUnlessReported('Failed to initialize project config', error);
+        }
         // Let the manager settle its tree even when a config fails to load.
         this.onConfigResolved?.();
       });
@@ -647,17 +656,17 @@ export class Project implements vscode.Disposable {
     return pending;
   }
 
-  get hasNotInstalledDependencies(): boolean {
+  get hasFailedState(): boolean {
     return (
-      status.hasNotInstalled(this.sourceUri.toString()) ||
-      status.hasNotInstalled(this.configDependencyStatusSource)
+      this.configLoadFailed ||
+      status.hasFailed(this.sourceUri.toString()) ||
+      status.hasFailed(this.configDependencyStatusSource)
     );
   }
 
   /** Re-evaluates a failed config or a core lost after loading, in place. */
   public retryFailedConfig(): Promise<void> | undefined {
-    if (!this.configLoadFailed && !this.hasNotInstalledDependencies)
-      return undefined;
+    if (!this.hasFailedState) return undefined;
     return this.loadConfig();
   }
 
