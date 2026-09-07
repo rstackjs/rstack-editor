@@ -66,7 +66,13 @@ suite('Rslint dependency polling recovery', function () {
     await execFile(
       'pnpm',
       ['install', '--frozen-lockfile', '--ignore-scripts'],
-      { cwd: root, timeout: 90_000 },
+      {
+        cwd: root,
+        timeout: 90_000,
+        // Match setupFixtures.mjs/run.mjs: Windows needs a shell for pnpm's
+        // .cmd shim. All arguments are fixed safe tokens; cwd is not interpolated.
+        shell: process.platform === 'win32',
+      },
     );
 
     assert.deepStrictEqual(
