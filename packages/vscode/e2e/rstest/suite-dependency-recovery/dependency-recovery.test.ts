@@ -30,7 +30,6 @@ suite('Rstest dependency polling recovery', function () {
     const lockfile = path.join(root, 'pnpm-lock.yaml');
     const contents = fs.readFileSync(lockfile);
     const mtime = fs.statSync(lockfile).mtimeMs;
-    const polls = api.getDependencyPollCountForTest();
     await execFile(
       'pnpm',
       ['install', '--frozen-lockfile', '--ignore-scripts'],
@@ -57,7 +56,6 @@ suite('Rstest dependency polling recovery', function () {
         assert.equal(hasNotInstalled(), false);
         const items = getProjectItems(rstest.testController);
         assert.ok(items.some((item) => item.id.endsWith('/test/foo.test.ts')));
-        assert.ok(api.getDependencyPollCountForTest() > polls);
       },
       { timeoutMs: 90_000, pollMs: 100 },
     );

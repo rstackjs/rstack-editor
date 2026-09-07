@@ -63,7 +63,6 @@ class ExtensionShell {
   #dependencyPollIntervalMs = DEFAULT_DEPENDENCY_POLL_INTERVAL_MS;
   #dependencyPollTimer: ReturnType<typeof setTimeout> | undefined;
   #dependencyPollInFlight = false;
-  #dependencyPollCount = 0;
   #disposed = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {
@@ -264,7 +263,6 @@ class ExtensionShell {
         }
         try {
           await this.#detection.refreshForDependencyChange();
-          this.#dependencyPollCount++;
         } catch (error) {
           if (!this.#disposed) {
             this.#channels.shell.error(
@@ -545,7 +543,6 @@ class ExtensionShell {
         }
         this.syncDependencyPoll();
       },
-      getDependencyPollCountForTest: () => this.#dependencyPollCount,
     };
   }
 

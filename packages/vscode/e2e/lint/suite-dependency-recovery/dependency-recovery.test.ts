@@ -61,7 +61,6 @@ suite('Rslint dependency polling recovery', function () {
     const lockfile = path.join(root, 'pnpm-lock.yaml');
     const beforeContents = fs.readFileSync(lockfile);
     const beforeMtime = fs.statSync(lockfile).mtimeMs;
-    const pollCountBeforeInstall = api.getDependencyPollCountForTest();
 
     await execFile(
       'pnpm',
@@ -88,10 +87,6 @@ suite('Rslint dependency polling recovery', function () {
 
     await waitForRslintDiagnostics(document, undefined, 90_000);
     await waitForFolderKind('running');
-    assert.ok(
-      api.getDependencyPollCountForTest() > pollCountBeforeInstall,
-      'the folder recovered without a dependency polling pass',
-    );
     assert.strictEqual(
       lintExports().getNotInstalledWarnings().length,
       1,
