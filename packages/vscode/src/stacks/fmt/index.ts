@@ -184,10 +184,7 @@ class FmtFolderRuntime {
      * stack's one report (`foldFolderStatus`).
      */
     private readonly onDidChangeStatus: () => void,
-    configPath: string | undefined,
-  ) {
-    this.#configPath = configPath;
-  }
+  ) {}
 
   get state(): FmtRuntimeState {
     return this.#state;
@@ -787,12 +784,10 @@ class FmtController implements StackController {
       // The callback re-reads `#snapshot`, so a server that finishes starting
       // after a detection change reports from the freshest snapshot — and the
       // closure captures nothing beyond `this`.
-      const runtime = new FmtFolderRuntime(
-        folder,
-        context,
-        () => this.reportStatus(),
-        configPath,
+      const runtime = new FmtFolderRuntime(folder, context, () =>
+        this.reportStatus(),
       );
+      runtime.setConfigPath(configPath);
       this.#runtimes.set(folderPath, runtime);
       void runtime.start(this.#retiring.get(folderPath));
     }
