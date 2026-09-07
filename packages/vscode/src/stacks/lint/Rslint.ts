@@ -43,7 +43,6 @@ import {
   isConfigSourceChangeDuringTransaction,
   type ConfigDependencyStatusNotification,
 } from './worker/configDependencyProtocol';
-export { isConfigSourceChangeDuringTransaction } from './worker/configDependencyProtocol';
 import {
   RslintVersionMismatchError,
   runningRslintStatus,

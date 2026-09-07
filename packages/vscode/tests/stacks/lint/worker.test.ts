@@ -19,8 +19,8 @@ import { LspConfigTransactionAdapter } from '../../../src/stacks/lint/worker/Con
 import {
   CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
   type ConfigDependencyStatusNotification,
-  registerEditorProxy,
-} from '../../../src/stacks/lint/worker/index';
+} from '../../../src/stacks/lint/worker/configDependencyProtocol';
+import { registerEditorProxy } from '../../../src/stacks/lint/worker/index';
 
 const fakeGoSource = String.raw`
 let buffer = Buffer.alloc(0);

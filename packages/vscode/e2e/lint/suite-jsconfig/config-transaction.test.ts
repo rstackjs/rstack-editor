@@ -24,10 +24,10 @@ import {
   CONFIG_REFRESH_WATCH_GLOB,
   configRefreshReasonForPath,
   createLanguageClientOptions,
-  isConfigSourceChangeDuringTransaction,
   recoverConfigDiscoveryOnServerState,
   retryConfigRefreshOnSourceChange,
 } from '../../../src/stacks/lint/Rslint';
+import { isConfigSourceChangeDuringTransaction } from '../../../src/stacks/lint/worker/configDependencyProtocol';
 import { LspConfigTransactionAdapter } from '../../../src/stacks/lint/worker/ConfigTransactionAdapter';
 import { State } from 'vscode-languageclient/node';
 import {

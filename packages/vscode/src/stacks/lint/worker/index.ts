@@ -28,11 +28,6 @@ import {
 } from './configDependencyProtocol';
 import type { ConfigDependencyFailure } from '../../../shared/notInstalled';
 
-export {
-  CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
-  type ConfigDependencyStatusNotification,
-} from './configDependencyProtocol';
-
 const GRACEFUL_EXIT_TIMEOUT_MS = 500;
 const FORCED_EXIT_TIMEOUT_MS = 1_500;
 
