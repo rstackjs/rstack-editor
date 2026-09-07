@@ -69,14 +69,16 @@ rs.mock('vscode-languageclient/node', () => ({
         return request('rslint/configRefresh', { reason: 'initial' });
       }
       if (refreshOutcome !== 'missing') {
-        this.notification?.({
-          failure: null,
-          ...(refreshOutcome === 'broken' ? { error: 'Invalid config' } : {}),
-        });
+        this.notification?.(
+          refreshOutcome === 'broken'
+            ? { kind: 'error', message: 'Invalid config' }
+            : { kind: 'ok' },
+        );
         if (refreshOutcome === 'broken') throw new Error('Invalid config');
         return;
       }
       this.notification?.({
+        kind: 'missing',
         failure: {
           configPath: '/project/rslint.config.mjs',
           cause: "Cannot find package 'missing'",

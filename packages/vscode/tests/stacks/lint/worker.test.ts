@@ -200,7 +200,9 @@ describe('lint worker config refresh', () => {
         },
       });
       expect(observedReasons).toEqual(['config-change']);
-      expect(notifications).toEqual([{ failure: notificationFailure }]);
+      expect(notifications).toEqual([
+        { kind: 'missing', failure: notificationFailure },
+      ]);
 
       activeFailure = undefined;
       await expect(
@@ -210,8 +212,8 @@ describe('lint worker config refresh', () => {
       ).rejects.toThrow('refresh rejected');
       expect(observedReasons).toEqual(['config-change', 'reject']);
       expect(notifications).toEqual([
-        { failure: notificationFailure },
-        { failure: null, error: 'refresh rejected' },
+        { kind: 'missing', failure: notificationFailure },
+        { kind: 'error', message: 'refresh rejected' },
       ]);
 
       await expect(

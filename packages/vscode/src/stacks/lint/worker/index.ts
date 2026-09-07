@@ -172,9 +172,10 @@ export function registerEditorProxy(
           ),
           token,
         );
+        const failure = options.takeConfigDependencyFailure();
         await editorConnection.sendNotification(
           CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
-          { failure: options.takeConfigDependencyFailure() ?? null },
+          failure ? { kind: 'missing', failure } : { kind: 'ok' },
         );
         return result;
       } catch (error) {
@@ -182,20 +183,18 @@ export function registerEditorProxy(
         // Leave its rejection untouched and send no premature failure (or
         // success) verdict; the startup catch reports once if retries exhaust.
         if (isConfigSourceChangeDuringTransaction(error)) throw error;
-        const failure = options.takeConfigDependencyFailure() ?? null;
+        const failure = options.takeConfigDependencyFailure();
         await editorConnection.sendNotification(
           CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
-          {
-            failure,
-            ...(failure === null
-              ? {
-                  error: (error instanceof Error
-                    ? error.message
-                    : String(error)
-                  ).split('\n', 1)[0],
-                }
-              : {}),
-          },
+          failure
+            ? { kind: 'missing', failure }
+            : {
+                kind: 'error',
+                message: (error instanceof Error
+                  ? error.message
+                  : String(error)
+                ).split('\n', 1)[0],
+              },
         );
         throw error;
       }

@@ -372,24 +372,24 @@ export class Rslint implements Disposable {
   private handleConfigDependencyStatus(
     notification: ConfigDependencyStatusNotification,
   ): void {
-    if (notification.error !== undefined) {
+    if (notification.kind === 'error') {
       this.configRefreshFailed = true;
       this.reportedConfigErrors++;
-      this.report({ kind: 'crashed', detail: notification.error });
+      this.report({ kind: 'crashed', detail: notification.message });
       this.configDependencyEpisode.clear();
       this.logger.error(
-        `Failed to refresh config discovery: ${notification.error}`,
+        `Failed to refresh config discovery: ${notification.message}`,
       );
       return;
     }
     const wasFailed = this.configRefreshFailed;
     this.configRefreshFailed = false;
-    const failure = notification.failure;
-    if (failure === null) {
+    if (notification.kind === 'ok') {
       const wasMissing = this.configDependencyEpisode.clear();
       if ((wasMissing || wasFailed) && this.isRunning()) this.reportRunning();
       return;
     }
+    const failure = notification.failure;
     const displayPath = this.displayConfigPath(failure.configPath);
     const report = this.configDependencyEpisode.observe(
       'rslint',
