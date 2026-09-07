@@ -744,9 +744,7 @@ class FmtController implements StackController {
     const detected = new Map(
       snapshot.foldersFor('fmt').map((entry) => {
         const folderPath = entry.folder.uri.fsPath;
-        const configPath = entry.stacks.fmt.rstackConfigFiles.find(
-          (uri) => path.dirname(uri.fsPath) === folderPath,
-        )?.fsPath;
+        const configPath = entry.rootRstackConfigPath;
         return [folderPath, { folder: entry.folder, configPath }] as const;
       }),
     );

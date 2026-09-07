@@ -213,7 +213,7 @@ export const detectFolder = async (
     },
   };
 
-  return { folder, stacks };
+  return { folder, rootRstackConfigPath, stacks };
 };
 
 const signatureOf = (snapshot: DetectionSnapshot): string =>

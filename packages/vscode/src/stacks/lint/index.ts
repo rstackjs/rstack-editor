@@ -10,7 +10,7 @@ import { formatNotInstalledLog } from '../../shared/notInstalled';
 import { CoreResolver, type ResolvedCoreRuntime } from './CoreResolver';
 import { Logger } from './logger';
 import { Rslint } from './Rslint';
-import { rootRstackConfigPath, type RslintMode } from './resolution';
+import type { RslintMode } from './resolution';
 import { registerRuleDocumentationProviders } from './ruleDocumentationProviders';
 import { formatCoreSelectionFailure, RuntimeManager } from './RuntimeManager';
 import {
@@ -275,13 +275,7 @@ class RslintController implements StackController {
       },
       bridgeConfigPath:
         installation.mode === 'bridged'
-          ? rootRstackConfigPath(
-              workspaceFolder.uri.fsPath,
-              this.#snapshot
-                ?.forFolder(workspaceFolder)
-                ?.stacks.rslint.rstackConfigFiles.map((uri) => uri.fsPath) ??
-                [],
-            )
+          ? this.#snapshot?.forFolder(workspaceFolder)?.rootRstackConfigPath
           : undefined,
       onClosed: () => {
         if (this.#runtimes.get(resolved.key) === runtime) {

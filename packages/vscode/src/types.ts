@@ -89,6 +89,7 @@ export interface StackDetection {
 
 export interface FolderDetection {
   readonly folder: vscode.WorkspaceFolder;
+  readonly rootRstackConfigPath?: string;
   readonly stacks: Readonly<Record<StackId, StackDetection>>;
 }
 
