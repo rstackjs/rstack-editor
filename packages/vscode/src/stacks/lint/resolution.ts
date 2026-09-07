@@ -7,6 +7,15 @@ import {
 
 export type RslintMode = 'native' | 'bridged';
 
+export function rootRstackConfigPath(
+  folderRoot: string,
+  configPaths: readonly string[],
+): string | undefined {
+  return configPaths.find(
+    (configPath) => path.dirname(configPath) === folderRoot,
+  );
+}
+
 export interface RslintResolution {
   readonly mode: RslintMode;
   readonly coreDir: string;
