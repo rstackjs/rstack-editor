@@ -282,6 +282,10 @@ suite('LSP config discovery transactions', () => {
       pool,
       () => 'fingerprint-1',
       CONFIG_DISCOVERY_PROTOCOL_VERSION,
+      {
+        resolveFrom: (candidate) => candidate.configDirectory,
+        report: () => assert.fail('unexpected missing dependency'),
+      },
     );
 
     const loaded = await adapter.loadConfigs(loadRequest());
@@ -327,6 +331,10 @@ suite('LSP config discovery transactions', () => {
       pool,
       () => 'fingerprint-1',
       CONFIG_DISCOVERY_PROTOCOL_VERSION,
+      {
+        resolveFrom: (candidate) => candidate.configDirectory,
+        report: () => assert.fail('unexpected missing dependency'),
+      },
     );
 
     await adapter.loadConfigs(loadRequest('tx-abort'));
@@ -389,6 +397,10 @@ suite('LSP config discovery transactions', () => {
       pool,
       () => 'fingerprint-degraded',
       CONFIG_DISCOVERY_PROTOCOL_VERSION,
+      {
+        resolveFrom: (candidate) => candidate.configDirectory,
+        report: () => assert.fail('unexpected missing dependency'),
+      },
     );
 
     await adapter.loadConfigs(loadRequest('tx-degraded'));
@@ -424,6 +436,10 @@ suite('LSP config discovery transactions', () => {
       pool,
       () => 'fingerprint-before-prepare',
       CONFIG_DISCOVERY_PROTOCOL_VERSION,
+      {
+        resolveFrom: (candidate) => candidate.configDirectory,
+        report: () => assert.fail('unexpected missing dependency'),
+      },
     );
 
     await adapter.loadConfigs(loadRequest('tx-prepare-race'));
@@ -448,6 +464,10 @@ suite('LSP config discovery transactions', () => {
       pool,
       () => 'fingerprint-1',
       CONFIG_DISCOVERY_PROTOCOL_VERSION,
+      {
+        resolveFrom: (candidate) => candidate.configDirectory,
+        report: () => assert.fail('unexpected missing dependency'),
+      },
     );
 
     await adapter.loadConfigs(loadRequest('tx-response-lost'));
@@ -485,6 +505,10 @@ suite('LSP config discovery transactions', () => {
       new TestPluginPool(),
       () => 'fingerprint-1',
       CONFIG_DISCOVERY_PROTOCOL_VERSION,
+      {
+        resolveFrom: (candidate) => candidate.configDirectory,
+        report: () => assert.fail('unexpected missing dependency'),
+      },
     );
 
     await assert.rejects(adapter.loadConfigs(loadRequest()), /load failed/);

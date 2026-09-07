@@ -96,7 +96,7 @@ export class LspConfigTransactionAdapter {
     private readonly pluginLintPool: PluginLintPoolAdapter,
     private readonly fingerprint: (plan: ConfigModuleActivationPlan) => string,
     private readonly protocolVersion: number,
-    private readonly configDependencyObserver?: ConfigDependencyObserver,
+    private readonly configDependencyObserver: ConfigDependencyObserver,
   ) {}
 
   async loadConfigs(
@@ -130,12 +130,11 @@ export class LspConfigTransactionAdapter {
           }
           const cause = classifyMissingDependencyMessage(
             result.error.message,
-            this.configDependencyObserver?.resolveFrom(candidate) ??
-              candidate.configDirectory,
+            this.configDependencyObserver.resolveFrom(candidate),
           );
           if (cause === undefined) return result;
           classified = true;
-          this.configDependencyObserver?.report({
+          this.configDependencyObserver.report({
             configPath: candidate.configPath,
             cause,
           });
