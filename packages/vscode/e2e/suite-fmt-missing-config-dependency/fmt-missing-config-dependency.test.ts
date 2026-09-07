@@ -17,9 +17,21 @@ suite('fmt missing config dependency', () => {
       exports.configDependencyWarnings as () => readonly string[];
     const folder = vscode.workspace.workspaceFolders?.[0];
     assert.ok(folder, 'fmt fixture workspace is unavailable');
+    const observedStates: string[] = [];
+    const sampleState = (): string => {
+      const state = folderStates()[folder.uri.fsPath];
+      observedStates.push(state);
+      return state;
+    };
 
     await eventually(() => {
-      assert.equal(folderStates()[folder.uri.fsPath], 'running');
+      const state = sampleState();
+      assert.notEqual(
+        state,
+        'crashed',
+        'rs fmt became crashed while waiting for running',
+      );
+      assert.equal(state, 'running');
     }, 'the rs fmt server to start');
 
     const uri = vscode.Uri.joinPath(folder.uri, 'src', 'needs-format.ts');
@@ -31,8 +43,17 @@ suite('fmt missing config dependency', () => {
     );
 
     await eventually(() => {
-      assert.equal(folderStates()[folder.uri.fsPath], 'disabled');
+      const state = sampleState();
+      assert.notEqual(
+        state,
+        'crashed',
+        'rs fmt became crashed while waiting for disabled',
+      );
+      assert.equal(state, 'disabled');
     }, 'the fmt config dependency failure to become disabled');
+    // eventually retries thrown assertions, so retain every sample and check
+    // outside it: a transient crash must not disappear behind later recovery.
+    assert.ok(!observedStates.includes('crashed'), observedStates.join(' -> '));
     assert.equal(suppressedConfigDependencyMessages(), 1);
     const warnings = configDependencyWarnings();
     assert.equal(warnings.length, 1);

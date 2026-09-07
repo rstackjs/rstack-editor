@@ -25,7 +25,17 @@ async function waitForRuntimeKind(
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const states = [...lintExports().getRuntimeStates().values()];
+    const exports = lintExports();
+    const states = [
+      ...exports.getFolderStates().values(),
+      ...exports.getRuntimeStates().values(),
+    ];
+    const crashed = states.find((state) => state.kind === 'crashed');
+    assert.equal(
+      crashed,
+      undefined,
+      `Rslint became crashed while waiting for ${kind}: ${crashed?.detail}`,
+    );
     if (states.some((state) => state.kind === kind)) {
       return;
     }
@@ -71,6 +81,10 @@ suite('Rslint missing config dependency', function () {
       "import 'missing-rslint-config-dependency';\nexport default [];\n",
     );
     await waitForRuntimeKind('disabled');
-    assert.strictEqual(lintExports().getConfigDependencyWarnings().length, 2);
+    assert.strictEqual(
+      lintExports().getConfigDependencyWarnings().length,
+      warnings.length + 1,
+      'the new missing-dependency episode must add exactly one warning',
+    );
   });
 });

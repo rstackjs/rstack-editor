@@ -12,6 +12,7 @@ const execFile = promisify(execFileCallback);
 
 function lintExports(): {
   getFolderStates(): ReadonlyMap<string, StackState>;
+  getNotInstalledWarnings(): readonly string[];
 } {
   const exports = extensionExports().getStackExports('rslint');
   assert.ok(exports, 'lint stack exports are unavailable');
@@ -24,11 +25,14 @@ async function waitForFolderKind(
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (
-      [...lintExports().getFolderStates().values()].some(
-        (state) => state.kind === kind,
-      )
-    ) {
+    const states = [...lintExports().getFolderStates().values()];
+    const crashed = states.find((state) => state.kind === 'crashed');
+    assert.equal(
+      crashed,
+      undefined,
+      `Rslint became crashed while waiting for ${kind}: ${crashed?.detail}`,
+    );
+    if (states.some((state) => state.kind === kind)) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -50,6 +54,9 @@ suite('Rslint dependency polling recovery', function () {
     );
     await vscode.window.showTextDocument(document);
     await waitForFolderKind('disabled');
+    const warnings = lintExports().getNotInstalledWarnings();
+    assert.strictEqual(warnings.length, 1);
+    assert.match(warnings[0], /@rslint\/core is not installed/);
 
     const lockfile = path.join(root, 'pnpm-lock.yaml');
     const beforeContents = fs.readFileSync(lockfile);
@@ -78,6 +85,11 @@ suite('Rslint dependency polling recovery', function () {
     assert.ok(
       api.getDependencyPollCountForTest() > pollCountBeforeInstall,
       'the folder recovered without a dependency polling pass',
+    );
+    assert.strictEqual(
+      lintExports().getNotInstalledWarnings().length,
+      1,
+      'poll retries must not repeat the unresolved episode warning',
     );
   });
 });
