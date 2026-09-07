@@ -276,13 +276,10 @@ export class StatusBar implements vscode.Disposable {
     this.#item.show();
   }
 
-  reporterFor(
-    stack: StackId,
-    onReport?: (state: StackState) => void,
-  ): StatusReporter {
+  reporterFor(stack: StackId, onReport?: () => void): StatusReporter {
     const report = (state: StackState): void => {
       this.setState(stack, state);
-      onReport?.(state);
+      onReport?.();
     };
     return {
       stack,
