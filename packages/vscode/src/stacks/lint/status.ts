@@ -139,11 +139,6 @@ export interface RslintFolderStatus {
   readonly state: StackState;
 }
 
-/** The raw not-installed predicate used by the shell's conditional poll. */
-export const hasNotInstalledRslintState = (
-  states: Iterable<StackState>,
-): boolean => [...states].some((state) => state.kind === 'disabled');
-
 /**
  * Folds every workspace folder's state into the one state the status bar shows
  * for the Rslint stack. The worst state wins, and the detail names the folders

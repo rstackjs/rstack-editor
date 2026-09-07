@@ -4,7 +4,6 @@ import {
   aggregateFolderStates,
   attributeToCore,
   foldRslintFolderState,
-  hasNotInstalledRslintState,
   missingPackageOf,
   RslintVersionMismatchError,
   runningRslintStatus,
@@ -89,23 +88,6 @@ describe('Rslint status classification', () => {
       kind: 'version-mismatch',
       detail: 'Node 22.17 is below the floor',
     });
-  });
-});
-
-describe('hasNotInstalledRslintState', () => {
-  it('reads the raw runtime and resolution states rather than the aggregate', () => {
-    expect(
-      hasNotInstalledRslintState([
-        { kind: 'crashed', detail: 'worker stopped' },
-        { kind: 'disabled', reason: 'dependencies missing' },
-      ]),
-    ).toBe(true);
-    expect(
-      hasNotInstalledRslintState([
-        { kind: 'running' },
-        { kind: 'version-mismatch', detail: 'core too old' },
-      ]),
-    ).toBe(false);
   });
 });
 

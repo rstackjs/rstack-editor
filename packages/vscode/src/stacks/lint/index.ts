@@ -17,7 +17,6 @@ import {
   aggregateFolderStates,
   attributeToCore,
   foldRslintFolderState,
-  hasNotInstalledRslintState,
   statusForRslintStartFailure,
   missingPackageOf,
 } from './status';
@@ -414,10 +413,9 @@ class RslintController implements StackController {
 
   hasNotInstalledState(): boolean {
     return [...this.#folderStates.values()].some((states) =>
-      hasNotInstalledRslintState([
-        ...states.runtimes.values(),
-        ...states.failures.values(),
-      ]),
+      [...states.runtimes.values(), ...states.failures.values()].some(
+        (state) => state.kind === 'disabled',
+      ),
     );
   }
 

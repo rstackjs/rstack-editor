@@ -50,7 +50,6 @@ import {
 } from './sessionError';
 import {
   foldFolderStatus,
-  hasNotInstalledFmtState,
   type FmtFolderStatus,
   type FmtRuntimeState,
   isFailedFmtState,
@@ -829,8 +828,8 @@ class FmtController implements StackController {
   }
 
   hasNotInstalledState(): boolean {
-    return hasNotInstalledFmtState(
-      [...this.#runtimes.values()].map((runtime) => runtime.state),
+    return [...this.#runtimes.values()].some(
+      (runtime) => runtime.state === 'disabled',
     );
   }
 

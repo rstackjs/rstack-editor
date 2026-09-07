@@ -1,7 +1,6 @@
 import { describe, expect, it } from '@rstest/core';
 import {
   foldFolderStatus,
-  hasNotInstalledFmtState,
   type FmtFolderStatus,
   type FmtRuntimeState,
   isFailedFmtState,
@@ -152,16 +151,5 @@ describe('isFailedFmtState', () => {
     for (const [state, failed] of Object.entries(verdicts)) {
       expect(isFailedFmtState(state as FmtRuntimeState)).toBe(failed);
     }
-  });
-});
-
-describe('hasNotInstalledFmtState', () => {
-  it('reads raw folder states even when a crash would outrank disabled', () => {
-    expect(hasNotInstalledFmtState(['running', 'crashed', 'disabled'])).toBe(
-      true,
-    );
-    expect(
-      hasNotInstalledFmtState(['running', 'crashed', 'version-mismatch']),
-    ).toBe(false);
   });
 });
