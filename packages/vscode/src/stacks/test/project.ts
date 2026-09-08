@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import type { TestInfo } from '@rstest/core';
 import picomatch from 'picomatch';
 import { glob } from 'tinyglobby';
@@ -606,6 +607,16 @@ export class Project implements vscode.Disposable {
         this.#configDependencyEpisode.clear();
         this.#reportedConfigErrors.clear();
         status.forget(this.configDependencyStatusSource);
+        if (
+          this.root.fsPath !== result.root ||
+          !isDeepStrictEqual(this.include, result.include) ||
+          !isDeepStrictEqual(this.exclude, result.exclude)
+        ) {
+          // The watcher captures the root and matchers. Cancel its pending
+          // collection before discovering files with the recovered config.
+          this.#watch?.dispose();
+          this.#watch = undefined;
+        }
         this.root = vscode.Uri.file(result.root);
         this.include = result.include;
         this.exclude = result.exclude;
@@ -617,7 +628,13 @@ export class Project implements vscode.Disposable {
         if (this.cancellationSource.token.isCancellationRequested) return;
         this.configLoadFailed = true;
         this.#configDependencyEpisode.clear();
-        if (!(error instanceof ReportedRstestResolutionError)) {
+        // A reported setup error can have only a toast/log, not a status.
+        // Publish that raw failure so the shell schedules recovery, without
+        // replacing an already-reported missing-core or version verdict.
+        if (
+          !(error instanceof ReportedRstestResolutionError) ||
+          !status.hasFailed(this.sourceUri.toString())
+        ) {
           const cause =
             error instanceof Error
               ? error.message.split('\n', 1)[0]

@@ -21,6 +21,15 @@ const apiCalls: {
 let normalizedConfigFailure: unknown;
 let normalizedConfigResult: NormalizedConfigResult | undefined;
 let normalizedConfigCalls = 0;
+let pendingConfig: Promise<NormalizedConfigResult> | undefined;
+let runtimeCollection = false;
+let listedFiles: string[] = [];
+const renderedFiles = new Set<string>();
+const fileWatchers: {
+  root: string;
+  active: boolean;
+  create?: (uri: any) => void;
+}[] = [];
 
 rs.mock('../../../src/stacks/test/master', () => {
   class RstestApi {
@@ -37,6 +46,7 @@ rs.mock('../../../src/stacks/test/master', () => {
     // otherwise start watchers this test has no filesystem for.
     getNormalizedConfig() {
       normalizedConfigCalls += 1;
+      if (pendingConfig) return pendingConfig;
       if (normalizedConfigFailure) {
         return Promise.reject(normalizedConfigFailure);
       }
@@ -44,6 +54,12 @@ rs.mock('../../../src/stacks/test/master', () => {
         return Promise.resolve(normalizedConfigResult);
       }
       return new Promise<never>(() => {});
+    }
+    async listTests(include?: string[]) {
+      return (include ?? listedFiles).map((testPath) => ({
+        testPath,
+        tests: [],
+      }));
     }
     dispose() {}
   }
@@ -66,6 +82,7 @@ const channel = {
 rs.mock('vscode', () => {
   const vscode = {
     Uri: {
+      parse: (value: string) => uri(value.slice('file://'.length)),
       file: (fsPath: string) => ({
         scheme: 'file',
         fsPath,
@@ -74,12 +91,17 @@ rs.mock('vscode', () => {
       }),
     },
     CancellationTokenSource: class {
+      listeners: (() => void)[] = [];
       token = {
         isCancellationRequested: false,
-        onCancellationRequested: () => ({ dispose: () => {} }),
+        onCancellationRequested: (listener: () => void) => {
+          this.listeners.push(listener);
+          return { dispose() {} };
+        },
       };
       cancel() {
         this.token.isCancellationRequested = true;
+        this.listeners.forEach((listener) => listener());
       }
       dispose() {}
     },
@@ -94,14 +116,31 @@ rs.mock('vscode', () => {
     },
     workspace: {
       fs: {},
-      getConfiguration: () => ({ get: () => undefined }),
-      onDidChangeConfiguration: () => ({ dispose: () => {} }),
-      createFileSystemWatcher: () => ({
-        onDidCreate: () => ({ dispose: () => {} }),
-        onDidChange: () => ({ dispose: () => {} }),
-        onDidDelete: () => ({ dispose: () => {} }),
-        dispose: () => {},
+      getConfiguration: () => ({
+        get: (key: string) =>
+          runtimeCollection && key === 'testCaseCollectMethod'
+            ? 'runtime'
+            : undefined,
       }),
+      onDidChangeConfiguration: () => ({ dispose: () => {} }),
+      createFileSystemWatcher: (pattern: { base: { fsPath: string } }) => {
+        const watcher: (typeof fileWatchers)[number] = {
+          root: pattern.base.fsPath,
+          active: true,
+        };
+        fileWatchers.push(watcher);
+        return {
+          onDidCreate: (listener: (uri: any) => void) => {
+            watcher.create = listener;
+            return { dispose() {} };
+          },
+          onDidChange: () => ({ dispose() {} }),
+          onDidDelete: () => ({ dispose() {} }),
+          dispose: () => {
+            watcher.active = false;
+          },
+        };
+      },
     },
   };
   return { ...vscode, default: vscode };
@@ -130,8 +169,12 @@ const controller = {
 } as any;
 
 const collection = {
-  replace: () => {},
-  add: () => {},
+  replace: () => {
+    renderedFiles.clear();
+  },
+  add: (item: { id: string }) => {
+    renderedFiles.add(item.id);
+  },
   forEach: () => {},
 } as any;
 
@@ -139,6 +182,11 @@ beforeEach(() => {
   normalizedConfigFailure = undefined;
   normalizedConfigResult = undefined;
   normalizedConfigCalls = 0;
+  pendingConfig = undefined;
+  runtimeCollection = false;
+  listedFiles = [];
+  renderedFiles.clear();
+  fileWatchers.length = 0;
   loggedErrors.length = 0;
   loggedWarnings.length = 0;
   logger.bind(channel as never);
@@ -156,6 +204,112 @@ const createProject = async (source: any) => {
 };
 
 describe('Project config/cwd/package-resolution decoupling', () => {
+  it('reports a late resolution failure to the shell and clears it after recovery', async () => {
+    const gate = Promise.withResolvers<NormalizedConfigResult>();
+    pendingConfig = gate.promise;
+    const { reporter, reported } = createStatusRecorder();
+    status.bind(reporter);
+    const { project } = await createProject({
+      sourceUri: uri('/repo/rstest.config.ts'),
+    });
+    try {
+      expect(reported).toEqual([]);
+      gate.reject(new ReportedRstestResolutionError());
+      await rs.waitUntil(() => project.configLoadFailed);
+      expect(reported.at(-1)).toEqual({
+        kind: 'crashed',
+        detail: 'Cannot load rstest.config.ts: Failed to resolve rstest path',
+      });
+      expect(loggedErrors).toEqual([]);
+      pendingConfig = undefined;
+      normalizedConfigResult = {
+        ok: true,
+        root: '/repo',
+        include: [],
+        exclude: [],
+        childProjects: [],
+      };
+      await project.retryFailedConfig();
+      expect(reported.at(-1)?.kind).toBe('running');
+      expect(project.hasFailedState).toBe(false);
+    } finally {
+      project.dispose();
+      status.unbind();
+    }
+  });
+
+  it('replaces stale test files and watches the recovered root and globs only when changed', async () => {
+    const oldRoot = path.join('/repo', 'old');
+    const newRoot = path.join('/repo', 'new');
+    const oldFile = path.join(oldRoot, 'old.test.ts');
+    const currentFile = path.join(newRoot, 'current.spec.ts');
+    const addedFile = path.join(newRoot, 'added.spec.ts');
+    runtimeCollection = true;
+    listedFiles = [oldFile];
+    normalizedConfigResult = {
+      ok: true,
+      root: oldRoot,
+      include: ['**/*.test.ts'],
+      exclude: [],
+      childProjects: [],
+    };
+    const { reporter } = createStatusRecorder();
+    status.bind(reporter);
+    const { project } = await createProject({
+      sourceUri: uri('/repo/rstest.config.ts'),
+    });
+    const files = () => [...renderedFiles].sort();
+    const createFile = (file: string) => {
+      for (const watcher of fileWatchers) {
+        if (watcher.active && file.startsWith(`${watcher.root}${path.sep}`))
+          watcher.create?.(uri(file));
+      }
+    };
+    try {
+      await rs.waitUntil(() => files().includes(uri(oldFile).toString()));
+      normalizedConfigFailure = new SyntaxError('half-written dependency');
+      status.crashed('worker stopped', project.sourceUri.toString());
+      await project.retryFailedConfig();
+      normalizedConfigFailure = undefined;
+      listedFiles = [currentFile];
+      normalizedConfigResult = {
+        ok: true,
+        root: newRoot,
+        include: ['**/*.spec.ts'],
+        exclude: ['**/ignored.spec.ts'],
+        childProjects: [],
+      };
+      await project.retryFailedConfig();
+      await rs.waitUntil(() => files().includes(uri(currentFile).toString()));
+      expect(files()).toEqual([uri(currentFile).toString()]);
+      createFile(path.join(oldRoot, 'stale.test.ts'));
+      createFile(path.join(newRoot, 'ignored.spec.ts'));
+      createFile(path.join(newRoot, 'wrong.test.ts'));
+      createFile(addedFile);
+      await rs.waitUntil(() => files().includes(uri(addedFile).toString()));
+      expect(files()).toEqual([
+        uri(addedFile).toString(),
+        uri(currentFile).toString(),
+      ]);
+
+      // Unchanged normalization must preserve the collected items rather than
+      // re-listing and removing the file delivered through the watcher.
+      normalizedConfigResult = {
+        ...normalizedConfigResult,
+        include: [...normalizedConfigResult.include],
+        exclude: [...normalizedConfigResult.exclude],
+      };
+      await project.retryFailedConfig();
+      expect(files()).toEqual([
+        uri(addedFile).toString(),
+        uri(currentFile).toString(),
+      ]);
+    } finally {
+      project.dispose();
+      status.unbind();
+    }
+  });
+
   it('re-resolves a core lost after successful config loading on a dependency pass', async () => {
     const config = uri('/repo/pkg/rstest.config.ts');
     const { reporter, reported } = createStatusRecorder();
