@@ -225,12 +225,11 @@ class ExtensionShell {
   }
 
   private get dependencyPollNeeded(): boolean {
-    return (
-      !this.#disposed &&
-      [...this.#controllers.values()].some((controller) =>
-        controller.hasFailedState(),
-      )
-    );
+    if (this.#disposed) return false;
+    for (const controller of this.#controllers.values()) {
+      if (controller.hasFailedState()) return true;
+    }
+    return false;
   }
 
   /**
@@ -240,6 +239,7 @@ class ExtensionShell {
    * lockfile change; each stack therefore reuses its existing retry path.
    */
   private syncDependencyPoll(): void {
+    if (this.#dependencyPollInFlight) return;
     if (!this.dependencyPollNeeded) {
       if (this.#dependencyPollTimer !== undefined) {
         clearTimeout(this.#dependencyPollTimer);
@@ -247,10 +247,7 @@ class ExtensionShell {
       }
       return;
     }
-    if (
-      this.#dependencyPollTimer !== undefined ||
-      this.#dependencyPollInFlight
-    ) {
+    if (this.#dependencyPollTimer !== undefined) {
       return;
     }
     this.#dependencyPollTimer = setTimeout(() => {

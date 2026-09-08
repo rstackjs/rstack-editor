@@ -1,6 +1,12 @@
 import path from 'node:path';
 import { findPackageJsonUncached } from './packageResolve';
 
+export function isMissingDependencyCode(
+  code: unknown,
+): code is 'ERR_MODULE_NOT_FOUND' | 'MODULE_NOT_FOUND' {
+  return code === 'ERR_MODULE_NOT_FOUND' || code === 'MODULE_NOT_FOUND';
+}
+
 /**
  * The classifier behind the "config imports a package that is not installed"
  * verdict of the uniform not-installed policy (AGENTS.md). Nothing in it is
@@ -60,8 +66,6 @@ export function missingDependencyCauseOf(
 ): string | undefined {
   if (!(error instanceof Error)) return undefined;
   const { code } = error as NodeJS.ErrnoException;
-  if (code !== 'ERR_MODULE_NOT_FOUND' && code !== 'MODULE_NOT_FOUND') {
-    return undefined;
-  }
+  if (!isMissingDependencyCode(code)) return undefined;
   return classifyMissingDependencyMessage(error.message, resolveFrom);
 }

@@ -657,16 +657,11 @@ export class Project implements vscode.Disposable {
         }
         // Let the manager settle its tree even when a config fails to load.
         this.onConfigResolved?.();
+      })
+      .finally(() => {
+        if (this.#configLoad === pending) this.#configLoad = undefined;
       });
     this.#configLoad = pending;
-    void pending.then(
-      () => {
-        if (this.#configLoad === pending) this.#configLoad = undefined;
-      },
-      () => {
-        if (this.#configLoad === pending) this.#configLoad = undefined;
-      },
-    );
     return pending;
   }
 

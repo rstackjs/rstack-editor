@@ -1,4 +1,5 @@
 import vscode from 'vscode';
+import { isFailedStackState } from '../../types';
 import type {
   DetectionSnapshot,
   StackContext,
@@ -94,13 +95,11 @@ class RslintController implements StackController {
     this.#subscriptions.push(
       context.onDidChangeDetection((snapshot) => {
         this.#snapshot = snapshot;
+        this.pruneDepartedFolders();
         for (const runtime of this.#runtimes.values()) {
           runtime.setBridgeConfigPath(
             snapshot.forFolder(runtime.workspaceFolder)?.rootRstackConfigPath,
           );
-        }
-        this.pruneDepartedFolders();
-        for (const runtime of this.#runtimes.values()) {
           void runtime.retryConfigDependency()?.catch((error: unknown) => {
             if (!runtime.hasConfigDependencyFailure()) {
               this.#logger?.error(
@@ -208,12 +207,8 @@ class RslintController implements StackController {
           const previous = this.#folderStates
             .get(folderKeyOf(workspaceFolder))
             ?.failures.get(document.uri.toString());
-          if (missing !== undefined) {
-            if (
-              previous?.kind !== 'disabled' ||
-              previous.reason !==
-                (status.kind === 'disabled' ? status.reason : undefined)
-            ) {
+          if (JSON.stringify(previous) !== JSON.stringify(attributed)) {
+            if (missing !== undefined) {
               const warning = formatNotInstalledLog(
                 missing,
                 workspaceFolder.name,
@@ -221,17 +216,12 @@ class RslintController implements StackController {
                 `${document.uri} ${keeping ? `keeps ${keeping}` : 'will not lint'} until it is installed`,
               );
               logger.warn(warning);
+            } else {
+              logger.error(
+                formatCoreSelectionFailure(document.uri.toString(), keeping),
+                error,
+              );
             }
-          } else if (
-            previous?.kind !== attributed.kind ||
-            !('detail' in previous) ||
-            !('detail' in attributed) ||
-            previous.detail !== attributed.detail
-          ) {
-            logger.error(
-              formatCoreSelectionFailure(document.uri.toString(), keeping),
-              error,
-            );
           }
           // Last-good semantics: the document keeps whatever runtime it had.
           // The failure is still the folder's worst news, so it is folded in
@@ -392,14 +382,14 @@ class RslintController implements StackController {
   }
 
   hasFailedState(): boolean {
-    return [...this.#folderStates.values()].some((states) =>
-      [...states.runtimes.values(), ...states.failures.values()].some(
-        (state) =>
-          state.kind === 'disabled' ||
-          state.kind === 'crashed' ||
-          state.kind === 'version-mismatch',
-      ),
-    );
+    for (const states of this.#folderStates.values()) {
+      for (const bucket of [states.runtimes, states.failures]) {
+        for (const state of bucket.values()) {
+          if (isFailedStackState(state.kind)) return true;
+        }
+      }
+    }
+    return false;
   }
 
   private async closeRuntimeManager(): Promise<void> {

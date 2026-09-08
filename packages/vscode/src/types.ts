@@ -56,6 +56,12 @@ export type StackState =
   | { readonly kind: 'crashed'; readonly detail: string }
   | { readonly kind: 'version-mismatch'; readonly detail: string };
 
+/** Raw runtime failures that need dependency recovery, not shell gate states. */
+export const isFailedStackState = (
+  kind: StackState['kind'] | 'stopped',
+): boolean =>
+  kind === 'disabled' || kind === 'crashed' || kind === 'version-mismatch';
+
 /**
  * The seam every stack reports through instead of owning a status bar item
  * (the status-aggregation adaptation). The shell aggregates all three

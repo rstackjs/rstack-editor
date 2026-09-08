@@ -27,6 +27,7 @@ import {
   State,
 } from 'vscode-languageclient/node';
 import { MessageLatch } from '../../shared/messageLatch';
+import { displayPath } from '../../shared/displayPath';
 import { NotInstalledEpisode } from '../../shared/notInstalled';
 import {
   configuredNodeBelowFloor,
@@ -353,7 +354,7 @@ export class Rslint implements Disposable {
   }
 
   private reportRunning(): void {
-    if (this.configRefreshFailed) return;
+    if (this.configRefreshFailed || this.hasConfigDependencyFailure()) return;
     this.report(runningRslintStatus(this.advisory));
   }
 
@@ -384,17 +385,9 @@ export class Rslint implements Disposable {
       failure.configPath === this.installation.shimPath && this.bridgeConfigPath
         ? this.bridgeConfigPath
         : failure.configPath;
-    const relative = path.relative(
-      this.workspaceFolder.uri.fsPath,
-      physicalPath,
-    );
-    const displayPath =
-      relative.length > 0 && !relative.startsWith('..')
-        ? relative
-        : path.basename(physicalPath);
     const report = this.configDependencyEpisode.observe(
       'rslint',
-      displayPath,
+      displayPath(this.workspaceFolder.uri.fsPath, physicalPath),
       failure.cause,
     );
     if (report.warning !== undefined) {
@@ -516,7 +509,7 @@ export class Rslint implements Disposable {
           detail: 'the Rslint language server stopped',
         });
       } else if (event.newState === State.Running) {
-        if (!this.hasConfigDependencyFailure()) this.reportRunning();
+        this.reportRunning();
       }
     });
 
@@ -576,7 +569,7 @@ export class Rslint implements Disposable {
         );
       }
       this.logger.info('Rslint language client started successfully');
-      if (!this.hasConfigDependencyFailure()) this.reportRunning();
+      this.reportRunning();
     } catch (error: unknown) {
       // Keep the initialized runtime available for configRefresh retries.
       // Rethrowing this classified rejection would make RuntimeManager close
@@ -684,13 +677,7 @@ export class Rslint implements Disposable {
       this.configRefreshFailed = false;
       try {
         await client.sendRequest('rslint/configRefresh', { reason });
-        if (
-          wasFailed &&
-          !this.configRefreshFailed &&
-          !this.hasConfigDependencyFailure() &&
-          this.isRunning()
-        )
-          this.reportRunning();
+        if (wasFailed && this.isRunning()) this.reportRunning();
       } catch (error) {
         // The worker verdict already surfaced this rejection as a real config
         // error. Keep the live runtime for config edits without duplicate logs

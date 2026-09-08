@@ -1,3 +1,4 @@
+import { MessageLatch } from './messageLatch';
 import {
   COMMAND_CATEGORY,
   STACK_LABELS,
@@ -61,48 +62,25 @@ export interface ConfigDependencyFailure {
  * the latch semantics and the user-facing words are the same.
  */
 export class NotInstalledEpisode {
-  #fingerprint: string | undefined;
+  readonly #message = new MessageLatch();
 
   get active(): boolean {
-    return this.#fingerprint !== undefined;
+    return this.#message.current !== undefined;
   }
 
   observe(stack: StackId, configPath: string, cause: string) {
-    const fingerprint = `config\0${configPath}\0${cause}`;
-    const warning =
-      fingerprint === this.#fingerprint
-        ? undefined
-        : formatConfigDependencyMissingLog(stack, configPath, cause);
-    this.#fingerprint = fingerprint;
+    const warning = this.#message.changed(`${configPath}\0${cause}`)
+      ? formatConfigDependencyMissingLog(stack, configPath, cause)
+      : undefined;
     return {
       reason: formatConfigDependencyMissingStatus(stack, configPath),
       warning,
     };
   }
 
-  observePackage(
-    packageName: string,
-    folderName: string,
-    searchedFrom: string,
-    consequence?: string,
-  ): string | undefined {
-    const fingerprint = `package\0${packageName}\0${searchedFrom}`;
-    const warning =
-      fingerprint === this.#fingerprint
-        ? undefined
-        : formatNotInstalledLog(
-            packageName,
-            folderName,
-            searchedFrom,
-            consequence,
-          );
-    this.#fingerprint = fingerprint;
-    return warning;
-  }
-
   clear(): boolean {
     const wasActive = this.active;
-    this.#fingerprint = undefined;
+    this.#message.clear();
     return wasActive;
   }
 }

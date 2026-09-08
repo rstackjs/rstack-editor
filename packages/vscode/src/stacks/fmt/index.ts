@@ -14,10 +14,12 @@ import {
 } from 'vscode-languageclient/node';
 import { RSTACK_CONFIG_GLOB } from '../../detection';
 import { MessageLatch } from '../../shared/messageLatch';
+import { displayPath } from '../../shared/displayPath';
 import { classifyMissingDependencyMessage } from '../../shared/missingDependency';
 import { getConfiguredNodeExecutable } from '../../shared/nodeExecutableSetting';
 import {
   NotInstalledEpisode,
+  formatNotInstalledLog,
   formatNotInstalledStatus,
 } from '../../shared/notInstalled';
 import {
@@ -162,11 +164,11 @@ class FmtFolderRuntime {
   #defaultErrorHandler: ErrorHandler | undefined;
   #stateWatcher: vscode.Disposable | undefined;
   #configPath: string | undefined;
-  readonly #packageEpisode = new NotInstalledEpisode();
+  readonly #packageEpisode = new MessageLatch();
   readonly #configDependencyEpisode = new NotInstalledEpisode();
   readonly #startError = new MessageLatch();
-  #sessionError: string | undefined;
-  #sessionErrorCount = 0;
+  readonly #sessionError = new MessageLatch();
+  #failureSeq = 0;
   suppressedShowMessages = 0;
   #closing = false;
   #disposed = false;
@@ -224,24 +226,26 @@ class FmtFolderRuntime {
 
   private handleShowMessage(message: ShowMessageParams): void {
     switch (message.type) {
-      case MessageType.Error:
-        if (message.message.startsWith(FMT_SESSION_ERROR_PREFIX)) {
-          const firstLine = message.message
-            .slice(FMT_SESSION_ERROR_PREFIX.length)
-            .split('\n', 1)[0];
-          const cause =
-            this.#configPath === undefined
-              ? undefined
-              : classifyMissingDependencyMessage(
-                  firstLine.replace(/^Error(?: \[[A-Z_]+\])?: /, ''),
-                  this.folderPath,
-                );
-          if (cause !== undefined && this.#configPath !== undefined) {
-            this.#sessionError = undefined;
-            const relative = path.relative(this.folderPath, this.#configPath);
+      case MessageType.Error: {
+        if (!message.message.startsWith(FMT_SESSION_ERROR_PREFIX)) {
+          void vscode.window.showErrorMessage(message.message);
+          break;
+        }
+        const firstLine = message.message
+          .slice(FMT_SESSION_ERROR_PREFIX.length)
+          .split('\n', 1)[0];
+        const configPath = this.#configPath;
+        this.#failureSeq++;
+        if (configPath !== undefined) {
+          const cause = classifyMissingDependencyMessage(
+            firstLine.replace(/^Error(?: \[[A-Z_]+\])?: /, ''),
+            this.folderPath,
+          );
+          if (cause !== undefined) {
+            this.#sessionError.clear();
             const report = this.#configDependencyEpisode.observe(
               'fmt',
-              relative.length > 0 ? relative : path.basename(this.#configPath),
+              displayPath(this.folderPath, configPath),
               cause,
             );
             if (report.warning !== undefined)
@@ -250,15 +254,14 @@ class FmtFolderRuntime {
             this.setState('disabled', report.reason);
             return;
           }
-          this.#sessionErrorCount++;
-          this.#configDependencyEpisode.clear();
-          if (this.#sessionError !== firstLine)
-            this.context.output.error(firstLine);
-          this.#sessionError = firstLine;
-          this.setState('crashed', firstLine);
         }
+        this.#configDependencyEpisode.clear();
+        if (this.#sessionError.changed(firstLine))
+          this.context.output.error(firstLine);
+        this.setState('crashed', firstLine);
         void vscode.window.showErrorMessage(message.message);
         break;
+      }
       case MessageType.Warning:
         void vscode.window.showWarningMessage(message.message);
         break;
@@ -366,12 +369,11 @@ class FmtFolderRuntime {
       // The shell polls while this state remains disabled. The trailing restart
       // hint stays as the explicit fallback if recovery is delayed.
       this.setState('disabled', formatNotInstalledStatus('fmt', 'rstack'));
-      const warning = this.#packageEpisode.observePackage(
-        'rstack',
-        this.folder.name,
-        folderRoot,
-      );
-      if (warning !== undefined) context.output.warn(warning);
+      if (this.#packageEpisode.changed(folderRoot)) {
+        context.output.warn(
+          formatNotInstalledLog('rstack', this.folder.name, folderRoot),
+        );
+      }
       return;
     }
     this.#packageEpisode.clear();
@@ -439,8 +441,8 @@ class FmtFolderRuntime {
         // Initialize does not load config. Keep a known real config error
         // polling across restarts until formatting actually produces edits.
         this.setState(
-          this.#sessionError === undefined ? 'running' : 'crashed',
-          this.#sessionError,
+          this.#sessionError.current === undefined ? 'running' : 'crashed',
+          this.#sessionError.current,
         );
       }
     });
@@ -469,13 +471,11 @@ class FmtFolderRuntime {
       if (interrupted || this.#disposed) {
         return;
       }
+      const message = error instanceof Error ? error.message : String(error);
       this.setState(
         'crashed',
-        `the rs fmt language server failed to start: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        `the rs fmt language server failed to start: ${message}`,
       );
-      const message = error instanceof Error ? error.message : String(error);
       if (this.#startError.changed(message)) {
         context.output.error(
           'Failed to start the rs fmt language server',
@@ -577,20 +577,18 @@ class FmtFolderRuntime {
           token,
           next,
         ) => {
-          const failuresBeforeRequest =
-            this.suppressedShowMessages + this.#sessionErrorCount;
+          const failuresBeforeRequest = this.#failureSeq;
           const edits = await next(document, options, token);
           const hadConfigDependency = this.#configDependencyEpisode.active;
           // Empty edits also signal failure; notifications during this request
           // must not be cleared by its edits.
           if (
             (edits?.length ?? 0) > 0 &&
-            failuresBeforeRequest ===
-              this.suppressedShowMessages + this.#sessionErrorCount
+            failuresBeforeRequest === this.#failureSeq
           ) {
             this.#configDependencyEpisode.clear();
-            const hadSessionError = this.#sessionError !== undefined;
-            this.#sessionError = undefined;
+            const hadSessionError = this.#sessionError.current !== undefined;
+            this.#sessionError.clear();
             if (
               (hadConfigDependency && this.#state === 'disabled') ||
               (hadSessionError && this.#state === 'crashed')
@@ -844,9 +842,10 @@ class FmtController implements StackController {
   }
 
   hasFailedState(): boolean {
-    return [...this.#runtimes.values()].some((runtime) =>
-      isFailedFmtState(runtime.state),
-    );
+    for (const runtime of this.#runtimes.values()) {
+      if (isFailedFmtState(runtime.state)) return true;
+    }
+    return false;
   }
 
   /**

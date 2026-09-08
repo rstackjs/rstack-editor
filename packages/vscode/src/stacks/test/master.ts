@@ -20,7 +20,7 @@ import {
 import { CONFIG_SECTION, getConfigValue } from './config';
 import { MessageLatch } from '../../shared/messageLatch';
 import {
-  NotInstalledEpisode,
+  formatNotInstalledLog,
   formatNotInstalledStatus,
 } from '../../shared/notInstalled';
 import {
@@ -134,7 +134,7 @@ export class RstestApi {
   // `createChildProcess`.
   private disposed = false;
   private lastResolvedRstestPath?: string;
-  private readonly coreMissingEpisode = new NotInstalledEpisode();
+  private readonly coreMissingEpisode = new MessageLatch();
   private readonly unsupportedCoreMessage = new MessageLatch();
   private readonly resolutionErrorMessage = new MessageLatch();
 
@@ -340,13 +340,16 @@ export class RstestApi {
   // out plus one warn line — the normal state of a repository whose
   // dependencies are not installed yet, never a notification.
   private reportCoreNotInstalled(searchedFrom: string): void {
-    const warning = this.coreMissingEpisode.observePackage(
-      '@rstest/core',
-      this.workspace.name,
-      searchedFrom,
-      CORE_NOT_INSTALLED_CONSEQUENCE,
-    );
-    if (warning !== undefined) logger.warn(warning);
+    if (this.coreMissingEpisode.changed(searchedFrom)) {
+      logger.warn(
+        formatNotInstalledLog(
+          '@rstest/core',
+          this.workspace.name,
+          searchedFrom,
+          CORE_NOT_INSTALLED_CONSEQUENCE,
+        ),
+      );
+    }
     status.notInstalled(CORE_NOT_INSTALLED_STATUS, this.statusSource);
   }
 

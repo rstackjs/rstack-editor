@@ -8,7 +8,10 @@ import type {
   LoadConfigsRequest,
   LoadConfigsResponse,
 } from '@rslint/core/config-loader';
-import { classifyMissingDependencyMessage } from '../../../shared/missingDependency';
+import {
+  classifyMissingDependencyMessage,
+  isMissingDependencyCode,
+} from '../../../shared/missingDependency';
 import type { ConfigDependencyFailure } from '../../../shared/notInstalled';
 
 interface ConfigDependencyObserver {
@@ -116,6 +119,9 @@ export class LspConfigTransactionAdapter {
       );
       this.assertActive();
       throwIfAborted(signal);
+      if (!response.results.some((result) => result.status === 'failed')) {
+        return response;
+      }
       let classified = false;
       return {
         ...response,
@@ -124,8 +130,7 @@ export class LspConfigTransactionAdapter {
           const candidate = request.candidates[index];
           const cause =
             candidate !== undefined &&
-            (result.error.code === 'ERR_MODULE_NOT_FOUND' ||
-              result.error.code === 'MODULE_NOT_FOUND')
+            isMissingDependencyCode(result.error.code)
               ? classifyMissingDependencyMessage(
                   result.error.message,
                   this.configDependencyObserver.resolveFrom(candidate),

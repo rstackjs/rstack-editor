@@ -170,12 +170,13 @@ describe('lint worker config refresh', () => {
       registerEditorProxy(workerConnection, goConnection, {
         protocolVersion: 2,
         configPath,
-        takeConfigDependencyFailure: () => {
+        takeConfigStatus: () => {
           const failure = activeFailure;
           activeFailure = undefined;
-          return failure;
+          if (failure !== undefined)
+            return { kind: 'missing' as const, failure };
+          return { kind: 'ok' as const };
         },
-        takeConfigError: () => undefined,
         observeRefresh: (reason) => observedReasons.push(reason),
         requestStop: () => undefined,
       });
@@ -309,8 +310,12 @@ describe('lint worker config dependency classification', () => {
     let refresh!: (method: string, params: unknown) => Promise<unknown>;
     const options = {
       protocolVersion: 3,
-      takeConfigDependencyFailure: () => missing,
-      takeConfigError: () => configError,
+      takeConfigStatus: () =>
+        configError !== undefined
+          ? { kind: 'error' as const, message: configError }
+          : missing !== undefined
+            ? { kind: 'missing' as const, failure: missing }
+            : { kind: 'ok' as const },
       observeRefresh() {},
       requestStop() {},
     };
