@@ -5,6 +5,7 @@ import {
   CloseAction,
   ErrorAction,
   LanguageClient,
+  MessageType,
   ShowMessageNotification,
   State,
   type ErrorHandler,
@@ -12,6 +13,8 @@ import {
   type ServerOptions,
 } from 'vscode-languageclient/node';
 import { RSTACK_CONFIG_GLOB } from '../../detection';
+import { MessageLatch } from '../../shared/messageLatch';
+import { classifyMissingDependencyMessage } from '../../shared/missingDependency';
 import { getConfiguredNodeExecutable } from '../../shared/nodeExecutableSetting';
 import {
   NotInstalledEpisode,
@@ -44,15 +47,13 @@ import type {
 import { LanguageServerProcessOwner } from '../lint/LanguageServerProcessOwner';
 import { pickBinEntry } from './binEntry';
 import {
-  clearEpisodeAfterSuccessfulFormatting,
-  handleFmtShowMessage,
-} from './sessionError';
-import {
   foldFolderStatus,
   type FmtFolderStatus,
   type FmtRuntimeState,
   isFailedFmtState,
 } from './status';
+
+const FMT_SESSION_ERROR_PREFIX = 'rs fmt cannot format this workspace: ';
 
 // prettier 3.9.6 getSupportInfo() vscodeLanguageIds snapshot (rs fmt's pinned
 // prettier). Revisit when the pinned prettier changes.
@@ -163,7 +164,7 @@ class FmtFolderRuntime {
   #configPath: string | undefined;
   readonly #packageEpisode = new NotInstalledEpisode();
   readonly #configDependencyEpisode = new NotInstalledEpisode();
-  #startError: string | undefined;
+  readonly #startError = new MessageLatch();
   #sessionError: string | undefined;
   #sessionErrorCount = 0;
   suppressedShowMessages = 0;
@@ -222,37 +223,49 @@ class FmtFolderRuntime {
   }
 
   private handleShowMessage(message: ShowMessageParams): void {
-    handleFmtShowMessage(message, this.folderPath, this.#configPath, {
-      onConfigDependency: (failure) => {
-        this.#sessionError = undefined;
-        const report = this.#configDependencyEpisode.observe(
-          'fmt',
-          failure.configPath,
-          failure.cause,
-        );
-        if (report.warning !== undefined) {
-          this.context.output.warn(report.warning);
+    switch (message.type) {
+      case MessageType.Error:
+        if (message.message.startsWith(FMT_SESSION_ERROR_PREFIX)) {
+          const firstLine = message.message
+            .slice(FMT_SESSION_ERROR_PREFIX.length)
+            .split('\n', 1)[0];
+          const cause =
+            this.#configPath === undefined
+              ? undefined
+              : classifyMissingDependencyMessage(
+                  firstLine.replace(/^Error(?: \[[A-Z_]+\])?: /, ''),
+                  this.folderPath,
+                );
+          if (cause !== undefined && this.#configPath !== undefined) {
+            this.#sessionError = undefined;
+            const relative = path.relative(this.folderPath, this.#configPath);
+            const report = this.#configDependencyEpisode.observe(
+              'fmt',
+              relative.length > 0 ? relative : path.basename(this.#configPath),
+              cause,
+            );
+            if (report.warning !== undefined)
+              this.context.output.warn(report.warning);
+            this.suppressedShowMessages++;
+            this.setState('disabled', report.reason);
+            return;
+          }
+          this.#sessionErrorCount++;
+          this.#configDependencyEpisode.clear();
+          if (this.#sessionError !== firstLine)
+            this.context.output.error(firstLine);
+          this.#sessionError = firstLine;
+          this.setState('crashed', firstLine);
         }
-        this.suppressedShowMessages++;
-        this.setState('disabled', report.reason);
-      },
-      onConfigError: (message) => {
-        this.#sessionErrorCount++;
-        this.#configDependencyEpisode.clear();
-        if (this.#sessionError !== message) this.context.output.error(message);
-        this.#sessionError = message;
-        this.setState('crashed', message);
-      },
-      showErrorMessage: (text) => {
-        void vscode.window.showErrorMessage(text);
-      },
-      showWarningMessage: (text) => {
-        void vscode.window.showWarningMessage(text);
-      },
-      showInformationMessage: (text) => {
-        void vscode.window.showInformationMessage(text);
-      },
-    });
+        void vscode.window.showErrorMessage(message.message);
+        break;
+      case MessageType.Warning:
+        void vscode.window.showWarningMessage(message.message);
+        break;
+      default:
+        void vscode.window.showInformationMessage(message.message);
+        break;
+    }
   }
 
   /**
@@ -463,8 +476,7 @@ class FmtFolderRuntime {
         }`,
       );
       const message = error instanceof Error ? error.message : String(error);
-      if (this.#startError !== message) {
-        this.#startError = message;
+      if (this.#startError.changed(message)) {
         context.output.error(
           'Failed to start the rs fmt language server',
           error,
@@ -472,7 +484,7 @@ class FmtFolderRuntime {
       }
       return;
     }
-    this.#startError = undefined;
+    this.#startError.clear();
     context.output.info(`rs fmt language server started for ${folderRoot}`);
   }
 
@@ -569,14 +581,14 @@ class FmtFolderRuntime {
             this.suppressedShowMessages + this.#sessionErrorCount;
           const edits = await next(document, options, token);
           const hadConfigDependency = this.#configDependencyEpisode.active;
+          // Empty edits also signal failure; notifications during this request
+          // must not be cleared by its edits.
           if (
-            clearEpisodeAfterSuccessfulFormatting(
-              this.#configDependencyEpisode,
-              failuresBeforeRequest,
-              this.suppressedShowMessages + this.#sessionErrorCount,
-              edits?.length ?? 0,
-            )
+            (edits?.length ?? 0) > 0 &&
+            failuresBeforeRequest ===
+              this.suppressedShowMessages + this.#sessionErrorCount
           ) {
+            this.#configDependencyEpisode.clear();
             const hadSessionError = this.#sessionError !== undefined;
             this.#sessionError = undefined;
             if (

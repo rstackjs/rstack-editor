@@ -4,7 +4,8 @@ import type {
   ShowMessageParams,
 } from 'vscode-languageclient';
 import type { StackContext, StackState } from '../../../src/types';
-import { FMT_SESSION_ERROR_PREFIX } from '../../../src/stacks/fmt/sessionError';
+
+const FMT_SESSION_ERROR_PREFIX = 'rs fmt cannot format this workspace: ';
 
 const clients: Array<{
   notify(message: ShowMessageParams): void;
@@ -50,6 +51,7 @@ rs.mock('../../../src/stacks/lint/LanguageServerProcessOwner', () => ({
   },
 }));
 rs.mock('vscode-languageclient/node', () => ({
+  MessageType: { Error: 1, Warning: 2, Info: 3 },
   State: { Running: 2, Stopped: 1 },
   ShowMessageNotification: { type: 'window/showMessage' },
   LanguageClient: class {
@@ -186,4 +188,7 @@ it('keeps classified missing dependencies disabled with one warning and no toast
   expect(toasts).toEqual([]);
   await format(1);
   expect(states.at(-1)?.kind).toBe('running');
+  clients[0].notify(message);
+  expect(states.at(-1)?.kind).toBe('disabled');
+  expect(warnings).toHaveLength(2);
 });

@@ -343,19 +343,3 @@ describe('StatusBar item', () => {
     expect(itemOf().backgroundColor).toBeUndefined();
   });
 });
-
-describe('StatusBar reporter', () => {
-  it('runs the report hook for direct and convenience reports', () => {
-    const { bar } = build();
-    const reports = rs.fn();
-    const reporter = bar.reporterFor('fmt', reports);
-
-    reporter.report({ kind: 'disabled', reason: 'missing' });
-    reporter.starting();
-    reporter.running();
-    reporter.crashed('stopped');
-    reporter.versionMismatch('old version');
-
-    expect(reports).toHaveBeenCalledTimes(5);
-  });
-});

@@ -10,7 +10,6 @@ import {
   type StackControllerFactory,
   type StackId,
   type StackState,
-  type StatusReporter,
   STACK_IDS,
   STACK_LABELS,
   stackCommand,
@@ -277,10 +276,6 @@ class ExtensionShell {
     }, this.#dependencyPollIntervalMs);
   }
 
-  private stackStatusReporter(stack: StackId): StatusReporter {
-    return this.#statusBar.reporterFor(stack, () => this.syncDependencyPoll());
-  }
-
   /**
    * `rstack.restart` (every stack) and `rstack.<stack>.restart` (one) — a full
    * reset, not a "retry whatever looks broken".
@@ -450,7 +445,9 @@ class ExtensionShell {
         stack,
         extensionContext: this.context,
         output: this.#channels.forStack(stack),
-        status: this.stackStatusReporter(stack),
+        status: this.#statusBar.reporterFor(stack, () =>
+          this.syncDependencyPoll(),
+        ),
         detection: snapshot,
         onDidChangeDetection: this.#detectionEmitter.event,
       });

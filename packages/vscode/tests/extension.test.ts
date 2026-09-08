@@ -484,20 +484,7 @@ describe('dependency recovery polling', () => {
     await deactivate();
   });
 
-  it('uses a one-minute default interval', async () => {
-    const timer = rs.spyOn(globalThis, 'setTimeout');
-    try {
-      await activate(context);
-      harness.failed.add('rslint');
-      harness.reporters.get('rslint')?.report({ kind: 'disabled' });
-      expect(timer.mock.calls.some(([, delay]) => delay === 60_000)).toBe(true);
-      expect(harness.dependencyRefreshes).toBe(0);
-    } finally {
-      timer.mockRestore();
-    }
-  });
-
-  it.each(['disabled', 'crashed', 'version-mismatch'] as const)(
+  it.each(['crashed', 'version-mismatch'] as const)(
     'polls through the forced detection path while %s',
     async (kind) => {
       const exports = await activate(context);

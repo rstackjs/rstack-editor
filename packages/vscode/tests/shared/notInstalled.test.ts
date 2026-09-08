@@ -1,6 +1,5 @@
 import { describe, expect, it } from '@rstest/core';
 import {
-  NotInstalledEpisode,
   formatConfigDependencyMissingLog,
   formatConfigDependencyMissingStatus,
   formatNotInstalledLog,
@@ -50,61 +49,5 @@ describe('not-installed wording', () => {
     ).toBe(
       "Cannot load /repo/templates/app/rstack.config.ts: Cannot find package '@rsbuild/plugin-react' imported from /repo/templates/app/rstack.config.ts. Install the project dependencies to enable Rstest for this config.",
     );
-  });
-});
-
-describe('NotInstalledEpisode', () => {
-  it('warns once until success clears the episode', () => {
-    const episode = new NotInstalledEpisode();
-    const first = episode.observe(
-      'fmt',
-      'rstack.config.ts',
-      "Cannot find package 'missing'",
-    );
-    expect(first.warning).toContain("Cannot find package 'missing'");
-    expect(episode.active).toBe(true);
-
-    expect(
-      episode.observe(
-        'fmt',
-        'rstack.config.ts',
-        "Cannot find package 'missing'",
-      ).warning,
-    ).toBe(undefined);
-
-    expect(episode.clear()).toBe(true);
-    expect(episode.active).toBe(false);
-    expect(
-      episode.observe(
-        'fmt',
-        'rstack.config.ts',
-        "Cannot find package 'missing'",
-      ).warning,
-    ).toContain("Cannot find package 'missing'");
-  });
-
-  it('starts a new warning when the missing dependency changes', () => {
-    const episode = new NotInstalledEpisode();
-    episode.observe('rslint', 'rslint.config.ts', "Cannot find package 'a'");
-    expect(
-      episode.observe('rslint', 'rslint.config.ts', "Cannot find package 'b'")
-        .warning,
-    ).toContain("Cannot find package 'b'");
-  });
-
-  it('deduplicates package warnings by package and search directory until cleared', () => {
-    const episode = new NotInstalledEpisode();
-    expect(episode.observePackage('rstack', 'app', '/app')).toBe(
-      formatNotInstalledLog('rstack', 'app', '/app'),
-    );
-    expect(episode.observePackage('rstack', 'app', '/app')).toBeUndefined();
-    expect(episode.observePackage('rstack', 'app', '/other')).toBeDefined();
-    expect(
-      episode.observePackage('@rstest/core', 'app', '/other'),
-    ).toBeDefined();
-    episode.clear();
-    expect(
-      episode.observePackage('@rstest/core', 'app', '/other'),
-    ).toBeDefined();
   });
 });

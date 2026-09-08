@@ -245,7 +245,6 @@ export class WorkspaceManager implements vscode.Disposable {
    */
   public retryFailedProjects() {
     for (const project of this.projects.values()) {
-      if (!project.hasFailedState) continue;
       void project.retryFailedConfig();
     }
   }
@@ -623,10 +622,8 @@ export class Project implements vscode.Disposable {
             error instanceof Error
               ? error.message.split('\n', 1)[0]
               : String(error);
-          // Replace the previous not-installed verdict with the real config
-          // error before clearing that latch. Crash outranks disabled, so the
-          // synchronous transition never paints a healthy intermediate state;
-          // clearing the raw latch stops dependency polling as intended.
+          // Crash outranks disabled: replacing the missing-dependency verdict
+          // must not paint a healthy intermediate state.
           status.crashed(
             `Cannot load ${relativeTo(this.workspaceFolder, this.sourceUri)}: ${cause}`,
             this.configDependencyStatusSource,

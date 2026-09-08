@@ -26,6 +26,7 @@ import {
   type ServerOptions,
   State,
 } from 'vscode-languageclient/node';
+import { MessageLatch } from '../../shared/messageLatch';
 import { NotInstalledEpisode } from '../../shared/notInstalled';
 import {
   configuredNodeBelowFloor,
@@ -297,8 +298,6 @@ export interface RslintOptions {
   readonly router: WorkspaceDocumentRouter;
   readonly logger: Logger;
   readonly reportStatus: RslintStatusSink;
-  /** Root Rstack config represented by the worker's physical bridge shim. */
-  readonly bridgeConfigPath?: string;
   readonly onClosed?: () => void;
 }
 
@@ -325,7 +324,7 @@ export class Rslint implements Disposable {
   private readonly configDependencyEpisode = new NotInstalledEpisode();
   private configDependencyRetryPending = false;
   private configRefreshFailed = false;
-  private configError: string | undefined;
+  private readonly configError = new MessageLatch();
   private startPromise: Promise<void> | undefined;
   private startOperation: Promise<void> | undefined;
   private clientStartPromise: Promise<void> | undefined;
@@ -337,7 +336,6 @@ export class Rslint implements Disposable {
     this.workspaceFolder = options.workspaceFolder;
     this.router = options.router;
     this.reportStatus = options.reportStatus;
-    this.bridgeConfigPath = options.bridgeConfigPath;
     this.installation = options.installation;
     this.logger = options.logger;
     this.lspOutputChannel = options.lspOutputChannel;
@@ -359,20 +357,6 @@ export class Rslint implements Disposable {
     this.report(runningRslintStatus(this.advisory));
   }
 
-  private displayConfigPath(configPath: string): string {
-    const physicalPath =
-      configPath === this.installation.shimPath && this.bridgeConfigPath
-        ? this.bridgeConfigPath
-        : configPath;
-    const relative = path.relative(
-      this.workspaceFolder.uri.fsPath,
-      physicalPath,
-    );
-    return relative.length > 0 && !relative.startsWith('..')
-      ? relative
-      : path.basename(physicalPath);
-  }
-
   private handleConfigDependencyStatus(
     notification: ConfigDependencyStatusNotification,
   ): void {
@@ -380,15 +364,14 @@ export class Rslint implements Disposable {
       this.configRefreshFailed = true;
       this.report({ kind: 'crashed', detail: notification.message });
       this.configDependencyEpisode.clear();
-      if (this.configError !== notification.message) {
-        this.configError = notification.message;
+      if (this.configError.changed(notification.message)) {
         this.logger.error(
           `Failed to refresh config discovery: ${notification.message}`,
         );
       }
       return;
     }
-    this.configError = undefined;
+    this.configError.clear();
     const wasFailed = this.configRefreshFailed;
     this.configRefreshFailed = false;
     if (notification.kind === 'ok') {
@@ -397,15 +380,25 @@ export class Rslint implements Disposable {
       return;
     }
     const failure = notification.failure;
-    const displayPath = this.displayConfigPath(failure.configPath);
+    const physicalPath =
+      failure.configPath === this.installation.shimPath && this.bridgeConfigPath
+        ? this.bridgeConfigPath
+        : failure.configPath;
+    const relative = path.relative(
+      this.workspaceFolder.uri.fsPath,
+      physicalPath,
+    );
+    const displayPath =
+      relative.length > 0 && !relative.startsWith('..')
+        ? relative
+        : path.basename(physicalPath);
     const report = this.configDependencyEpisode.observe(
       'rslint',
       displayPath,
       failure.cause,
     );
     if (report.warning !== undefined) {
-      const warning = report.warning;
-      this.logger.warn(warning);
+      this.logger.warn(report.warning);
     }
     this.report({
       kind: 'disabled',

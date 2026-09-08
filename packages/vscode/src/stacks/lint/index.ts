@@ -100,10 +100,19 @@ class RslintController implements StackController {
           );
         }
         this.pruneDepartedFolders();
-        // A detection pass fires on config topology and lockfile changes —
-        // exactly the moments a document's core may have appeared, moved or
-        // changed ownership. This replaces the coordinator's `retryFailedRoots`.
-        this.retryConfigDependenciesAndReconcile();
+        for (const runtime of this.#runtimes.values()) {
+          void runtime.retryConfigDependency()?.catch((error: unknown) => {
+            if (!runtime.hasConfigDependencyFailure()) {
+              this.#logger?.error(
+                'Failed to retry Rslint config dependency discovery',
+                error,
+              );
+            }
+          });
+        }
+        // A user config can hang indefinitely. Other documents must still
+        // re-resolve their cores on this pass; refreshes run independently.
+        this.reconcileOpenDocuments('detection change');
       }),
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
         this.pruneDepartedFolders();
@@ -274,16 +283,15 @@ class RslintController implements StackController {
           attributeToCore(state, installation.packageDirectory),
         );
       },
-      bridgeConfigPath:
-        installation.mode === 'bridged'
-          ? this.#snapshot?.forFolder(workspaceFolder)?.rootRstackConfigPath
-          : undefined,
       onClosed: () => {
         if (this.#runtimes.get(resolved.key) === runtime) {
           this.#runtimes.delete(resolved.key);
         }
       },
     });
+    runtime.setBridgeConfigPath(
+      this.#snapshot?.forFolder(workspaceFolder)?.rootRstackConfigPath,
+    );
     this.#runtimes.set(resolved.key, runtime);
     return runtime;
   }
@@ -333,23 +341,6 @@ class RslintController implements StackController {
         error,
       );
     });
-  }
-
-  private retryConfigDependenciesAndReconcile(): void {
-    for (const runtime of this.#runtimes.values()) {
-      const retry = runtime.retryConfigDependency();
-      void retry?.catch((error: unknown) => {
-        if (!runtime.hasConfigDependencyFailure()) {
-          this.#logger?.error(
-            'Failed to retry Rslint config dependency discovery',
-            error,
-          );
-        }
-      });
-    }
-    // A user config can hang indefinitely. Other documents must still
-    // re-resolve their cores on this pass; refreshes run independently.
-    this.reconcileOpenDocuments('detection change');
   }
 
   private setState(

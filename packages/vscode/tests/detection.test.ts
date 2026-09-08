@@ -224,15 +224,6 @@ describe('DetectionService — notification rules', () => {
     service.dispose();
   });
 
-  it('force-notifies an unchanged signature for dependency recovery', async () => {
-    const service = new DetectionService(fakeOutput());
-    const seen = listen(service);
-    await service.initialize();
-    await service.refreshForDependencyChange();
-    expect(seen).toHaveLength(1);
-    service.dispose();
-  });
-
   it('does not notify after disposal', async () => {
     const service = new DetectionService(fakeOutput());
     const seen = listen(service);

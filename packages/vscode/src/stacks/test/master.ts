@@ -18,6 +18,7 @@ import {
   getConfiguredNodeExecutable,
 } from '../../shared/nodeExecutableSetting';
 import { CONFIG_SECTION, getConfigValue } from './config';
+import { MessageLatch } from '../../shared/messageLatch';
 import {
   NotInstalledEpisode,
   formatNotInstalledStatus,
@@ -134,8 +135,8 @@ export class RstestApi {
   private disposed = false;
   private lastResolvedRstestPath?: string;
   private readonly coreMissingEpisode = new NotInstalledEpisode();
-  private lastUnsupportedCoreMessage?: string;
-  private lastResolutionErrorMessage?: string;
+  private readonly unsupportedCoreMessage = new MessageLatch();
+  private readonly resolutionErrorMessage = new MessageLatch();
 
   constructor(
     private workspace: vscode.WorkspaceFolder,
@@ -350,9 +351,8 @@ export class RstestApi {
   }
 
   private reportResolutionError(message: string): void {
-    if (message === this.lastResolutionErrorMessage) return;
+    if (!this.resolutionErrorMessage.changed(message)) return;
     vscode.window.showErrorMessage(message);
-    this.lastResolutionErrorMessage = message;
   }
 
   // Returns '' when resolution failed. Every such branch has already reported
@@ -430,18 +430,17 @@ export class RstestApi {
           )
         ) {
           const message = `Unsupported @rstest/core version ${coreVersion ?? 'unknown'} resolved from ${this.cwd}`;
-          if (message !== this.lastUnsupportedCoreMessage) {
+          if (this.unsupportedCoreMessage.changed(message)) {
             logger.error(message);
-            this.lastUnsupportedCoreMessage = message;
           }
         } else {
-          this.lastUnsupportedCoreMessage = undefined;
+          this.unsupportedCoreMessage.clear();
           status.versionOk(this.statusSource);
         }
       }
 
       this.lastResolvedRstestPath = nodeExport;
-      this.lastResolutionErrorMessage = undefined;
+      this.resolutionErrorMessage.clear();
       return nodeExport;
     } catch (e) {
       this.reportResolutionError(toErrorMessage(e));

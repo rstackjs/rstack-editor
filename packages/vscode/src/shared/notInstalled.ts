@@ -13,7 +13,7 @@ import {
  * `formatVersionMismatch` — each keeps its own status machinery, but what
  * the user reads is one sentence, not three near-copies.
  *
- * A shell-owned poll now covers installs that change no lockfile. The trailing
+ * A shell-owned poll covers installs that change no lockfile. The trailing
  * restart hint remains the explicit fallback when recovery is delayed or the
  * project stays broken for another reason (ADR 0005).
  */
@@ -55,11 +55,6 @@ export interface ConfigDependencyFailure {
   readonly cause: string;
 }
 
-interface NotInstalledEpisodeReport {
-  readonly reason: string;
-  readonly warning: string | undefined;
-}
-
 /**
  * Deduplicates one not-installed warning until a successful load ends the
  * episode. Stacks receive their failures over different protocols, but
@@ -72,11 +67,7 @@ export class NotInstalledEpisode {
     return this.#fingerprint !== undefined;
   }
 
-  observe(
-    stack: StackId,
-    configPath: string,
-    cause: string,
-  ): NotInstalledEpisodeReport {
+  observe(stack: StackId, configPath: string, cause: string) {
     const fingerprint = `config\0${configPath}\0${cause}`;
     const warning =
       fingerprint === this.#fingerprint
