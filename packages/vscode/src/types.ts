@@ -56,6 +56,12 @@ export type StackState =
   | { readonly kind: 'crashed'; readonly detail: string }
   | { readonly kind: 'version-mismatch'; readonly detail: string };
 
+/** Raw runtime failures that need dependency recovery, not shell gate states. */
+export const isFailedStackState = (
+  kind: StackState['kind'] | 'stopped',
+): boolean =>
+  kind === 'disabled' || kind === 'crashed' || kind === 'version-mismatch';
+
 /**
  * The seam every stack reports through instead of owning a status bar item
  * (the status-aggregation adaptation). The shell aggregates all three
@@ -89,6 +95,7 @@ export interface StackDetection {
 
 export interface FolderDetection {
   readonly folder: vscode.WorkspaceFolder;
+  readonly rootRstackConfigPath?: string;
   readonly stacks: Readonly<Record<StackId, StackDetection>>;
 }
 
@@ -157,6 +164,8 @@ export interface StackController {
    */
   readonly restartOnSettings?: readonly string[];
   register(context: StackContext): Promise<Record<string, unknown> | void>;
+  /** True while an owned folder/project is disabled, crashed or version-mismatched. */
+  hasFailedState(): boolean;
   /** Teardown may be asynchronous (stopping a language server, workers). */
   dispose(): void | Promise<void>;
 }
@@ -166,6 +175,8 @@ export interface StackController {
  * tests; not a stable API for other extensions.
  */
 export interface RstackExtensionExports {
+  /** E2E only: warnings captured when RSTACK_E2E_RECORD_WARNINGS is enabled. */
+  getRecordedWarnings(stack: StackId): readonly string[];
   /** Live exports the stack published at registration; undefined when inactive. */
   getStackExports(stack: StackId): Record<string, unknown> | undefined;
   /**
@@ -173,6 +184,8 @@ export interface RstackExtensionExports {
    * already did). Rejects nothing: a stack that never activates never settles.
    */
   whenStackActive(stack: StackId): Promise<Record<string, unknown>>;
+  /** E2E only: shorten the shell's dependency-recovery polling interval. */
+  setDependencyPollIntervalForTest(intervalMs: number): void;
 }
 
 export type StackControllerFactory = () => StackController;

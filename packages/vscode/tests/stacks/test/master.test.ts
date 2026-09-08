@@ -6,6 +6,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, rs } from '@rstest/core';
 import { logger } from '../../../src/stacks/test/logger';
 import { RstestApi } from '../../../src/stacks/test/master';
+import { nodeRequire } from '../../../src/stacks/test/nodeRequire';
 import {
   type NodeProbe,
   configuredNodeBelowFloor,
@@ -150,7 +151,7 @@ const createApi = (cwd = noCoreDir, rstestResolutionDir = cwd) => {
   );
 };
 
-const writeCoreInstall = (root: string) => {
+const writeCoreInstall = (root: string, version = '0.11.8') => {
   const packageDir = path.join(root, 'node_modules', '@rstest', 'core');
   const entry = path.join(packageDir, 'index.js');
   const bin = path.join(packageDir, 'bin', 'rstest.js');
@@ -159,7 +160,7 @@ const writeCoreInstall = (root: string) => {
     path.join(packageDir, 'package.json'),
     JSON.stringify({
       name: '@rstest/core',
-      version: '0.11.8',
+      version,
       main: 'index.js',
       bin: { rstest: 'bin/rstest.js' },
     }),
@@ -189,6 +190,7 @@ describe('RstestApi package-resolution anchor', () => {
     storeEntry = path.join(cwd, 'node_modules', '.pnpm', 'rstack@0.6.1');
     rstackDir = path.join(storeEntry, 'node_modules', 'rstack');
     fs.mkdirSync(rstackDir, { recursive: true });
+    loggedErrors.length = 0;
   });
 
   afterEach(() => {
@@ -227,6 +229,32 @@ describe('RstestApi package-resolution anchor', () => {
       entry: configured.entry,
       bin: configured.bin,
     });
+  });
+
+  it('deduplicates each unsupported-version message until a supported version resolves', () => {
+    writeCoreInstall(cwd, '0.5.0');
+    const api = createApi(cwd);
+
+    resolveRstestPaths(api);
+    resolveRstestPaths(api);
+    expect(loggedErrors).toEqual([
+      `Unsupported @rstest/core version 0.5.0 resolved from ${cwd}`,
+    ]);
+
+    writeCoreInstall(cwd, '0.4.0');
+    resolveRstestPaths(api);
+    expect(loggedErrors.at(-1)).toBe(
+      `Unsupported @rstest/core version 0.4.0 resolved from ${cwd}`,
+    );
+
+    writeCoreInstall(cwd);
+    resolveRstestPaths(api);
+    writeCoreInstall(cwd, '0.4.0');
+    resolveRstestPaths(api);
+    expect(loggedErrors).toHaveLength(3);
+
+    resolveRstestPaths(createApi(cwd));
+    expect(loggedErrors).toHaveLength(4);
   });
 });
 
@@ -336,6 +364,69 @@ describe('RstestApi with an unresolvable rstestPackagePath', () => {
     expect(shownMessages).toHaveLength(1);
     expect(shownMessages[0]).toContain('rstack.rstest.rstestPackagePath');
     expect(shownMessages[0]).toContain(configured);
+  });
+
+  it('deduplicates a resolution error until resolution succeeds', () => {
+    const root = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), 'rstest-vscode-')),
+    );
+    const installed = writeCoreInstall(root);
+    const api = createApi(root);
+    const resolve = () => (api as any).resolveRstestPath() as string;
+
+    try {
+      expect(resolve).toThrow();
+      expect(resolve).toThrow();
+      expect(shownMessages).toHaveLength(1);
+
+      settings.rstestPackagePath = path.join(
+        installed.packageDir,
+        'package.json',
+      );
+      expect(resolve()).toBe(installed.entry);
+
+      settings.rstestPackagePath = configured;
+      expect(resolve).toThrow();
+      expect(shownMessages).toHaveLength(2);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('deduplicates package metadata errors and toasts together until recovery', () => {
+    const root = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), 'rstest-log-')),
+    );
+    const installed = writeCoreInstall(root);
+    const metadata = path.join(installed.packageDir, 'package.json');
+    settings.rstestPackagePath = metadata;
+    loggedErrors.length = 0;
+    const original = nodeRequire.resolve;
+    let broken = true;
+    const spy = rs
+      .spyOn(nodeRequire, 'resolve')
+      .mockImplementation((specifier, options) => {
+        if (broken && specifier === metadata)
+          throw new Error('incomplete package metadata');
+        return original(specifier, options);
+      });
+    const api = createApi(root);
+    const resolve = () => (api as any).resolveRstestPath() as string;
+    try {
+      expect(resolve()).toBe('');
+      expect(resolve()).toBe('');
+      expect(shownMessages).toHaveLength(1);
+      expect(loggedErrors).toHaveLength(1);
+      broken = false;
+      expect(resolve()).toBe(installed.entry);
+      broken = true;
+      expect(resolve()).toBe('');
+      expect(shownMessages).toHaveLength(2);
+      expect(loggedErrors).toHaveLength(2);
+    } finally {
+      spy.mockRestore();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('should notify for a terminal run', () => {
@@ -544,4 +635,24 @@ describe('RstestApi worker spawn failures', () => {
     expect(shownMessages).toEqual([]);
     expect(crashes()).toEqual([]);
   });
+});
+
+it('closes the config worker when config evaluation rejects', async () => {
+  const api = createApi();
+  const close = rs.fn();
+  rs.spyOn(api, 'createChildProcess').mockResolvedValue({
+    rstestPath: '/project/rstest',
+    worker: {
+      getNormalizedConfig: async () => {
+        throw new SyntaxError('Invalid config');
+      },
+      $close: close,
+    },
+  } as never);
+  try {
+    await expect(api.getNormalizedConfig()).rejects.toThrow('Invalid config');
+    expect(close).toHaveBeenCalledTimes(1);
+  } finally {
+    api.dispose();
+  }
 });

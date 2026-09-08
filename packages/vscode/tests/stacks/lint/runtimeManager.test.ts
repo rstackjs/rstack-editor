@@ -65,6 +65,7 @@ interface FakeRuntime {
   releaseStart(): void;
   closes: number;
   aborted: boolean;
+  stopped: boolean;
 }
 
 function fakeRuntime(): FakeRuntime {
@@ -76,9 +77,11 @@ function fakeRuntime(): FakeRuntime {
     releaseStart,
     closes: 0,
     aborted: false,
+    stopped: false,
     runtime: {
       rootKey: 'core-key',
       workspaceFolder: folder,
+      isStopped: () => fake.stopped,
       sendDocumentOpen: async () => undefined,
       sendDocumentClose: async () => undefined,
       clearDocumentDiagnostics: () => undefined,
@@ -173,6 +176,53 @@ async function settleWithStartsReleased(
 }
 
 describe('RuntimeManager reconcile-during-start', () => {
+  it.each([false, true])(
+    'replaces a same-key runtime only when stopped=%s',
+    async (stopped) => {
+      const harness = createHarness();
+      const document = documentOf('/project/src/index.ts');
+      await settleWithStartsReleased(
+        harness,
+        harness.manager.reconcile(document),
+      );
+      harness.runtimes[0].stopped = stopped;
+
+      await settleWithStartsReleased(
+        harness,
+        harness.manager.reconcile(document),
+      );
+      expect(harness.runtimes).toHaveLength(stopped ? 2 : 1);
+      expect(harness.runtimes[0].closes).toBe(stopped ? 1 : 0);
+      expect(harness.failures).toEqual([]);
+      await harness.manager.close();
+    },
+  );
+
+  it('shares one replacement across stopped-runtime users and adopts its pending start', async () => {
+    const harness = createHarness();
+    const a = documentOf('/project/src/a.ts');
+    const b = documentOf('/project/src/b.ts');
+    await settleWithStartsReleased(
+      harness,
+      Promise.all([harness.manager.reconcile(a), harness.manager.reconcile(b)]),
+    );
+    harness.runtimes[0].stopped = true;
+    const first = harness.manager.reconcile(a);
+    const second = harness.manager.reconcile(b);
+    await rs.waitUntil(() => harness.runtimes.length === 2, WAIT);
+    const successor = harness.manager.reconcile(a);
+    await settleWithStartsReleased(
+      harness,
+      Promise.all([first, second, successor]),
+    );
+    expect(harness.runtimes).toHaveLength(2);
+    expect(harness.runtimes[0].closes).toBe(1);
+    expect(harness.runtimes[1].closes).toBe(0);
+    expect(harness.runtimes[1].aborted).toBe(false);
+    expect(harness.failures).toEqual([]);
+    await harness.manager.close();
+  });
+
   it('keeps the pending runtime when a second reconcile resolves to the same key', async () => {
     const harness = createHarness();
     const document = documentOf('/project/src/index.ts');

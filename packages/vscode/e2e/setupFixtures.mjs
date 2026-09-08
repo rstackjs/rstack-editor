@@ -32,9 +32,19 @@ export const FIXTURES = {
   rslint: path.join(FIXTURES_DIR, 'rslint'),
   rstest: path.join(FIXTURES_DIR, 'rstest'),
   rstack: path.join(FIXTURES_DIR, 'rstack'),
+  'fmt-missing-config-dependency': path.join(
+    FIXTURES_DIR,
+    'fmt-missing-config-dependency',
+  ),
   'rstest-workspace-1': path.join(here, 'rstest', 'fixtures', 'workspace-1'),
   'rstest-workspace-2': path.join(here, 'rstest', 'fixtures', 'workspace-2'),
   lint: path.join(here, 'lint', 'fixtures'),
+  'lint-dependency-recovery': path.join(
+    here,
+    'lint',
+    'fixtures',
+    'dependency-recovery',
+  ),
 };
 export const FIXTURE_NAMES = Object.keys(FIXTURES);
 

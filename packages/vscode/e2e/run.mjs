@@ -26,7 +26,7 @@ const SLICES = [
     // The shell/detection/fmt suites (`e2e/suite/`) over the multi-root
     // workspace of the three shared fixtures.
     name: 'vscode',
-    fixtures: ['rslint', 'rstest', 'rstack'],
+    fixtures: ['rslint', 'rstest', 'rstack', 'fmt-missing-config-dependency'],
     entry: 'tests-dist/e2e/runTest.js',
     compile: true,
   },
@@ -43,7 +43,7 @@ const SLICES = [
     // shared `rstack` fixture. `RSTACK_LINT_E2E_SUITES=<name,...>` filters
     // which suites run.
     name: 'lint',
-    fixtures: ['lint', 'rstack'],
+    fixtures: ['lint', 'lint-dependency-recovery', 'rstack'],
     entry: 'tests-dist/e2e/lint/runTest.js',
     compile: true,
   },
@@ -63,7 +63,7 @@ const run = (command, args, opts = {}) => {
   const result = spawnSync(command, args, {
     cwd: packageRoot,
     stdio: 'inherit',
-    env: process.env,
+    env: { ...process.env, RSTACK_E2E_RECORD_WARNINGS: '1' },
     // With `shell: true` Node concatenates command and args UNESCAPED, so a
     // path containing spaces (the checkout, `process.execPath`) would fall
     // apart into several arguments — callers opt in only where the command

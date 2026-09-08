@@ -22,6 +22,12 @@ import {
 import { loadCoreInstallation } from './core';
 import { ActivationFingerprinter } from './fingerprint';
 import { logger } from './logger';
+import {
+  CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
+  isConfigSourceChangeDuringTransaction,
+  type ConfigDependencyStatusNotification,
+} from './configDependencyProtocol';
+import type { ConfigDependencyFailure } from '../../../shared/notInstalled';
 
 const GRACEFUL_EXIT_TIMEOUT_MS = 500;
 const FORCED_EXIT_TIMEOUT_MS = 1_500;
@@ -136,6 +142,7 @@ function forwardRequest(
 interface EditorProxyOptions {
   readonly protocolVersion: number;
   readonly configPath?: string;
+  takeConfigStatus(): ConfigDependencyStatusNotification;
   observeRefresh(reason: unknown): void;
   requestStop(request: StopRequest): void;
 }
@@ -149,15 +156,41 @@ export function registerEditorProxy(
     if (method === 'rslint/configRefresh') {
       const refresh = params as ConfigRefreshParams;
       options.observeRefresh(refresh?.reason);
-      return goConnection.sendRequest(
-        method,
-        stampConfigRefresh(
-          refresh,
-          options.protocolVersion,
-          options.configPath,
-        ),
-        token,
-      );
+      try {
+        const result = await goConnection.sendRequest(
+          method,
+          stampConfigRefresh(
+            refresh,
+            options.protocolVersion,
+            options.configPath,
+          ),
+          token,
+        );
+        await editorConnection.sendNotification(
+          CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
+          options.takeConfigStatus(),
+        );
+        return result;
+      } catch (error) {
+        const status = options.takeConfigStatus();
+        // The editor already retries this transaction race during startup.
+        // Leave its rejection untouched and send no premature failure (or
+        // success) verdict; the startup catch reports once if retries exhaust.
+        if (isConfigSourceChangeDuringTransaction(error)) throw error;
+        await editorConnection.sendNotification(
+          CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
+          status.kind === 'ok'
+            ? {
+                kind: 'error',
+                message: (error instanceof Error
+                  ? error.message
+                  : String(error)
+                ).split('\n', 1)[0],
+              }
+            : status,
+        );
+        throw error;
+      }
     }
     return forwardRequest(goConnection, method, params, token);
   });
@@ -193,11 +226,25 @@ export async function runLintWorker(
     logger,
     installation.createPluginLintHost,
   );
+  let configDependencyFailure: ConfigDependencyFailure | undefined;
+  let configError: string | undefined;
   const adapter = new LspConfigTransactionAdapter(
     installation.createConfigModuleHost(),
     pluginLintPool,
     (activation) => fingerprinter.compute(activation),
     installation.protocolVersion,
+    {
+      resolveFrom: (candidate) =>
+        candidate.configPath === options.configPath
+          ? process.cwd()
+          : candidate.configDirectory,
+      report: (failure) => {
+        configDependencyFailure ??= failure;
+      },
+      reportError: (message) => {
+        configError ??= message;
+      },
+    },
   );
 
   const stop = deferred<StopRequest>();
@@ -212,6 +259,15 @@ export async function runLintWorker(
   registerEditorProxy(editorConnection, goConnection, {
     protocolVersion: installation.protocolVersion,
     configPath: options.configPath,
+    takeConfigStatus: () => {
+      const failure = configDependencyFailure;
+      const message = configError;
+      configDependencyFailure = undefined;
+      configError = undefined;
+      if (message !== undefined) return { kind: 'error', message };
+      if (failure !== undefined) return { kind: 'missing', failure };
+      return { kind: 'ok' };
+    },
     observeRefresh: (reason) => fingerprinter.observeRefresh(reason),
     requestStop,
   });

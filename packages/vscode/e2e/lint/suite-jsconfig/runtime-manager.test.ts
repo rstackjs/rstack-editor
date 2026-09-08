@@ -78,6 +78,10 @@ class FakeRuntime implements ManagedRslintRuntime {
   startCalls = 0;
   closeCalls = 0;
 
+  isStopped(): boolean {
+    return this.closeCalls > 0;
+  }
+
   constructor(
     readonly rootKey: string,
     readonly workspaceFolder: WorkspaceFolder,

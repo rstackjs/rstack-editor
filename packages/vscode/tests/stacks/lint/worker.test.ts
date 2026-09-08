@@ -4,12 +4,22 @@ import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from '@rstest/core';
+import type {
+  ConfigModuleActivationPlan,
+  LoadConfigsRequest,
+  LoadConfigsResponse,
+} from '@rslint/core/config-loader';
 import { createMessageConnection, NullLogger } from 'vscode-jsonrpc/node';
 import {
   LINT_WORKER_USAGE,
   parseWorkerArgs,
   stampConfigRefresh,
 } from '../../../src/stacks/lint/worker/cli';
+import { LspConfigTransactionAdapter } from '../../../src/stacks/lint/worker/ConfigTransactionAdapter';
+import {
+  CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
+  type ConfigDependencyStatusNotification,
+} from '../../../src/stacks/lint/worker/configDependencyProtocol';
 import { registerEditorProxy } from '../../../src/stacks/lint/worker/index';
 
 const fakeGoSource = String.raw`
@@ -28,6 +38,18 @@ function handle(message) {
   }
   if (message.id === undefined) return;
   const hasParams = Object.prototype.hasOwnProperty.call(message, 'params');
+  if (
+    message.method === 'rslint/configRefresh' &&
+    ['reject', 'changed'].includes(message.params?.reason)
+  ) {
+    send({
+      jsonrpc: '2.0',
+      id: message.id,
+      error: { code: -32603, message: message.params.reason === 'changed'
+        ? 'config changed while loading' : 'refresh rejected' },
+    });
+    return;
+  }
   send({
     jsonrpc: '2.0',
     id: message.id,
@@ -135,14 +157,35 @@ describe('lint worker config refresh', () => {
     );
     const configPath = path.resolve('/project/rslintConfig.js');
     const observedReasons: unknown[] = [];
+    const notificationFailure = {
+      configPath: '/project/rslint.config.mjs',
+      cause: "Cannot find package 'missing'",
+    };
+    const notifications: ConfigDependencyStatusNotification[] = [];
+    let activeFailure:
+      { readonly configPath: string; readonly cause: string } | undefined =
+      notificationFailure;
 
     try {
       registerEditorProxy(workerConnection, goConnection, {
         protocolVersion: 2,
         configPath,
+        takeConfigStatus: () => {
+          const failure = activeFailure;
+          activeFailure = undefined;
+          if (failure !== undefined)
+            return { kind: 'missing' as const, failure };
+          return { kind: 'ok' as const };
+        },
         observeRefresh: (reason) => observedReasons.push(reason),
         requestStop: () => undefined,
       });
+      editorConnection.onNotification(
+        CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
+        (notification: ConfigDependencyStatusNotification) => {
+          notifications.push(notification);
+        },
+      );
       goConnection.listen();
       workerConnection.listen();
       editorConnection.listen();
@@ -162,6 +205,33 @@ describe('lint worker config refresh', () => {
         },
       });
       expect(observedReasons).toEqual(['config-change']);
+      expect(notifications).toEqual([
+        { kind: 'missing', failure: notificationFailure },
+      ]);
+
+      await expect(
+        editorConnection.sendRequest('rslint/configRefresh', {
+          reason: 'reject',
+        }),
+      ).rejects.toThrow('refresh rejected');
+      expect(observedReasons).toEqual(['config-change', 'reject']);
+      expect(notifications).toEqual([
+        { kind: 'missing', failure: notificationFailure },
+        { kind: 'error', message: 'refresh rejected' },
+      ]);
+
+      activeFailure = notificationFailure;
+      await expect(
+        editorConnection.sendRequest('rslint/configRefresh', {
+          reason: 'changed',
+        }),
+      ).rejects.toThrow('config changed while loading');
+      expect(notifications).toHaveLength(2);
+
+      await editorConnection.sendRequest('rslint/configRefresh', {
+        reason: 'initial',
+      });
+      expect(notifications.at(-1)).toEqual({ kind: 'ok' });
 
       const shutdown = await editorConnection.sendRequest<{
         readonly method: string;
@@ -183,5 +253,247 @@ describe('lint worker config refresh', () => {
       workerToEditor.destroy();
       fs.rmSync(directory, { recursive: true, force: true });
     }
+  });
+});
+
+describe('lint worker config dependency classification', () => {
+  it('prefers a real candidate error over a missing dependency in the same refresh', async () => {
+    let missing: { configPath: string; cause: string } | undefined;
+    let configError: string | undefined;
+    const observer = {
+      resolveFrom: () => '/project',
+      report: (failure: NonNullable<typeof missing>) => {
+        missing = failure;
+      },
+      reportError: (message: string) => {
+        configError ??= message;
+      },
+    };
+    const adapter = new LspConfigTransactionAdapter(
+      {
+        loadConfigs: async () => ({
+          transactionId: 'mixed',
+          results: [
+            {
+              id: 'missing',
+              status: 'failed' as const,
+              error: {
+                code: 'ERR_MODULE_NOT_FOUND',
+                message: "Cannot find package 'absent'",
+              },
+            },
+            {
+              id: 'broken',
+              status: 'failed' as const,
+              error: {
+                code: 'SyntaxError',
+                message: 'SyntaxError: Unexpected token\n    at config.ts:1',
+              },
+            },
+          ],
+        }),
+        activateConfigs: async () => {
+          throw new Error('unused');
+        },
+        deleteSession: () => true,
+      },
+      {
+        prepare: async () => true,
+        commit: async () => true,
+        abort: async () => {},
+      },
+      () => 'fingerprint',
+      3,
+      observer,
+    );
+    const notifications: unknown[] = [];
+    let refresh!: (method: string, params: unknown) => Promise<unknown>;
+    const options = {
+      protocolVersion: 3,
+      takeConfigStatus: () =>
+        configError !== undefined
+          ? { kind: 'error' as const, message: configError }
+          : missing !== undefined
+            ? { kind: 'missing' as const, failure: missing }
+            : { kind: 'ok' as const },
+      observeRefresh() {},
+      requestStop() {},
+    };
+    registerEditorProxy(
+      {
+        onRequest: (handler: typeof refresh) => {
+          refresh = handler;
+        },
+        onNotification() {},
+        sendNotification: async (_method: string, value: unknown) => {
+          notifications.push(value);
+        },
+      } as never,
+      {
+        sendRequest: async () => {
+          await adapter.loadConfigs({
+            protocolVersion: 3,
+            transactionId: 'mixed',
+            loadMode: 'fresh',
+            candidates: ['missing', 'broken'].map((id) => ({
+              id,
+              configPath: `/project/${id}.config.ts`,
+              configDirectory: '/project',
+            })),
+          });
+          throw new Error('config refresh failed');
+        },
+      } as never,
+      options,
+    );
+    await expect(
+      refresh('rslint/configRefresh', { reason: 'initial' }),
+    ).rejects.toThrow('config refresh failed');
+    expect(notifications).toEqual([
+      { kind: 'error', message: 'SyntaxError: Unexpected token' },
+    ]);
+  });
+
+  it('reports and truncates only the first classified failed candidate', async () => {
+    const firstMessage =
+      "Cannot find module 'first-missing'\nRequire stack:\n- /project/first.config.cjs";
+    const secondMessage =
+      "Cannot find package 'second-missing' imported from /project/second.config.mjs";
+    const host = {
+      loadConfigs: async (): Promise<LoadConfigsResponse> => ({
+        transactionId: 'transaction',
+        results: [
+          {
+            id: 'first',
+            status: 'failed',
+            error: { code: 'MODULE_NOT_FOUND', message: firstMessage },
+          },
+          {
+            id: 'second',
+            status: 'failed',
+            error: { code: 'ERR_MODULE_NOT_FOUND', message: secondMessage },
+          },
+        ],
+      }),
+      activateConfigs: async () => {
+        throw new Error('not used');
+      },
+      deleteSession: () => true,
+    };
+    const pluginLintPool = {
+      prepare: async () => true,
+      commit: async () => true,
+      abort: async () => undefined,
+    };
+    const failures: Array<{ configPath: string; cause: string }> = [];
+    const adapter = new LspConfigTransactionAdapter(
+      host,
+      pluginLintPool,
+      (_plan: ConfigModuleActivationPlan) => 'fingerprint',
+      3,
+      {
+        resolveFrom: (candidate) => candidate.configDirectory,
+        report: (failure) => failures.push(failure),
+        reportError: () => {
+          throw new Error('unexpected config error');
+        },
+      },
+    );
+    const request: LoadConfigsRequest = {
+      protocolVersion: 3,
+      transactionId: 'transaction',
+      loadMode: 'cached',
+      candidates: [
+        {
+          id: 'first',
+          configPath: '/project/first.config.cjs',
+          configDirectory: '/project',
+        },
+        {
+          id: 'second',
+          configPath: '/project/second.config.mjs',
+          configDirectory: '/project',
+        },
+      ],
+    };
+
+    const response = await adapter.loadConfigs(request);
+
+    expect(failures).toEqual([
+      {
+        configPath: '/project/first.config.cjs',
+        cause: "Cannot find module 'first-missing'",
+      },
+    ]);
+    expect(response.results).toEqual([
+      {
+        id: 'first',
+        status: 'failed',
+        error: {
+          code: 'MODULE_NOT_FOUND',
+          message: "Cannot find module 'first-missing'",
+        },
+      },
+      {
+        id: 'second',
+        status: 'failed',
+        error: { code: 'ERR_MODULE_NOT_FOUND', message: secondMessage },
+      },
+    ]);
+  });
+
+  it('leaves an unclassified failed result untouched', async () => {
+    const response: LoadConfigsResponse = {
+      transactionId: 'transaction',
+      results: [
+        {
+          id: 'config',
+          status: 'failed',
+          error: {
+            code: 'ERR_MODULE_NOT_FOUND',
+            message: "Cannot find package './relative.js'",
+          },
+        },
+      ],
+    };
+    const failures: Array<{ configPath: string; cause: string }> = [];
+    const adapter = new LspConfigTransactionAdapter(
+      {
+        loadConfigs: async () => response,
+        activateConfigs: async () => {
+          throw new Error('not used');
+        },
+        deleteSession: () => true,
+      },
+      {
+        prepare: async () => true,
+        commit: async () => true,
+        abort: async () => undefined,
+      },
+      () => 'fingerprint',
+      3,
+      {
+        resolveFrom: () => '/project',
+        report: (failure) => failures.push(failure),
+        reportError: (message) =>
+          expect(message).toBe("Cannot find package './relative.js'"),
+      },
+    );
+
+    const result = await adapter.loadConfigs({
+      protocolVersion: 3,
+      transactionId: 'transaction',
+      loadMode: 'cached',
+      candidates: [
+        {
+          id: 'config',
+          configPath: '/project/rslint.config.mjs',
+          configDirectory: '/project',
+        },
+      ],
+    });
+
+    expect(result).toEqual(response);
+    expect(failures).toEqual([]);
   });
 });

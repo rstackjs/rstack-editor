@@ -1,4 +1,5 @@
 import vscode from 'vscode';
+import { isFailedStackState } from '../../types';
 import type {
   DetectionSnapshot,
   StackContext,
@@ -38,16 +39,6 @@ import { WorkspaceDocumentRouter } from './WorkspaceDocumentRouter';
  * upstream's `Extension.ts` owns — the document and topology triggers — plus
  * the per-folder status fold the shell requires.
  */
-
-/**
- * The one core-topology signal the shell's detection watcher does not carry:
- * a core swapped in place. Lockfiles — upstream's other half of this glob —
- * are already detection's business, and a detection pass notifies this stack
- * even when the folder set is unchanged. `files.watcherExclude` hides
- * `node_modules` by default, so in practice the lockfile path is the one that
- * fires; this watcher costs nothing and covers the rest.
- */
-const CORE_TOPOLOGY_GLOB = '**/node_modules/@rslint/core/package.json';
 
 /** Everything one detected folder contributes to its status fold. */
 interface FolderStates {
@@ -105,9 +96,21 @@ class RslintController implements StackController {
       context.onDidChangeDetection((snapshot) => {
         this.#snapshot = snapshot;
         this.pruneDepartedFolders();
-        // A detection pass fires on config topology and lockfile changes —
-        // exactly the moments a document's core may have appeared, moved or
-        // changed ownership. This replaces the coordinator's `retryFailedRoots`.
+        for (const runtime of this.#runtimes.values()) {
+          runtime.setBridgeConfigPath(
+            snapshot.forFolder(runtime.workspaceFolder)?.rootRstackConfigPath,
+          );
+          void runtime.retryConfigDependency()?.catch((error: unknown) => {
+            if (!runtime.hasConfigDependencyFailure()) {
+              this.#logger?.error(
+                'Failed to retry Rslint config dependency discovery',
+                error,
+              );
+            }
+          });
+        }
+        // A user config can hang indefinitely. Other documents must still
+        // re-resolve their cores on this pass; refreshes run independently.
         this.reconcileOpenDocuments('detection change');
       }),
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
@@ -127,18 +130,6 @@ class RslintController implements StackController {
       vscode.workspace.onDidCloseTextDocument((document) => {
         this.#runtimeManager?.documentClosed(document);
       }),
-    );
-
-    const topologyWatcher =
-      vscode.workspace.createFileSystemWatcher(CORE_TOPOLOGY_GLOB);
-    const onTopologyChange = () => {
-      this.reconcileOpenDocuments('dependency change');
-    };
-    this.#subscriptions.push(
-      topologyWatcher,
-      topologyWatcher.onDidCreate(onTopologyChange),
-      topologyWatcher.onDidChange(onTopologyChange),
-      topologyWatcher.onDidDelete(onTopologyChange),
     );
 
     this.publishStatus();
@@ -209,33 +200,38 @@ class RslintController implements StackController {
           // upstream's error. A document with a last-good runtime still
           // lints, so its consequence says what it keeps, not "will not".
           const missing = missingPackageOf(error);
-          if (missing !== undefined) {
-            logger.warn(
-              formatNotInstalledLog(
+          const status = statusForRslintStartFailure(error);
+          const attributed = resolved
+            ? attributeToCore(status, resolved.installation.packageDirectory)
+            : status;
+          const previous = this.#folderStates
+            .get(folderKeyOf(workspaceFolder))
+            ?.failures.get(document.uri.toString());
+          if (JSON.stringify(previous) !== JSON.stringify(attributed)) {
+            if (missing !== undefined) {
+              const warning = formatNotInstalledLog(
                 missing,
                 workspaceFolder.name,
                 workspaceFolder.uri.fsPath,
                 `${document.uri} ${keeping ? `keeps ${keeping}` : 'will not lint'} until it is installed`,
-              ),
-            );
-          } else {
-            logger.error(
-              formatCoreSelectionFailure(document.uri.toString(), keeping),
-              error,
-            );
+              );
+              logger.warn(warning);
+            } else {
+              logger.error(
+                formatCoreSelectionFailure(document.uri.toString(), keeping),
+                error,
+              );
+            }
           }
           // Last-good semantics: the document keeps whatever runtime it had.
           // The failure is still the folder's worst news, so it is folded in
           // beside the runtimes rather than shown as a toast. A start failure
           // outlives its (already closed) runtime here, so it names the core.
-          const status = statusForRslintStartFailure(error);
           this.setState(
             folderKeyOf(workspaceFolder),
             'failures',
             document.uri.toString(),
-            resolved
-              ? attributeToCore(status, resolved.installation.packageDirectory)
-              : status,
+            attributed,
           );
         },
         onDocumentSettled: (document) => {
@@ -283,6 +279,9 @@ class RslintController implements StackController {
         }
       },
     });
+    runtime.setBridgeConfigPath(
+      this.#snapshot?.forFolder(workspaceFolder)?.rootRstackConfigPath,
+    );
     this.#runtimes.set(resolved.key, runtime);
     return runtime;
   }
@@ -380,6 +379,17 @@ class RslintController implements StackController {
         })),
       ),
     );
+  }
+
+  hasFailedState(): boolean {
+    for (const states of this.#folderStates.values()) {
+      for (const bucket of [states.runtimes, states.failures]) {
+        for (const state of bucket.values()) {
+          if (isFailedStackState(state.kind)) return true;
+        }
+      }
+    }
+    return false;
   }
 
   private async closeRuntimeManager(): Promise<void> {

@@ -27,6 +27,8 @@ const STACK_FACTORIES: Readonly<Record<StackId, StackControllerFactory>> = {
 /** Stacks that run project-loading children on the shared User Node runtime. */
 const USER_NODE_STACKS: readonly StackId[] = ['rslint', 'rstest', 'fmt'];
 
+const DEFAULT_DEPENDENCY_POLL_INTERVAL_MS = 60_000;
+
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? (error.stack ?? error.message) : String(error);
 
@@ -57,6 +59,9 @@ class ExtensionShell {
   >();
 
   #reconciling: Promise<void> = Promise.resolve();
+  #dependencyPollIntervalMs = DEFAULT_DEPENDENCY_POLL_INTERVAL_MS;
+  #dependencyPollTimer: ReturnType<typeof setTimeout> | undefined;
+  #dependencyPollInFlight = false;
   #disposed = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {
@@ -219,6 +224,55 @@ class ExtensionShell {
     void this.reconcile();
   }
 
+  private get dependencyPollNeeded(): boolean {
+    if (this.#disposed) return false;
+    for (const controller of this.#controllers.values()) {
+      if (controller.hasFailedState()) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Starts one recursive timer only while a live controller owns a
+   * failed state. The timer enters the same shell queue as every
+   * reconcile/restart, then sends the same forced detection event as a
+   * lockfile change; each stack therefore reuses its existing retry path.
+   */
+  private syncDependencyPoll(): void {
+    if (this.#dependencyPollInFlight) return;
+    if (!this.dependencyPollNeeded) {
+      if (this.#dependencyPollTimer !== undefined) {
+        clearTimeout(this.#dependencyPollTimer);
+        this.#dependencyPollTimer = undefined;
+      }
+      return;
+    }
+    if (this.#dependencyPollTimer !== undefined) {
+      return;
+    }
+    this.#dependencyPollTimer = setTimeout(() => {
+      this.#dependencyPollTimer = undefined;
+      this.#dependencyPollInFlight = true;
+      void this.enqueue(async () => {
+        if (!this.dependencyPollNeeded) {
+          return;
+        }
+        try {
+          await this.#detection.refreshForDependencyChange();
+        } catch (error) {
+          if (!this.#disposed) {
+            this.#channels.shell.error(
+              `Dependency recovery detection failed: ${errorMessage(error)}`,
+            );
+          }
+        }
+      }).finally(() => {
+        this.#dependencyPollInFlight = false;
+        this.syncDependencyPoll();
+      });
+    }, this.#dependencyPollIntervalMs);
+  }
+
   /**
    * `rstack.restart` (every stack) and `rstack.<stack>.restart` (one) — a full
    * reset, not a "retry whatever looks broken".
@@ -324,6 +378,7 @@ class ExtensionShell {
     next?: StackState,
   ): Promise<void> {
     this.#controllers.delete(stack);
+    this.syncDependencyPoll();
     await this.disposeController(stack, controller);
     if (!next || this.#disposed) {
       return;
@@ -387,7 +442,9 @@ class ExtensionShell {
         stack,
         extensionContext: this.context,
         output: this.#channels.forStack(stack),
-        status: this.#statusBar.reporterFor(stack),
+        status: this.#statusBar.reporterFor(stack, () =>
+          this.syncDependencyPoll(),
+        ),
         detection: snapshot,
         onDidChangeDetection: this.#detectionEmitter.event,
       });
@@ -403,6 +460,7 @@ class ExtensionShell {
       }
       await this.setContextKey(`rstack.${stack}.active`, true);
       this.#statusBar.setActive(stack, true);
+      this.syncDependencyPoll();
       this.#channels.shell.info(`${STACK_LABELS[stack]} registered`);
     } catch (error) {
       await this.retire(stack, controller, {
@@ -456,6 +514,7 @@ class ExtensionShell {
 
   buildExports(): RstackExtensionExports {
     return {
+      getRecordedWarnings: (stack) => this.#channels.getRecordedWarnings(stack),
       getStackExports: (stack) => this.#stackExports.get(stack),
       whenStackActive: (stack) => {
         const current = this.#stackExports.get(stack);
@@ -467,6 +526,17 @@ class ExtensionShell {
           waiters.push(resolve);
           this.#stackExportWaiters.set(stack, waiters);
         });
+      },
+      setDependencyPollIntervalForTest: (intervalMs) => {
+        if (!Number.isFinite(intervalMs) || intervalMs < 1) {
+          throw new Error('dependency poll interval must be a positive number');
+        }
+        this.#dependencyPollIntervalMs = intervalMs;
+        if (this.#dependencyPollTimer !== undefined) {
+          clearTimeout(this.#dependencyPollTimer);
+          this.#dependencyPollTimer = undefined;
+        }
+        this.syncDependencyPoll();
       },
     };
   }
@@ -483,6 +553,10 @@ class ExtensionShell {
 
   async dispose(): Promise<void> {
     this.#disposed = true;
+    if (this.#dependencyPollTimer !== undefined) {
+      clearTimeout(this.#dependencyPollTimer);
+      this.#dependencyPollTimer = undefined;
+    }
     // Before the wait below, not after it: the service holds a debounce timer
     // and its own watchers, so leaving it live means a file touched during
     // shutdown can start a fresh detection pass behind us.

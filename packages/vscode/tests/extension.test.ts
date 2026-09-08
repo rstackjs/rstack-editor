@@ -13,11 +13,15 @@ import {
   STACK_IDS,
   stackCommand,
   stackCommandTitle,
+  type StatusReporter,
 } from '../src/types';
 
 interface FakeController {
   readonly restartOnSettings?: readonly string[];
-  register(): Promise<Record<string, unknown>>;
+  register(context: {
+    status: StatusReporter;
+  }): Promise<Record<string, unknown>>;
+  hasFailedState(): boolean;
   dispose(): Promise<void>;
 }
 
@@ -56,6 +60,8 @@ const harness = rs.hoisted(() => {
     events: [] as string[],
     /** One entry per detection pass the shell asked for. */
     refreshes: 0,
+    /** Forced unchanged passes issued by the dependency-recovery timer. */
+    dependencyRefreshes: 0,
     /** Everything the shell wrote to its own output channel. */
     shellLog: [] as string[],
     commands: new Map<string, (...args: unknown[]) => unknown>(),
@@ -70,10 +76,16 @@ const harness = rs.hoisted(() => {
     settings: new Map<string, unknown>(),
     /** How often `runRestart` reset the host-scoped User Node memo. */
     nodeResets: 0,
+    /** Stacks with a raw failed state, independent of the aggregate report. */
+    failed: new Set<string>(),
+    /** Shell-wrapped reporters handed to the fake controllers. */
+    reporters: new Map<string, StatusReporter>(),
     /** Every configuration listener the shell installed. */
     configListeners: [] as ((event: {
       affectsConfiguration(section: string): boolean;
     }) => void)[],
+    /** Detection change callbacks, wrapped so tests can publish a fresh snapshot. */
+    detectionListeners: [] as Array<() => void>,
   });
   const state = {
     ...defaults(),
@@ -83,8 +95,9 @@ const harness = rs.hoisted(() => {
     controller(stack: string): FakeController {
       return {
         restartOnSettings: state.restartOnSettings.get(stack),
-        register: async () => {
+        register: async ({ status }) => {
           state.events.push(`register:${stack}`);
+          state.reporters.set(stack, status);
           const block = state.blockRegister.get(stack);
           if (block) {
             state.registering.add(stack);
@@ -96,8 +109,10 @@ const harness = rs.hoisted(() => {
           }
           return { stack };
         },
+        hasFailedState: () => state.failed.has(stack),
         dispose: async () => {
           state.events.push(`dispose:${stack}`);
+          state.reporters.delete(stack);
           if (state.registering.has(stack)) {
             state.overlaps.push(stack);
           }
@@ -231,7 +246,18 @@ rs.mock('../src/detection', () => {
     forFolder: () => undefined,
   });
   class DetectionService {
-    readonly onDidChange = () => ({ dispose: () => undefined });
+    readonly onDidChange = (
+      listener: (value: ReturnType<typeof snapshot>) => void,
+    ) => {
+      const emit = () => listener(snapshot());
+      harness.detectionListeners.push(emit);
+      return {
+        dispose: () => {
+          const index = harness.detectionListeners.indexOf(emit);
+          if (index >= 0) harness.detectionListeners.splice(index, 1);
+        },
+      };
+    };
     get snapshot() {
       return snapshot();
     }
@@ -240,6 +266,10 @@ rs.mock('../src/detection', () => {
     }
     async refresh() {
       harness.refreshes += 1;
+      return this.snapshot;
+    }
+    async refreshForDependencyChange() {
+      harness.dependencyRefreshes += 1;
       return this.snapshot;
     }
     dispose() {}
@@ -304,6 +334,15 @@ const changeSetting = (...sections: string[]): void => {
  */
 const settle = (): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, 0));
+
+const waitFor = async (predicate: () => boolean): Promise<void> => {
+  const deadline = Date.now() + 1_000;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error('timed out waiting for the shell condition');
+};
 
 /**
  * Restart is a shell concern, so *which settings trigger one* is too: a stack
@@ -432,6 +471,60 @@ describe('restart-triggering settings', () => {
     changeSetting('rstack.rstest.nodeExecutable');
     await settle();
     expect(harness.events).toEqual([]);
+  });
+});
+
+describe('dependency recovery polling', () => {
+  beforeEach(() => {
+    harness.reset();
+    harness.detected = new Set(['rslint']);
+  });
+
+  afterEach(async () => {
+    await deactivate();
+  });
+
+  it.each(['crashed', 'version-mismatch'] as const)(
+    'polls through the forced detection path while %s',
+    async (kind) => {
+      const exports = await activate(context);
+      exports.setDependencyPollIntervalForTest(5);
+      harness.failed.add('rslint');
+      harness.reporters.get('rslint')?.report({ kind, detail: 'retry needed' });
+
+      await waitFor(() => harness.dependencyRefreshes > 0);
+      expect(harness.refreshes).toBe(0);
+
+      const beforeRealError = harness.dependencyRefreshes;
+      harness.reporters.get('rslint')?.crashed('half-written package');
+      await waitFor(() => harness.dependencyRefreshes > beforeRealError);
+
+      harness.failed.delete('rslint');
+      harness.reporters.get('rslint')?.running();
+      const completed = harness.dependencyRefreshes;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(harness.dependencyRefreshes).toBe(completed);
+    },
+  );
+
+  it('queues a poll tick behind an in-flight reconcile', async () => {
+    const exports = await activate(context);
+    exports.setDependencyPollIntervalForTest(5);
+
+    const blockedRegister = Promise.withResolvers<void>();
+    harness.blockRegister.set('fmt', blockedRegister.promise);
+    harness.detected.add('fmt');
+    for (const emit of harness.detectionListeners) emit();
+    await waitFor(() => harness.registering.has('fmt'));
+
+    harness.failed.add('rslint');
+    harness.reporters.get('rslint')?.report({ kind: 'disabled' });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(harness.dependencyRefreshes).toBe(0);
+
+    blockedRegister.resolve();
+    await waitFor(() => harness.dependencyRefreshes > 0);
+    expect(harness.overlaps).toEqual([]);
   });
 });
 

@@ -26,6 +26,9 @@ import {
   type ServerOptions,
   State,
 } from 'vscode-languageclient/node';
+import { MessageLatch } from '../../shared/messageLatch';
+import { displayPath } from '../../shared/displayPath';
+import { NotInstalledEpisode } from '../../shared/notInstalled';
 import {
   configuredNodeBelowFloor,
   NodePreflightError,
@@ -37,6 +40,11 @@ import type { CoreInstallation } from './CoreResolver';
 import { LanguageServerProcessOwner } from './LanguageServerProcessOwner';
 import type { Logger } from './logger';
 import type { RslintMode } from './resolution';
+import {
+  CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
+  isConfigSourceChangeDuringTransaction,
+  type ConfigDependencyStatusNotification,
+} from './worker/configDependencyProtocol';
 import {
   RslintVersionMismatchError,
   runningRslintStatus,
@@ -125,19 +133,6 @@ export function configRefreshReasonForPath(
   return (LOCKFILE_NAMES as readonly string[]).includes(path.basename(filePath))
     ? 'dependency-change'
     : 'config-change';
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-export function isConfigSourceChangeDuringTransaction(error: unknown): boolean {
-  if (!isRecord(error)) return false;
-  return (
-    error.code === 'CONFIG_CHANGED_DURING_LOAD' ||
-    (typeof error.message === 'string' &&
-      error.message.includes('config changed while'))
-  );
 }
 
 export async function retryConfigRefreshOnSourceChange(
@@ -314,6 +309,7 @@ export class Rslint implements Disposable {
   public readonly workspaceFolder: WorkspaceFolder;
   private readonly router: WorkspaceDocumentRouter;
   private readonly reportStatus: RslintStatusSink;
+  private bridgeConfigPath: string | undefined;
   private readonly installation: CoreInstallation;
   private readonly lspOutputChannel: OutputChannel;
   private readonly outputChannel: OutputChannel;
@@ -326,6 +322,10 @@ export class Rslint implements Disposable {
   private stateWatcher: Disposable | undefined;
   private lifecycleEpoch = 0;
   private advisory: string | undefined;
+  private readonly configDependencyEpisode = new NotInstalledEpisode();
+  private configDependencyRetryPending = false;
+  private configRefreshFailed = false;
+  private readonly configError = new MessageLatch();
   private startPromise: Promise<void> | undefined;
   private startOperation: Promise<void> | undefined;
   private clientStartPromise: Promise<void> | undefined;
@@ -344,12 +344,59 @@ export class Rslint implements Disposable {
     this.onClosed = options.onClosed;
   }
 
+  public setBridgeConfigPath(configPath: string | undefined): void {
+    if (this.installation.mode === 'bridged')
+      this.bridgeConfigPath = configPath;
+  }
+
   private report(state: StackState): void {
     this.reportStatus(state);
   }
 
   private reportRunning(): void {
+    if (this.configRefreshFailed || this.hasConfigDependencyFailure()) return;
     this.report(runningRslintStatus(this.advisory));
+  }
+
+  private handleConfigDependencyStatus(
+    notification: ConfigDependencyStatusNotification,
+  ): void {
+    if (notification.kind === 'error') {
+      this.configRefreshFailed = true;
+      this.report({ kind: 'crashed', detail: notification.message });
+      this.configDependencyEpisode.clear();
+      if (this.configError.changed(notification.message)) {
+        this.logger.error(
+          `Failed to refresh config discovery: ${notification.message}`,
+        );
+      }
+      return;
+    }
+    this.configError.clear();
+    const wasFailed = this.configRefreshFailed;
+    this.configRefreshFailed = false;
+    if (notification.kind === 'ok') {
+      const wasMissing = this.configDependencyEpisode.clear();
+      if ((wasMissing || wasFailed) && this.isRunning()) this.reportRunning();
+      return;
+    }
+    const failure = notification.failure;
+    const physicalPath =
+      failure.configPath === this.installation.shimPath && this.bridgeConfigPath
+        ? this.bridgeConfigPath
+        : failure.configPath;
+    const report = this.configDependencyEpisode.observe(
+      'rslint',
+      displayPath(this.workspaceFolder.uri.fsPath, physicalPath),
+      failure.cause,
+    );
+    if (report.warning !== undefined) {
+      this.logger.warn(report.warning);
+    }
+    this.report({
+      kind: 'disabled',
+      reason: report.reason,
+    });
   }
 
   public async start(signal: AbortSignal): Promise<void> {
@@ -374,7 +421,9 @@ export class Rslint implements Disposable {
   }
 
   private reportStartFailure(error: unknown): void {
-    if (this.isPlannedStartAbort(error)) return;
+    if (this.isPlannedStartAbort(error) || this.hasConfigDependencyFailure()) {
+      return;
+    }
     this.report(statusForRslintStartFailure(error));
   }
 
@@ -441,6 +490,12 @@ export class Rslint implements Disposable {
       serverOptions,
       clientOptions,
     );
+    client.onNotification(
+      CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
+      (notification: ConfigDependencyStatusNotification) => {
+        this.handleConfigDependencyStatus(notification);
+      },
+    );
     errorHandlerHolder.current = client.createDefaultErrorHandler();
     this.client = client;
     this.stateWatcher = client.onDidChangeState((event) => {
@@ -492,7 +547,12 @@ export class Rslint implements Disposable {
             );
           },
           (error: unknown) => {
-            this.logger.error('Failed to recover after server restart', error);
+            if (!this.hasConfigDependencyFailure()) {
+              this.logger.error(
+                'Failed to recover after server restart',
+                error,
+              );
+            }
           },
         );
       });
@@ -511,9 +571,22 @@ export class Rslint implements Disposable {
       this.logger.info('Rslint language client started successfully');
       this.reportRunning();
     } catch (error: unknown) {
+      // Keep the initialized runtime available for configRefresh retries.
+      // Rethrowing this classified rejection would make RuntimeManager close
+      // it and onDocumentFailure replace disabled with a generic crash.
+      if (
+        !this.isPlannedStartAbort(error) &&
+        this.hasConfigDependencyFailure() &&
+        client.state === State.Running
+      ) {
+        return;
+      }
       // A close or supersede during start is a planned abort, not a failure;
       // logging it as an error made every teardown race look like a crash.
-      if (!this.isPlannedStartAbort(error)) {
+      if (
+        !this.isPlannedStartAbort(error) &&
+        !this.hasConfigDependencyFailure()
+      ) {
         this.logger.error('Failed to start Rslint language client', error);
       }
       throw error;
@@ -575,7 +648,9 @@ export class Rslint implements Disposable {
       this.configReloadTimer = setTimeout(() => {
         this.configReloadTimer = undefined;
         void this.requestConfigRefresh(reason).catch((error: unknown) => {
-          this.logger.error('Failed to refresh config discovery', error);
+          if (!this.hasConfigDependencyFailure()) {
+            this.logger.error('Failed to refresh config discovery', error);
+          }
         });
       }, 300);
     };
@@ -598,10 +673,45 @@ export class Rslint implements Disposable {
     if (!client) return;
     const refresh = this.configReloadChain.then(async () => {
       if (!this.isLifecycleCurrent(epoch, client)) return;
-      await client.sendRequest('rslint/configRefresh', { reason });
+      const wasFailed = this.configRefreshFailed;
+      this.configRefreshFailed = false;
+      try {
+        await client.sendRequest('rslint/configRefresh', { reason });
+        if (wasFailed && this.isRunning()) this.reportRunning();
+      } catch (error) {
+        // The worker verdict already surfaced this rejection as a real config
+        // error. Keep the live runtime for config edits without duplicate logs
+        // or a generic startup failure replacing its precise status.
+        // Source-change races must still reach the existing startup retry.
+        if (
+          isConfigSourceChangeDuringTransaction(error) ||
+          !this.configRefreshFailed
+        ) {
+          this.configRefreshFailed = wasFailed;
+          throw error;
+        }
+      }
     });
     this.configReloadChain = refresh.catch(() => undefined);
     await refresh;
+  }
+
+  public hasConfigDependencyFailure(): boolean {
+    return this.configDependencyEpisode.active;
+  }
+
+  public retryConfigDependency(): Promise<void> | undefined {
+    if (
+      this.configDependencyRetryPending ||
+      (!this.hasConfigDependencyFailure() && !this.configRefreshFailed)
+    )
+      return undefined;
+    // Polls must not queue more requests behind a user config that never
+    // settles. The first caller already observes this retry's outcome.
+    this.configDependencyRetryPending = true;
+    return this.requestConfigRefresh('dependency-change').finally(() => {
+      this.configDependencyRetryPending = false;
+    });
   }
 
   private isLifecycleCurrent(epoch: number, client: LanguageClient): boolean {
@@ -727,6 +837,10 @@ export class Rslint implements Disposable {
 
   public isRunning(): boolean {
     return this.client?.state === State.Running;
+  }
+
+  public isStopped(): boolean {
+    return this.client?.state === State.Stopped;
   }
 
   public serverAdvertisesHover(): boolean {

@@ -1,4 +1,4 @@
-import type { StackState } from '../../types';
+import { isFailedStackState, type StackState } from '../../types';
 
 /**
  * A folder runtime's lifecycle state, as the E2E exports report it.
@@ -69,7 +69,7 @@ const STATE_RANK: Readonly<Record<FmtRuntimeState, number>> = {
  * retried by the next pass.
  */
 export const isFailedFmtState = (state: FmtRuntimeState): boolean =>
-  state === 'disabled' || state === 'version-mismatch' || state === 'crashed';
+  isFailedStackState(state);
 
 /**
  * Folds every folder runtime's state into the one report the shell shows for

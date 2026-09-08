@@ -2,11 +2,23 @@ import type {
   ActivateConfigsRequest,
   ActivateConfigsResponse,
   ConfigModuleActivationPlan,
+  ConfigModuleCandidate,
   ConfigModuleEslintPluginEntry,
   ConfigModulePluginDescriptor,
   LoadConfigsRequest,
   LoadConfigsResponse,
 } from '@rslint/core/config-loader';
+import {
+  classifyMissingDependencyMessage,
+  isMissingDependencyCode,
+} from '../../../shared/missingDependency';
+import type { ConfigDependencyFailure } from '../../../shared/notInstalled';
+
+interface ConfigDependencyObserver {
+  resolveFrom(candidate: ConfigModuleCandidate): string;
+  report(failure: ConfigDependencyFailure): void;
+  reportError(message: string): void;
+}
 
 interface ConfigActivationWireResponse {
   transactionId: string;
@@ -88,6 +100,7 @@ export class LspConfigTransactionAdapter {
     private readonly pluginLintPool: PluginLintPoolAdapter,
     private readonly fingerprint: (plan: ConfigModuleActivationPlan) => string,
     private readonly protocolVersion: number,
+    private readonly configDependencyObserver: ConfigDependencyObserver,
   ) {}
 
   async loadConfigs(
@@ -106,7 +119,48 @@ export class LspConfigTransactionAdapter {
       );
       this.assertActive();
       throwIfAborted(signal);
-      return response;
+      if (!response.results.some((result) => result.status === 'failed')) {
+        return response;
+      }
+      let classified = false;
+      return {
+        ...response,
+        results: response.results.map((result, index) => {
+          if (result.status !== 'failed') return result;
+          const candidate = request.candidates[index];
+          const cause =
+            candidate !== undefined &&
+            isMissingDependencyCode(result.error.code)
+              ? classifyMissingDependencyMessage(
+                  result.error.message,
+                  this.configDependencyObserver.resolveFrom(candidate),
+                )
+              : undefined;
+          // Scan every failure: a later real error must not be hidden by the
+          // first missing dependency, even though only that result is rewritten.
+          if (cause === undefined || candidate === undefined) {
+            this.configDependencyObserver.reportError(
+              result.error.message.split('\n', 1)[0],
+            );
+            return result;
+          }
+          if (classified) return result;
+          classified = true;
+          this.configDependencyObserver.report({
+            configPath: candidate.configPath,
+            cause,
+          });
+          return {
+            ...result,
+            error: {
+              ...result.error,
+              // Keep the classified result to one line so Go cannot echo a
+              // CJS require stack beside the policy's one-warn-line report.
+              message: cause,
+            },
+          };
+        }),
+      };
     } catch (error) {
       this.cleanup(transactionId);
       throw error;

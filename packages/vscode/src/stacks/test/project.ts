@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import type { TestInfo } from '@rstest/core';
 import picomatch from 'picomatch';
 import { glob } from 'tinyglobby';
@@ -7,10 +8,13 @@ import { RSTACK_CONFIG_NAMES } from '../../detection';
 import { resolveRstackShim } from './bridge';
 import { watchConfigValue } from './config';
 import {
-  formatConfigDependencyMissingLog,
+  NotInstalledEpisode,
   formatConfigDependencyMissingStatus,
 } from '../../shared/notInstalled';
-import { logUnlessReported } from './coreResolution';
+import {
+  logUnlessReported,
+  ReportedRstestResolutionError,
+} from './coreResolution';
 import { logger } from './logger';
 import { RstestApi } from './master';
 import { type ChildProjectRef, computeCoveredConfigs } from './projectCoverage';
@@ -235,17 +239,14 @@ export class WorkspaceManager implements vscode.Disposable {
     );
   }
   /**
-   * Recreates projects whose one-shot config evaluation failed — dependencies
-   * may have been installed since (observed as a lockfile-driven detection
-   * pass). Only ever called from a detection event, never from a project
-   * callback, so a persistently failing config cannot recreate itself in a
-   * loop; it is simply re-attempted once per detection pass.
+   * Retries failed projects after a dependency change. Installs and upgrades
+   * can recover missing packages, version mismatches, worker failures and real
+   * config errors alike. The project keeps its identity and the retry is
+   * single-flight.
    */
   public retryFailedProjects() {
-    for (const [key, project] of [...this.projects]) {
-      if (!project.configLoadFailed) continue;
-      project.dispose();
-      this.projects.set(key, this.createProject(project.source));
+    for (const project of this.projects.values()) {
+      void project.retryFailedConfig();
     }
   }
 
@@ -550,10 +551,9 @@ export class Project implements vscode.Disposable {
   // the same tests are not shown twice.
   suppressed = false;
   // The one-shot config evaluation in the constructor rejected (typically:
-  // dependencies not installed yet). `retryFailedProjects` recreates such
-  // projects on the next detection pass.
+  // dependencies not installed yet). A dependency-change pass retries it.
   configLoadFailed = false;
-  /** What this project was built from; `retryFailedProjects` rebuilds from it. */
+  /** What this project was built from. */
   readonly source: ProjectSource;
   // See `ProjectSource`.
   readonly sourceUri: vscode.Uri;
@@ -562,6 +562,10 @@ export class Project implements vscode.Disposable {
   readonly rstestResolutionDir: string;
   readonly isBridge: boolean;
   #watch?: vscode.Disposable;
+  #collectionFailed = false;
+  #configLoad: Promise<void> | undefined;
+  readonly #configDependencyEpisode = new NotInstalledEpisode();
+  readonly #reportedConfigErrors = new Set<string>();
   constructor(
     private workspaceFolder: vscode.WorkspaceFolder,
     source: ProjectSource,
@@ -587,7 +591,12 @@ export class Project implements vscode.Disposable {
     );
     this.cancellationSource = new vscode.CancellationTokenSource();
 
-    void this.api
+    void this.loadConfig();
+  }
+
+  private loadConfig(): Promise<void> {
+    if (this.#configLoad !== undefined) return this.#configLoad;
+    const pending = this.api
       .getNormalizedConfig()
       .then((result) => {
         if (this.cancellationSource.token.isCancellationRequested) return;
@@ -595,7 +604,21 @@ export class Project implements vscode.Disposable {
           this.reportMissingDependency(result.message);
           return;
         }
-        status.installed(this.configDependencyStatusSource);
+        this.configLoadFailed = false;
+        this.#configDependencyEpisode.clear();
+        this.#reportedConfigErrors.clear();
+        status.forget(this.configDependencyStatusSource);
+        if (
+          this.#collectionFailed ||
+          this.root.fsPath !== result.root ||
+          !isDeepStrictEqual(this.include, result.include) ||
+          !isDeepStrictEqual(this.exclude, result.exclude)
+        ) {
+          // The watcher captures the root and matchers. Cancel its pending
+          // collection before discovering files with the recovered config.
+          this.#watch?.dispose();
+          this.#watch = undefined;
+        }
         this.root = vscode.Uri.file(result.root);
         this.include = result.include;
         this.exclude = result.exclude;
@@ -606,10 +629,56 @@ export class Project implements vscode.Disposable {
       .catch((error) => {
         if (this.cancellationSource.token.isCancellationRequested) return;
         this.configLoadFailed = true;
-        logUnlessReported('Failed to initialize project config', error);
+        this.#configDependencyEpisode.clear();
+        // A reported setup error can have only a toast/log, not a status.
+        // Publish that raw failure so the shell schedules recovery, without
+        // replacing an already-reported missing-core or version verdict.
+        if (
+          !(error instanceof ReportedRstestResolutionError) ||
+          !status.hasFailed(this.sourceUri.toString())
+        ) {
+          const cause =
+            error instanceof Error
+              ? error.message.split('\n', 1)[0]
+              : String(error);
+          // Crash outranks disabled: replacing the missing-dependency verdict
+          // must not paint a healthy intermediate state.
+          status.crashed(
+            `Cannot load ${relativeTo(this.workspaceFolder, this.sourceUri)}: ${cause}`,
+            this.configDependencyStatusSource,
+          );
+        }
+        status.installed(this.configDependencyStatusSource);
+        const errorKey =
+          error instanceof Error
+            ? `${error.name}:${error.message}`
+            : String(error);
+        if (!this.#reportedConfigErrors.has(errorKey)) {
+          this.#reportedConfigErrors.add(errorKey);
+          logUnlessReported('Failed to initialize project config', error);
+        }
         // Let the manager settle its tree even when a config fails to load.
         this.onConfigResolved?.();
+      })
+      .finally(() => {
+        if (this.#configLoad === pending) this.#configLoad = undefined;
       });
+    this.#configLoad = pending;
+    return pending;
+  }
+
+  get hasFailedState(): boolean {
+    return (
+      this.configLoadFailed ||
+      status.hasFailed(this.sourceUri.toString()) ||
+      status.hasFailed(this.configDependencyStatusSource)
+    );
+  }
+
+  /** Re-evaluates a failed config or a core lost after loading, in place. */
+  public retryFailedConfig(): Promise<void> | undefined {
+    if (!this.hasFailedState) return undefined;
+    return this.loadConfig();
   }
 
   /**
@@ -629,9 +698,12 @@ export class Project implements vscode.Disposable {
   // Latched under this project's key, which `dispose` forgets.
   private reportMissingDependency(cause: string): void {
     this.configLoadFailed = true;
-    logger.warn(
-      formatConfigDependencyMissingLog('rstest', this.sourceUri.fsPath, cause),
+    const report = this.#configDependencyEpisode.observe(
+      'rstest',
+      this.sourceUri.fsPath,
+      cause,
     );
+    if (report.warning !== undefined) logger.warn(report.warning);
     status.notInstalled(
       formatConfigDependencyMissingStatus(
         'rstest',
@@ -750,6 +822,7 @@ export class Project implements vscode.Disposable {
 
           if (token.isCancellationRequested) return;
 
+          this.#collectionFailed = false;
           const visited = new Set<string>();
           for (const { uri, tests } of files) {
             this.updateOrCreateFile(uri, tests);
@@ -786,6 +859,7 @@ export class Project implements vscode.Disposable {
               })
               .catch((error) => {
                 if (!token.isCancellationRequested) {
+                  this.#collectionFailed = true;
                   logUnlessReported(
                     'Failed to update runtime test list',
                     error,
@@ -822,6 +896,7 @@ export class Project implements vscode.Disposable {
           });
         } catch (error) {
           if (!token.isCancellationRequested) {
+            this.#collectionFailed = true;
             logUnlessReported('Failed to collect test files', error);
           }
         } finally {

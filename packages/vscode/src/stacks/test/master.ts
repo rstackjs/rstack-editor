@@ -18,6 +18,7 @@ import {
   getConfiguredNodeExecutable,
 } from '../../shared/nodeExecutableSetting';
 import { CONFIG_SECTION, getConfigValue } from './config';
+import { MessageLatch } from '../../shared/messageLatch';
 import {
   formatNotInstalledLog,
   formatNotInstalledStatus,
@@ -133,6 +134,9 @@ export class RstestApi {
   // `createChildProcess`.
   private disposed = false;
   private lastResolvedRstestPath?: string;
+  private readonly coreMissingEpisode = new MessageLatch();
+  private readonly unsupportedCoreMessage = new MessageLatch();
+  private readonly resolutionErrorMessage = new MessageLatch();
 
   constructor(
     private workspace: vscode.WorkspaceFolder,
@@ -336,15 +340,23 @@ export class RstestApi {
   // out plus one warn line — the normal state of a repository whose
   // dependencies are not installed yet, never a notification.
   private reportCoreNotInstalled(searchedFrom: string): void {
-    logger.warn(
-      formatNotInstalledLog(
-        '@rstest/core',
-        this.workspace.name,
-        searchedFrom,
-        CORE_NOT_INSTALLED_CONSEQUENCE,
-      ),
-    );
+    if (this.coreMissingEpisode.changed(searchedFrom)) {
+      logger.warn(
+        formatNotInstalledLog(
+          '@rstest/core',
+          this.workspace.name,
+          searchedFrom,
+          CORE_NOT_INSTALLED_CONSEQUENCE,
+        ),
+      );
+    }
     status.notInstalled(CORE_NOT_INSTALLED_STATUS, this.statusSource);
+  }
+
+  private reportResolutionError(message: string): boolean {
+    if (!this.resolutionErrorMessage.changed(message)) return false;
+    vscode.window.showErrorMessage(message);
+    return true;
   }
 
   // Returns '' when resolution failed. Every such branch has already reported
@@ -368,10 +380,13 @@ export class RstestApi {
             paths: [this.cwd],
           });
         } catch (e) {
-          vscode.window.showErrorMessage(
-            'Failed to resolve @rstest/core/package.json. Please upgrade @rstest/core to the latest version.',
-          );
-          logger.error('Failed to resolve @rstest/core/package.json', e);
+          if (
+            this.reportResolutionError(
+              'Failed to resolve @rstest/core/package.json. Please upgrade @rstest/core to the latest version.',
+            )
+          ) {
+            logger.error('Failed to resolve @rstest/core/package.json', e);
+          }
           return '';
         }
       } else {
@@ -397,6 +412,8 @@ export class RstestApi {
         if (!nodeExport) return '';
       }
 
+      this.coreMissingEpisode.clear();
+
       const coreVersion = readPackageVersion(corePackageJsonPath);
 
       // Upstream also compared the core version against the extension's own
@@ -419,18 +436,21 @@ export class RstestApi {
             this.statusSource,
           )
         ) {
-          logger.error(
-            `Unsupported @rstest/core version ${coreVersion ?? 'unknown'} resolved from ${this.cwd}`,
-          );
+          const message = `Unsupported @rstest/core version ${coreVersion ?? 'unknown'} resolved from ${this.cwd}`;
+          if (this.unsupportedCoreMessage.changed(message)) {
+            logger.error(message);
+          }
         } else {
+          this.unsupportedCoreMessage.clear();
           status.versionOk(this.statusSource);
         }
       }
 
       this.lastResolvedRstestPath = nodeExport;
+      this.resolutionErrorMessage.clear();
       return nodeExport;
     } catch (e) {
-      vscode.window.showErrorMessage(toErrorMessage(e));
+      this.reportResolutionError(toErrorMessage(e));
       throw e;
     }
   }
@@ -466,12 +486,14 @@ export class RstestApi {
 
   public async getNormalizedConfig() {
     const { worker, rstestPath } = await this.createChildProcess();
-    const result = await worker.getNormalizedConfig({
-      rstestPath,
-      configFilePath: this.configFilePath,
-    });
-    worker.$close();
-    return result;
+    try {
+      return await worker.getNormalizedConfig({
+        rstestPath,
+        configFilePath: this.configFilePath,
+      });
+    } finally {
+      worker.$close();
+    }
   }
 
   public async listTests(include?: string[]) {

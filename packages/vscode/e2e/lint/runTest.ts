@@ -39,6 +39,7 @@ interface TestSuite {
   tests: string;
   workspaceEntry?: string;
   workspaceFolders?: string[];
+  inheritDependencies?: boolean;
 }
 
 const workspaceMarkerFile = '.rstack-vscode-test-sandbox.json';
@@ -118,19 +119,22 @@ async function runIsolatedSuite(
       { encoding: 'utf8', flag: 'wx', mode: 0o600 },
     );
 
-    // Preserve the fixture install root's package boundary and dependency
-    // lookup (the project-resolved `@rslint/core`) without
-    // placing a writable node_modules link inside the test workspace.
-    const packageRoot = await findPackageRoot(suite.workspace);
-    await fs.promises.copyFile(
-      path.join(packageRoot, 'package.json'),
-      path.join(profileRoot, 'package.json'),
-    );
-    await fs.promises.symlink(
-      path.join(packageRoot, 'node_modules'),
-      path.join(profileRoot, 'node_modules'),
-      process.platform === 'win32' ? 'junction' : 'dir',
-    );
+    if (suite.inheritDependencies !== false) {
+      // Preserve the fixture install root's package boundary and dependency
+      // lookup (the project-resolved `@rslint/core`) without placing a
+      // writable node_modules link inside the test workspace. The dependency
+      // recovery suite opts out: absence at startup is what it tests.
+      const packageRoot = await findPackageRoot(suite.workspace);
+      await fs.promises.copyFile(
+        path.join(packageRoot, 'package.json'),
+        path.join(profileRoot, 'package.json'),
+      );
+      await fs.promises.symlink(
+        path.join(packageRoot, 'node_modules'),
+        path.join(profileRoot, 'node_modules'),
+        process.platform === 'win32' ? 'junction' : 'dir',
+      );
+    }
 
     await runTests({
       extensionDevelopmentPath,
@@ -308,6 +312,17 @@ async function main(): Promise<void> {
       name: 'Rstack lint bridge tests',
       workspace: sharedFixture('rstack'),
       tests: suiteDir('suite-bridge'),
+    },
+    {
+      name: 'Missing config dependency tests',
+      workspace: fixture('missing-config-dependency'),
+      tests: suiteDir('suite-missing-config-dependency'),
+    },
+    {
+      name: 'Dependency polling recovery tests',
+      workspace: fixture('dependency-recovery'),
+      tests: suiteDir('suite-dependency-recovery'),
+      inheritDependencies: false,
     },
   ];
 

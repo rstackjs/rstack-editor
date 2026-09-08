@@ -71,6 +71,15 @@ class Rstest implements vscode.Disposable {
     return this.ctrl;
   }
 
+  hasFailedState(): boolean {
+    for (const workspace of this.workspaces.values()) {
+      for (const project of workspace.projects.values()) {
+        if (project.hasFailedState) return true;
+      }
+    }
+    return false;
+  }
+
   /**
    * What upstream's `activate()` effectively exported (the `Rstest` instance):
    * the E2E suites (`e2e/rstest/`) consume `testController`, `runProfile`
@@ -82,6 +91,7 @@ class Rstest implements vscode.Disposable {
    */
   buildExports(): Record<string, unknown> {
     return {
+      hasNotInstalledState: () => status.hasNotInstalled(),
       testController: this.ctrl,
       runProfile: this.runProfile,
       startTestRun: this.startTestRun,
@@ -553,6 +563,10 @@ class RstestController implements StackController {
       context.detection.foldersFor('rstest').map(({ folder }) => folder),
     );
     return this.#rstest.buildExports();
+  }
+
+  hasFailedState(): boolean {
+    return status.hasFailed() || (this.#rstest?.hasFailedState() ?? false);
   }
 
   dispose(): void {

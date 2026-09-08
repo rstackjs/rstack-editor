@@ -1,17 +1,24 @@
 import path from 'node:path';
 import vscode from 'vscode';
+import type { ShowMessageParams } from 'vscode-languageclient';
 import {
   CloseAction,
   ErrorAction,
   LanguageClient,
+  MessageType,
+  ShowMessageNotification,
   State,
   type ErrorHandler,
   type LanguageClientOptions,
   type ServerOptions,
 } from 'vscode-languageclient/node';
 import { RSTACK_CONFIG_GLOB } from '../../detection';
+import { MessageLatch } from '../../shared/messageLatch';
+import { displayPath } from '../../shared/displayPath';
+import { classifyMissingDependencyMessage } from '../../shared/missingDependency';
 import { getConfiguredNodeExecutable } from '../../shared/nodeExecutableSetting';
 import {
+  NotInstalledEpisode,
   formatNotInstalledLog,
   formatNotInstalledStatus,
 } from '../../shared/notInstalled';
@@ -47,6 +54,8 @@ import {
   type FmtRuntimeState,
   isFailedFmtState,
 } from './status';
+
+const FMT_SESSION_ERROR_PREFIX = 'rs fmt cannot format this workspace: ';
 
 // prettier 3.9.6 getSupportInfo() vscodeLanguageIds snapshot (rs fmt's pinned
 // prettier). Revisit when the pinned prettier changes.
@@ -154,6 +163,13 @@ class FmtFolderRuntime {
   #client: LanguageClient | undefined;
   #defaultErrorHandler: ErrorHandler | undefined;
   #stateWatcher: vscode.Disposable | undefined;
+  #configPath: string | undefined;
+  readonly #packageEpisode = new MessageLatch();
+  readonly #configDependencyEpisode = new NotInstalledEpisode();
+  readonly #startError = new MessageLatch();
+  readonly #sessionError = new MessageLatch();
+  #failureSeq = 0;
+  suppressedShowMessages = 0;
   #closing = false;
   #disposed = false;
   /** True only across `startImpl`'s `client.start()` await — the window `interruptInFlightStart` exists for. */
@@ -193,6 +209,10 @@ class FmtFolderRuntime {
     return this.folder.uri.fsPath;
   }
 
+  setConfigPath(configPath: string | undefined): void {
+    this.#configPath = configPath;
+  }
+
   private setState(state: FmtRuntimeState, detail = ''): void {
     this.#state = state;
     this.#detail = detail;
@@ -202,6 +222,53 @@ class FmtFolderRuntime {
   private setAdvisory(message: string): void {
     this.#advisory = message;
     this.onDidChangeStatus();
+  }
+
+  private handleShowMessage(message: ShowMessageParams): void {
+    switch (message.type) {
+      case MessageType.Error: {
+        if (!message.message.startsWith(FMT_SESSION_ERROR_PREFIX)) {
+          void vscode.window.showErrorMessage(message.message);
+          break;
+        }
+        const firstLine = message.message
+          .slice(FMT_SESSION_ERROR_PREFIX.length)
+          .split('\n', 1)[0];
+        const configPath = this.#configPath;
+        this.#failureSeq++;
+        if (configPath !== undefined) {
+          const cause = classifyMissingDependencyMessage(
+            firstLine.replace(/^Error(?: \[[A-Z_]+\])?: /, ''),
+            this.folderPath,
+          );
+          if (cause !== undefined) {
+            this.#sessionError.clear();
+            const report = this.#configDependencyEpisode.observe(
+              'fmt',
+              displayPath(this.folderPath, configPath),
+              cause,
+            );
+            if (report.warning !== undefined)
+              this.context.output.warn(report.warning);
+            this.suppressedShowMessages++;
+            this.setState('disabled', report.reason);
+            return;
+          }
+        }
+        this.#configDependencyEpisode.clear();
+        if (this.#sessionError.changed(firstLine))
+          this.context.output.error(firstLine);
+        this.setState('crashed', firstLine);
+        void vscode.window.showErrorMessage(message.message);
+        break;
+      }
+      case MessageType.Warning:
+        void vscode.window.showWarningMessage(message.message);
+        break;
+      default:
+        void vscode.window.showInformationMessage(message.message);
+        break;
+    }
   }
 
   /**
@@ -299,16 +366,17 @@ class FmtFolderRuntime {
 
     const pkgJsonPath = findPackageJsonUncached('rstack', folderRoot);
     if (!pkgJsonPath) {
-      // The trailing hint covers the one recovery path no watcher sees: an
-      // install that changes no lockfile (a fresh clone whose lockfile is
-      // already current) fires no file event, so nothing rebuilds this
-      // runtime — the status message is where the way out has to live.
+      // The shell polls while this state remains disabled. The trailing restart
+      // hint stays as the explicit fallback if recovery is delayed.
       this.setState('disabled', formatNotInstalledStatus('fmt', 'rstack'));
-      context.output.warn(
-        formatNotInstalledLog('rstack', this.folder.name, folderRoot),
-      );
+      if (this.#packageEpisode.changed(folderRoot)) {
+        context.output.warn(
+          formatNotInstalledLog('rstack', this.folder.name, folderRoot),
+        );
+      }
       return;
     }
+    this.#packageEpisode.clear();
 
     // One read for the version and the bin entry; `readPackageJson` re-reads
     // from disk by design, so a reinstall is picked up on the next start.
@@ -349,6 +417,13 @@ class FmtFolderRuntime {
       serverOptions,
       this.createClientOptions(),
     );
+    // vscode-languageclient installs pending handlers after initialize with
+    // method-keyed replacement semantics. Registering before start therefore
+    // replaces its default toast handler while leaving unrelated messages on
+    // the same Error/Warning/Info UI path below.
+    client.onNotification(ShowMessageNotification.type, (message) => {
+      this.handleShowMessage(message);
+    });
     // Created once per client, not per callback: the default handler carries
     // the restart budget (N crashes in K minutes), and it can only be created
     // from the client the options were built for.
@@ -363,12 +438,12 @@ class FmtFolderRuntime {
         // owner's call; either way this folder is currently not formatting.
         this.setState('crashed', 'the rs fmt language server stopped');
       } else if (event.newState === State.Running) {
-        // The one writer for `running`. It fires on the first start
-        // (synchronously, before `client.start()` resolves) and again when
-        // vscode-languageclient's error handler restarts a crashed server —
-        // the way back out of `crashed`, the same transition the lint stack's
-        // state watcher makes.
-        this.setState('running');
+        // Initialize does not load config. Keep a known real config error
+        // polling across restarts until formatting actually produces edits.
+        this.setState(
+          this.#sessionError.current === undefined ? 'running' : 'crashed',
+          this.#sessionError.current,
+        );
       }
     });
 
@@ -396,15 +471,20 @@ class FmtFolderRuntime {
       if (interrupted || this.#disposed) {
         return;
       }
+      const message = error instanceof Error ? error.message : String(error);
       this.setState(
         'crashed',
-        `the rs fmt language server failed to start: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        `the rs fmt language server failed to start: ${message}`,
       );
-      context.output.error('Failed to start the rs fmt language server', error);
+      if (this.#startError.changed(message)) {
+        context.output.error(
+          'Failed to start the rs fmt language server',
+          error,
+        );
+      }
       return;
     }
+    this.#startError.clear();
     context.output.info(`rs fmt language server started for ${folderRoot}`);
   }
 
@@ -490,6 +570,35 @@ class FmtFolderRuntime {
       // instead of a separate "... Trace" channel per folder.
       traceOutputChannel: this.context.output,
       errorHandler,
+      middleware: {
+        provideDocumentFormattingEdits: async (
+          document,
+          options,
+          token,
+          next,
+        ) => {
+          const failuresBeforeRequest = this.#failureSeq;
+          const edits = await next(document, options, token);
+          const hadConfigDependency = this.#configDependencyEpisode.active;
+          // Empty edits also signal failure; notifications during this request
+          // must not be cleared by its edits.
+          if (
+            (edits?.length ?? 0) > 0 &&
+            failuresBeforeRequest === this.#failureSeq
+          ) {
+            this.#configDependencyEpisode.clear();
+            const hadSessionError = this.#sessionError.current !== undefined;
+            this.#sessionError.clear();
+            if (
+              (hadConfigDependency && this.#state === 'disabled') ||
+              (hadSessionError && this.#state === 'crashed')
+            ) {
+              this.setState('running');
+            }
+          }
+          return edits;
+        },
+      },
     };
   }
 
@@ -632,6 +741,12 @@ class FmtController implements StackController {
             runtime.state,
           ]),
         ),
+      /** E2E only: classified config failures suppressed from showMessage. */
+      suppressedConfigDependencyMessages: (): number =>
+        [...this.#runtimes.values()].reduce(
+          (count, runtime) => count + runtime.suppressedShowMessages,
+          0,
+        ),
     });
   }
 
@@ -649,9 +764,11 @@ class FmtController implements StackController {
       return;
     }
     const detected = new Map(
-      snapshot
-        .foldersFor('fmt')
-        .map((entry) => [entry.folder.uri.fsPath, entry.folder] as const),
+      snapshot.foldersFor('fmt').map((entry) => {
+        const folderPath = entry.folder.uri.fsPath;
+        const configPath = entry.rootRstackConfigPath;
+        return [folderPath, { folder: entry.folder, configPath }] as const;
+      }),
     );
     for (const [folderPath, runtime] of [...this.#runtimes]) {
       if (!detected.has(folderPath)) {
@@ -672,9 +789,10 @@ class FmtController implements StackController {
         this.#retiring.set(folderPath, retirement);
       }
     }
-    for (const [folderPath, folder] of detected) {
+    for (const [folderPath, { folder, configPath }] of detected) {
       const existing = this.#runtimes.get(folderPath);
       if (existing) {
+        existing.setConfigPath(configPath);
         if (isFailedFmtState(existing.state)) {
           // A failed runtime is retried in place, on the same path a config
           // change uses: restart re-runs package resolution, the version
@@ -689,6 +807,7 @@ class FmtController implements StackController {
       const runtime = new FmtFolderRuntime(folder, context, () =>
         this.reportStatus(),
       );
+      runtime.setConfigPath(configPath);
       this.#runtimes.set(folderPath, runtime);
       void runtime.start(this.#retiring.get(folderPath));
     }
@@ -720,6 +839,13 @@ class FmtController implements StackController {
           : `detected in ${names.length} folders`,
       ),
     );
+  }
+
+  hasFailedState(): boolean {
+    for (const runtime of this.#runtimes.values()) {
+      if (isFailedFmtState(runtime.state)) return true;
+    }
+    return false;
   }
 
   /**

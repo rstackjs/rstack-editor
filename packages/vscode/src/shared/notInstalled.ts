@@ -1,3 +1,4 @@
+import { MessageLatch } from './messageLatch';
 import {
   COMMAND_CATEGORY,
   STACK_LABELS,
@@ -13,10 +14,9 @@ import {
  * `formatVersionMismatch` — each keeps its own status machinery, but what
  * the user reads is one sentence, not three near-copies.
  *
- * The trailing hint covers the recovery no watcher sees: an install that
- * changes no lockfile (a fresh clone whose lockfile is already current) fires
- * no detection pass, so the restart command is the way out and the status is
- * where it has to be named (ADR 0002).
+ * A shell-owned poll covers installs that change no lockfile. The trailing
+ * restart hint remains the explicit fallback when recovery is delayed or the
+ * project stays broken for another reason (ADR 0005).
  */
 const restartHint = (stack: StackId): string =>
   `then run "${COMMAND_CATEGORY}: ${stackCommandTitle(stack)}" if this status stays`;
@@ -50,6 +50,40 @@ export const formatConfigDependencyMissingLog = (
   cause: string,
 ): string =>
   `Cannot load ${configPath}: ${cause}. Install the project dependencies to enable ${STACK_LABELS[stack]} for this config.`;
+
+export interface ConfigDependencyFailure {
+  readonly configPath: string;
+  readonly cause: string;
+}
+
+/**
+ * Deduplicates one not-installed warning until a successful load ends the
+ * episode. Stacks receive their failures over different protocols, but
+ * the latch semantics and the user-facing words are the same.
+ */
+export class NotInstalledEpisode {
+  readonly #message = new MessageLatch();
+
+  get active(): boolean {
+    return this.#message.current !== undefined;
+  }
+
+  observe(stack: StackId, configPath: string, cause: string) {
+    const warning = this.#message.changed(`${configPath}\0${cause}`)
+      ? formatConfigDependencyMissingLog(stack, configPath, cause)
+      : undefined;
+    return {
+      reason: formatConfigDependencyMissingStatus(stack, configPath),
+      warning,
+    };
+  }
+
+  clear(): boolean {
+    const wasActive = this.active;
+    this.#message.clear();
+    return wasActive;
+  }
+}
 
 /**
  * The output-channel line: where the stack looked, plus the stack's own

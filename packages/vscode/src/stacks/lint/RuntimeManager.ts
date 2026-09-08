@@ -16,8 +16,8 @@
 // - The extra hooks (`onDocumentFailure` / `onDocumentSettled` /
 //   `onRuntimeClosed`) exist only so the controller can keep its per-folder
 //   status fold in step; they carry no lifecycle decisions.
-// - One ahead-of-upstream fix: `reconcile` resolves before sweeping pending
-//   uses (`planDocumentCore`) — see AGENTS.md ("Ahead of upstream").
+// - Ahead-of-upstream fixes: resolve before sweeping pending uses, and retire
+//   stopped same-key clients on reconcile — see AGENTS.md ("Ahead of upstream").
 
 import { workspace, type TextDocument, type WorkspaceFolder } from 'vscode';
 import type {
@@ -34,6 +34,8 @@ import {
 export interface ManagedRslintRuntime extends DocumentRoutingRuntime {
   start(signal: AbortSignal): Promise<void>;
   close(): Promise<void>;
+  /** A stopped client is unusable; a pending/automatic start is not. */
+  isStopped(): boolean;
 }
 
 export type ManagedRslintRuntimeFactory = (
@@ -266,7 +268,11 @@ export class RuntimeManager {
       return;
     }
     const { workspaceFolder, resolved } = plan;
-    if (existing?.resolved.key === resolved.key) {
+    if (
+      existing?.resolved.key === resolved.key &&
+      !existing.closePromise &&
+      !existing.runtime.isStopped()
+    ) {
       this.options.onDocumentSettled?.(document);
       return;
     }
@@ -274,6 +280,14 @@ export class RuntimeManager {
     let replacement: RuntimeEntry | undefined;
     let switched = false;
     try {
+      const entry = this.entries.get(resolved.key);
+      if (entry?.active && entry.runtime.isStopped()) {
+        // Retire the dead same-key owner before activating its replacement.
+        // closeRuntime removes it immediately and installs the shared closing
+        // barrier; concurrent documents then acquire/adopt one pending start.
+        await this.closeRuntime(entry);
+        if (!this.isCurrentDocument(document, epoch)) return;
+      }
       replacement = this.acquireRuntime(resolved, key);
       await replacement.startPromise;
       if (!this.isCurrentDocument(document, epoch)) {
