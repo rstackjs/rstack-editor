@@ -562,6 +562,7 @@ export class Project implements vscode.Disposable {
   readonly rstestResolutionDir: string;
   readonly isBridge: boolean;
   #watch?: vscode.Disposable;
+  #collectionFailed = false;
   #configLoad: Promise<void> | undefined;
   readonly #configDependencyEpisode = new NotInstalledEpisode();
   readonly #reportedConfigErrors = new Set<string>();
@@ -608,6 +609,7 @@ export class Project implements vscode.Disposable {
         this.#reportedConfigErrors.clear();
         status.forget(this.configDependencyStatusSource);
         if (
+          this.#collectionFailed ||
           this.root.fsPath !== result.root ||
           !isDeepStrictEqual(this.include, result.include) ||
           !isDeepStrictEqual(this.exclude, result.exclude)
@@ -820,6 +822,7 @@ export class Project implements vscode.Disposable {
 
           if (token.isCancellationRequested) return;
 
+          this.#collectionFailed = false;
           const visited = new Set<string>();
           for (const { uri, tests } of files) {
             this.updateOrCreateFile(uri, tests);
@@ -856,6 +859,7 @@ export class Project implements vscode.Disposable {
               })
               .catch((error) => {
                 if (!token.isCancellationRequested) {
+                  this.#collectionFailed = true;
                   logUnlessReported(
                     'Failed to update runtime test list',
                     error,
@@ -892,6 +896,7 @@ export class Project implements vscode.Disposable {
           });
         } catch (error) {
           if (!token.isCancellationRequested) {
+            this.#collectionFailed = true;
             logUnlessReported('Failed to collect test files', error);
           }
         } finally {

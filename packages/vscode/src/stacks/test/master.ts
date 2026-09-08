@@ -353,9 +353,10 @@ export class RstestApi {
     status.notInstalled(CORE_NOT_INSTALLED_STATUS, this.statusSource);
   }
 
-  private reportResolutionError(message: string): void {
-    if (!this.resolutionErrorMessage.changed(message)) return;
+  private reportResolutionError(message: string): boolean {
+    if (!this.resolutionErrorMessage.changed(message)) return false;
     vscode.window.showErrorMessage(message);
+    return true;
   }
 
   // Returns '' when resolution failed. Every such branch has already reported
@@ -379,10 +380,13 @@ export class RstestApi {
             paths: [this.cwd],
           });
         } catch (e) {
-          this.reportResolutionError(
-            'Failed to resolve @rstest/core/package.json. Please upgrade @rstest/core to the latest version.',
-          );
-          logger.error('Failed to resolve @rstest/core/package.json', e);
+          if (
+            this.reportResolutionError(
+              'Failed to resolve @rstest/core/package.json. Please upgrade @rstest/core to the latest version.',
+            )
+          ) {
+            logger.error('Failed to resolve @rstest/core/package.json', e);
+          }
           return '';
         }
       } else {

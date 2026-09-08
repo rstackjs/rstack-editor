@@ -6,6 +6,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, rs } from '@rstest/core';
 import { logger } from '../../../src/stacks/test/logger';
 import { RstestApi } from '../../../src/stacks/test/master';
+import { nodeRequire } from '../../../src/stacks/test/nodeRequire';
 import {
   type NodeProbe,
   configuredNodeBelowFloor,
@@ -388,6 +389,42 @@ describe('RstestApi with an unresolvable rstestPackagePath', () => {
       expect(resolve).toThrow();
       expect(shownMessages).toHaveLength(2);
     } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('deduplicates package metadata errors and toasts together until recovery', () => {
+    const root = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), 'rstest-log-')),
+    );
+    const installed = writeCoreInstall(root);
+    const metadata = path.join(installed.packageDir, 'package.json');
+    settings.rstestPackagePath = metadata;
+    loggedErrors.length = 0;
+    const original = nodeRequire.resolve;
+    let broken = true;
+    const spy = rs
+      .spyOn(nodeRequire, 'resolve')
+      .mockImplementation((specifier, options) => {
+        if (broken && specifier === metadata)
+          throw new Error('incomplete package metadata');
+        return original(specifier, options);
+      });
+    const api = createApi(root);
+    const resolve = () => (api as any).resolveRstestPath() as string;
+    try {
+      expect(resolve()).toBe('');
+      expect(resolve()).toBe('');
+      expect(shownMessages).toHaveLength(1);
+      expect(loggedErrors).toHaveLength(1);
+      broken = false;
+      expect(resolve()).toBe(installed.entry);
+      broken = true;
+      expect(resolve()).toBe('');
+      expect(shownMessages).toHaveLength(2);
+      expect(loggedErrors).toHaveLength(2);
+    } finally {
+      spy.mockRestore();
       fs.rmSync(root, { recursive: true, force: true });
     }
   });

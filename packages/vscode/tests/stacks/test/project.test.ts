@@ -23,6 +23,7 @@ let normalizedConfigResult: NormalizedConfigResult | undefined;
 let normalizedConfigCalls = 0;
 let pendingConfig: Promise<NormalizedConfigResult> | undefined;
 let runtimeCollection = false;
+let collectionFailure: unknown;
 let listedFiles: string[] = [];
 const renderedFiles = new Set<string>();
 const fileWatchers: {
@@ -37,7 +38,7 @@ rs.mock('../../../src/stacks/test/master', () => {
       _workspace: unknown,
       cwd: string,
       configFilePath: string,
-      _project: unknown,
+      private project: { sourceUri: { toString(): string } },
       rstestResolutionDir: string,
     ) {
       apiCalls.push({ cwd, configFilePath, rstestResolutionDir });
@@ -56,6 +57,13 @@ rs.mock('../../../src/stacks/test/master', () => {
       return new Promise<never>(() => {});
     }
     async listTests(include?: string[]) {
+      if (collectionFailure) {
+        status.notInstalled(
+          'core disappeared',
+          this.project.sourceUri.toString(),
+        );
+        throw collectionFailure;
+      }
       return (include ?? listedFiles).map((testPath) => ({
         testPath,
         tests: [],
@@ -184,6 +192,7 @@ beforeEach(() => {
   normalizedConfigCalls = 0;
   pendingConfig = undefined;
   runtimeCollection = false;
+  collectionFailure = undefined;
   listedFiles = [];
   renderedFiles.clear();
   fileWatchers.length = 0;
@@ -204,6 +213,36 @@ const createProject = async (source: any) => {
 };
 
 describe('Project config/cwd/package-resolution decoupling', () => {
+  it('collects files missed during an outage after unchanged-config recovery', async () => {
+    runtimeCollection = true;
+    collectionFailure = new ReportedRstestResolutionError('core disappeared');
+    normalizedConfigResult = {
+      ok: true,
+      root: '/repo',
+      include: ['**/*.test.ts'],
+      exclude: [],
+      childProjects: [],
+    };
+    const { reporter } = createStatusRecorder();
+    status.bind(reporter);
+    const { project } = await createProject({
+      sourceUri: uri('/repo/rstest.config.ts'),
+    });
+    try {
+      await rs.waitUntil(() => status.hasFailed(project.sourceUri.toString()));
+      expect(renderedFiles.size).toBe(0);
+      collectionFailure = undefined;
+      listedFiles = ['/repo/outage.test.ts'];
+      await project.retryFailedConfig();
+      await rs.waitUntil(() =>
+        renderedFiles.has(uri(listedFiles[0]!).toString()),
+      );
+    } finally {
+      project.dispose();
+      status.unbind();
+    }
+  });
+
   it('reports a late resolution failure to the shell and clears it after recovery', async () => {
     const gate = Promise.withResolvers<NormalizedConfigResult>();
     pendingConfig = gate.promise;
