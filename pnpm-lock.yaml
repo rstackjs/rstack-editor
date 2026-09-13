@@ -27,8 +27,8 @@ importers:
         specifier: ^0.9.0
         version: 0.9.0(jiti@2.7.0)
       '@rstackjs/load-config':
-        specifier: ^0.1.2
-        version: 0.1.2(jiti@2.7.0)
+        specifier: ^1.0.0
+        version: 1.0.0(jiti@2.7.0)
       '@rstest/core':
         specifier: ^0.11.11
         version: 0.11.11
@@ -993,8 +993,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@rstackjs/load-config@0.1.2':
-    resolution: {integrity: sha512-6hChPVosmh2rzEt1M1CvGpsaE/+gGlt51ci5pbyd4Bd1FXyH+Owlg99ECvdcWtD7zdDwDM3jGkQL05xn9oWSIA==}
+  '@rstackjs/load-config@1.0.0':
+    resolution: {integrity: sha512-eLp6lGEngk43kU6Z0iQNlGwgy4lLx/wtKdaBgoewHmWN0HHJRgQypewagqGxo+iNP4Yyf7pOXxAbsbH+L9Ay6A==}
     peerDependencies:
       jiti: ^2.0.0
     peerDependenciesMeta:
@@ -3467,7 +3467,7 @@ snapshots:
   '@rstackjs/cli-win32-x64-msvc@0.7.2':
     optional: true
 
-  '@rstackjs/load-config@0.1.2(jiti@2.7.0)':
+  '@rstackjs/load-config@1.0.0(jiti@2.7.0)':
     optionalDependencies:
       jiti: 2.7.0
 
