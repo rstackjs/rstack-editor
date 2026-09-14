@@ -5,9 +5,20 @@
 // from the project, so a fixture that linked this repo's own node_modules would
 // test nothing. `rstack@0.7.2` itself pins `@rslint/core@0.9.0` exactly, so the
 // Rstack fixture pins its lint core transitively. Each fixture is its own
-// independent install; `--ignore-workspace` keeps test setup out of the parent
-// workspace. Exact toolchain pins make installs reproducible without committed
-// lockfiles, and Renovate bumps those pins.
+// independent install. Exact toolchain pins make installs reproducible
+// without committed lockfiles, and Renovate bumps those pins.
+//
+// Each fixture carries a committed, settings-only `pnpm-workspace.yaml`. It
+// stops pnpm from walking up into this repo's workspace, and it exempts the
+// Rstack family from pnpm's `minimumReleaseAge` gate (fixtures pin releases
+// that are often hours old; third-party packages stay gated). The exemption
+// has to live in a file rather than `--config.minimumReleaseAge=0` because the
+// dependency-recovery tests copy a fixture to the OS tmpdir and re-install
+// with `--frozen-lockfile`, and pnpm 11 re-checks release age even when
+// frozen, so the policy must travel with the copy. The same file rules out
+// `--ignore-workspace`, under which pnpm ignores its settings. Setup-only
+// options stay flags below. Keep the list in step with the root
+// `pnpm-workspace.yaml`.
 //
 // Idempotent: pnpm is a no-op when the fixture is already up to date, so
 // `test:e2e` can always run it.
@@ -65,9 +76,6 @@ const install = (name) => {
     pnpmCommand,
     [
       'install',
-      // A fixture is a standalone project, never a workspace member of this
-      // repo: the whole point is a plain, published-versions install.
-      '--ignore-workspace',
       // Fixtures pin exact toolchain versions rather than committing lockfiles;
       // Renovate updates the pins.
       '--no-frozen-lockfile',
@@ -76,10 +84,6 @@ const install = (name) => {
       // `node_modules`, which it refuses to do without a TTY. The directory is
       // disposable.
       '--config.confirmModulesPurge=false',
-      // Fixtures deliberately install pinned published versions of the Rstack
-      // toolchain, which are often hours old — disable pnpm's
-      // minimum-release-age supply-chain gate for these sandboxes.
-      '--config.minimumReleaseAge=0',
       // pnpm's build-script gate exits non-zero on unapproved postinstalls
       // (e.g. core-js in the rstest fixture). These sandboxes install real
       // published packages exactly like a user project would, so run their

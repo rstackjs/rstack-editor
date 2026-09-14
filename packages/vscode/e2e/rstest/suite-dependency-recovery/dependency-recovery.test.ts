@@ -1,13 +1,10 @@
 import assert from 'node:assert/strict';
-import { execFile as execFileCallback } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { promisify } from 'node:util';
 import vscode from 'vscode';
+import { pnpmInstallFrozen } from '../../pnpmInstall';
 import type { RstackExtensionExports } from '../../../src/types';
 import { getProjectItems, getRstestExports, waitFor } from '../suite/helpers';
-
-const execFile = promisify(execFileCallback);
 
 suite('Rstest dependency polling recovery', function () {
   this.timeout(180_000);
@@ -30,16 +27,7 @@ suite('Rstest dependency polling recovery', function () {
     const lockfile = path.join(root, 'pnpm-lock.yaml');
     const contents = fs.readFileSync(lockfile);
     const mtime = fs.statSync(lockfile).mtimeMs;
-    await execFile(
-      'pnpm',
-      ['install', '--frozen-lockfile', '--ignore-scripts'],
-      {
-        cwd: root,
-        timeout: 90_000,
-        // Windows needs a shell for pnpm.cmd; arguments are fixed safe tokens.
-        shell: process.platform === 'win32',
-      },
-    );
+    await pnpmInstallFrozen(root);
     assert.deepEqual(
       fs.readFileSync(lockfile),
       contents,
