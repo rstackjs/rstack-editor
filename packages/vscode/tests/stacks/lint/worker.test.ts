@@ -261,7 +261,6 @@ describe('lint worker config dependency classification', () => {
     let missing: { configPath: string; cause: string } | undefined;
     let configError: string | undefined;
     const observer = {
-      resolveFrom: () => '/project',
       report: (failure: NonNullable<typeof missing>) => {
         missing = failure;
       },
@@ -392,7 +391,6 @@ describe('lint worker config dependency classification', () => {
       (_plan: ConfigModuleActivationPlan) => 'fingerprint',
       3,
       {
-        resolveFrom: (candidate) => candidate.configDirectory,
         report: (failure) => failures.push(failure),
         reportError: () => {
           throw new Error('unexpected config error');
@@ -473,7 +471,6 @@ describe('lint worker config dependency classification', () => {
       () => 'fingerprint',
       3,
       {
-        resolveFrom: () => '/project',
         report: (failure) => failures.push(failure),
         reportError: (message) =>
           expect(message).toBe("Cannot find package './relative.js'"),

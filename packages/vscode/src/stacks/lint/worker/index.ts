@@ -234,10 +234,6 @@ export async function runLintWorker(
     (activation) => fingerprinter.compute(activation),
     installation.protocolVersion,
     {
-      resolveFrom: (candidate) =>
-        candidate.configPath === options.configPath
-          ? process.cwd()
-          : candidate.configDirectory,
       report: (failure) => {
         configDependencyFailure ??= failure;
       },

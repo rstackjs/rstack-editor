@@ -691,8 +691,9 @@ export class Project implements vscode.Disposable {
     return `config-deps:${this.sourceUri.toString()}`;
   }
 
-  // The config imports a package that is not installed: the not-installed
-  // state (AGENTS.md), one step past a missing `@rstest/core` — some install
+  // The config imports a package Node cannot resolve — a missing package
+  // or a missing subpath of an installed one: the not-installed state
+  // (AGENTS.md), one step past a missing `@rstest/core` — some install
   // *above* the project satisfied the shim, so the config itself is what
   // failed. A scaffolded template beside its generator is the usual shape.
   // Latched under this project's key, which `dispose` forgets.

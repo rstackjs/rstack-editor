@@ -29,7 +29,7 @@ describe('not-installed wording', () => {
         'templates/app/rstack.config.ts',
       ),
     ).toBe(
-      'templates/app/rstack.config.ts imports a package that is not installed — install the project dependencies, then run "Rstack: Restart Rstest" if this status stays',
+      'templates/app/rstack.config.ts has an import Node cannot resolve — install the project dependencies, then run "Rstack: Restart Rstest" if this status stays',
     );
   });
 

@@ -29,20 +29,18 @@ export const formatNotInstalledStatus = (
   `${packageName} is not installed (node_modules missing) — install it, ${restartHint(stack)}`;
 
 /**
- * The `disabled` reason for a config that evaluates but imports a package
- * that is not there. `configPath` is workspace-relative: the status has no
- * room for more.
+ * The `disabled` reason for a config with an import Node cannot resolve.
+ * `configPath` is workspace-relative: the status has no room for more.
  */
 export const formatConfigDependencyMissingStatus = (
   stack: StackId,
   configPath: string,
 ): string =>
-  `${configPath} imports a package that is not installed — install the project dependencies, ${restartHint(stack)}`;
+  `${configPath} has an import Node cannot resolve — install the project dependencies, ${restartHint(stack)}`;
 
 /**
- * The output-channel line for a config that imports a package that is not
- * installed. `cause` is the loader's own first line, which names the
- * specifier and the importer.
+ * The output-channel line for the same verdict. `cause` is the loader's own
+ * first line, which names the specifier and the importer.
  */
 export const formatConfigDependencyMissingLog = (
   stack: StackId,
