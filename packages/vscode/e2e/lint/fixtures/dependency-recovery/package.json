@@ -5,6 +5,6 @@
   "type": "module",
   "description": "E2E fixture: Rslint dependencies are installed while VS Code stays open.",
   "dependencies": {
-    "@rslint/core": "0.9.0"
+    "@rslint/core": "0.9.2"
   }
 }
