@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, rs } from '@rstest/core';
+import { formatConfigDependencyMissingStatus } from '../../../src/shared/notInstalled';
 import { ReportedRstestResolutionError } from '../../../src/stacks/test/coreResolution';
 import { logger } from '../../../src/stacks/test/logger';
 import { status } from '../../../src/stacks/test/status';
@@ -557,8 +558,10 @@ describe('Project config/cwd/package-resolution decoupling', () => {
     expect(reported).toEqual([
       {
         kind: 'disabled',
-        reason:
-          'templates/app/rstack.config.ts imports a package that is not installed — install the project dependencies, then run "Rstack: Restart Rstest" if this status stays',
+        reason: formatConfigDependencyMissingStatus(
+          'rstest',
+          'templates/app/rstack.config.ts',
+        ),
       },
     ]);
 

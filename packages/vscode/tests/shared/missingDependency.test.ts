@@ -20,11 +20,6 @@ const resolveError = (specifier: string, from: string): unknown => {
 };
 
 describe('missingDependencyCauseOf', () => {
-  // The classifier resolves from the worker's cwd — the project root; the
-  // test directory stands in for it.
-  const classify = (error: unknown, from = __dirname) =>
-    missingDependencyCauseOf(error, from);
-
   // Same reasoning as `resolveError`: the errors come from Node's own
   // loaders.
   const importError = async (specifier: string): Promise<unknown> => {
@@ -38,12 +33,14 @@ describe('missingDependencyCauseOf', () => {
 
   it('should name a package an ESM config failed to import', async () => {
     expect(
-      classify(await importError('@rstest/definitely-not-installed')),
+      missingDependencyCauseOf(
+        await importError('@rstest/definitely-not-installed'),
+      ),
     ).toContain("'@rstest/definitely-not-installed'");
   });
 
   it('should keep a CJS failure to one line, without the require stack', () => {
-    const cause = classify(
+    const cause = missingDependencyCauseOf(
       resolveError('@rstest/definitely-not-installed', __dirname),
     );
     expect(cause).toContain("'@rstest/definitely-not-installed'");
@@ -58,11 +55,11 @@ describe('missingDependencyCauseOf', () => {
     // installing dependencies cannot fix it, so it must not be classified as
     // the not-installed state. The ESM loader reports relative imports as
     // absolute paths, which the absolute case stands in for.
-    expect(classify(resolveError('./definitely-missing', __dirname))).toBe(
-      undefined,
-    );
     expect(
-      classify(
+      missingDependencyCauseOf(resolveError('./definitely-missing', __dirname)),
+    ).toBe(undefined);
+    expect(
+      missingDependencyCauseOf(
         resolveError(
           path.join(os.tmpdir(), 'definitely-missing.js'),
           os.tmpdir(),
@@ -71,37 +68,36 @@ describe('missingDependencyCauseOf', () => {
     ).toBe(undefined);
   });
 
-  it('should tell a missing subpath of an installed package from a missing one', () => {
-    // `require('installed-package/missing')` fails with the same code and a
-    // bare-looking specifier, but the package is there — that is a source
-    // error, not the not-installed state. The same subpath under a package
-    // that is really absent still is.
+  it('treats a missing subpath of an installed package as not installed', () => {
+    // No filesystem lookup since #52; the fixture only proves Node still reports MODULE_NOT_FOUND for a present package's missing subpath.
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rstest-vscode-'));
     try {
       const pkgDir = path.join(root, 'node_modules', 'installed-package');
       fs.mkdirSync(pkgDir, { recursive: true });
       fs.writeFileSync(
         path.join(pkgDir, 'package.json'),
-        '{"name":"installed-package","version":"1.0.0","main":"./index.js"}',
+        '{"name":"installed-package","version":"1.0.0"}',
       );
-      fs.writeFileSync(path.join(pkgDir, 'index.js'), 'module.exports = {};\n');
 
       expect(
-        classify(resolveError('installed-package/missing', root), root),
-      ).toBe(undefined);
-      expect(
-        classify(resolveError('not-installed-package/missing', root), root),
-      ).toContain("'not-installed-package/missing'");
+        missingDependencyCauseOf(
+          resolveError('installed-package/missing', root),
+        ),
+      ).toContain("'installed-package/missing'");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
   it('should leave every other failure to the full error report', () => {
-    expect(classify(new SyntaxError('Unexpected token'))).toBe(undefined);
-    expect(classify(new Error("Cannot find package 'x'"))).toBe(undefined);
-    expect(classify("Cannot find package 'x'")).toBe(undefined);
-    expect(classify(undefined)).toBe(undefined);
+    expect(missingDependencyCauseOf(new SyntaxError('Unexpected token'))).toBe(
+      undefined,
+    );
+    expect(missingDependencyCauseOf(new Error("Cannot find package 'x'"))).toBe(
+      undefined,
+    );
+    expect(missingDependencyCauseOf("Cannot find package 'x'")).toBe(undefined);
+    expect(missingDependencyCauseOf(undefined)).toBe(undefined);
   });
 });
 
@@ -110,24 +106,16 @@ describe('classifyMissingDependencyMessage', () => {
     expect(
       classifyMissingDependencyMessage(
         "Cannot find package '@scope/missing' imported from /project/config.mjs",
-        __dirname,
       ),
     ).toBe(
       "Cannot find package '@scope/missing' imported from /project/config.mjs",
     );
-    expect(
-      classifyMissingDependencyMessage(
-        "Cannot find module 'missing-package'\nRequire stack:\n- /project/config.cjs",
-        __dirname,
-      ),
-    ).toBe("Cannot find module 'missing-package'");
   });
 
   it('rejects non-loader messages even without the Error-code gate', () => {
     expect(
       classifyMissingDependencyMessage(
         "Configuration says Cannot find package 'missing'",
-        __dirname,
       ),
     ).toBe(undefined);
   });

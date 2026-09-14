@@ -255,6 +255,13 @@ function loadRequest(transactionId = 'tx-1'): LoadConfigsRequest {
 }
 
 suite('LSP config discovery transactions', () => {
+  const rejectsConfigDependencies: ConstructorParameters<
+    typeof LspConfigTransactionAdapter
+  >[4] = {
+    report: () => assert.fail('unexpected missing dependency'),
+    reportError: () => assert.fail('unexpected config error'),
+  };
+
   test('the extension watcher leaves gitignore ownership to Go', () => {
     assert.match(CONFIG_REFRESH_WATCH_GLOB, /rslint\.config\.js/);
     assert.match(CONFIG_REFRESH_WATCH_GLOB, /rslint\.config\.mjs/);
@@ -282,11 +289,7 @@ suite('LSP config discovery transactions', () => {
       pool,
       () => 'fingerprint-1',
       CONFIG_DISCOVERY_PROTOCOL_VERSION,
-      {
-        resolveFrom: (candidate) => candidate.configDirectory,
-        report: () => assert.fail('unexpected missing dependency'),
-        reportError: () => assert.fail('unexpected config error'),
-      },
+      rejectsConfigDependencies,
     );
 
     const loaded = await adapter.loadConfigs(loadRequest());
@@ -332,11 +335,7 @@ suite('LSP config discovery transactions', () => {
       pool,
       () => 'fingerprint-1',
       CONFIG_DISCOVERY_PROTOCOL_VERSION,
-      {
-        resolveFrom: (candidate) => candidate.configDirectory,
-        report: () => assert.fail('unexpected missing dependency'),
-        reportError: () => assert.fail('unexpected config error'),
-      },
+      rejectsConfigDependencies,
     );
 
     await adapter.loadConfigs(loadRequest('tx-abort'));
@@ -399,11 +398,7 @@ suite('LSP config discovery transactions', () => {
       pool,
       () => 'fingerprint-degraded',
       CONFIG_DISCOVERY_PROTOCOL_VERSION,
-      {
-        resolveFrom: (candidate) => candidate.configDirectory,
-        report: () => assert.fail('unexpected missing dependency'),
-        reportError: () => assert.fail('unexpected config error'),
-      },
+      rejectsConfigDependencies,
     );
 
     await adapter.loadConfigs(loadRequest('tx-degraded'));
@@ -439,11 +434,7 @@ suite('LSP config discovery transactions', () => {
       pool,
       () => 'fingerprint-before-prepare',
       CONFIG_DISCOVERY_PROTOCOL_VERSION,
-      {
-        resolveFrom: (candidate) => candidate.configDirectory,
-        report: () => assert.fail('unexpected missing dependency'),
-        reportError: () => assert.fail('unexpected config error'),
-      },
+      rejectsConfigDependencies,
     );
 
     await adapter.loadConfigs(loadRequest('tx-prepare-race'));
@@ -468,11 +459,7 @@ suite('LSP config discovery transactions', () => {
       pool,
       () => 'fingerprint-1',
       CONFIG_DISCOVERY_PROTOCOL_VERSION,
-      {
-        resolveFrom: (candidate) => candidate.configDirectory,
-        report: () => assert.fail('unexpected missing dependency'),
-        reportError: () => assert.fail('unexpected config error'),
-      },
+      rejectsConfigDependencies,
     );
 
     await adapter.loadConfigs(loadRequest('tx-response-lost'));
@@ -510,11 +497,7 @@ suite('LSP config discovery transactions', () => {
       new TestPluginPool(),
       () => 'fingerprint-1',
       CONFIG_DISCOVERY_PROTOCOL_VERSION,
-      {
-        resolveFrom: (candidate) => candidate.configDirectory,
-        report: () => assert.fail('unexpected missing dependency'),
-        reportError: () => assert.fail('unexpected config error'),
-      },
+      rejectsConfigDependencies,
     );
 
     await assert.rejects(adapter.loadConfigs(loadRequest()), /load failed/);

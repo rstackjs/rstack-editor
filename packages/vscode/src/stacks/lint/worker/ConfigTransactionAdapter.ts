@@ -2,20 +2,15 @@ import type {
   ActivateConfigsRequest,
   ActivateConfigsResponse,
   ConfigModuleActivationPlan,
-  ConfigModuleCandidate,
   ConfigModuleEslintPluginEntry,
   ConfigModulePluginDescriptor,
   LoadConfigsRequest,
   LoadConfigsResponse,
 } from '@rslint/core/config-loader';
-import {
-  classifyMissingDependencyMessage,
-  isMissingDependencyCode,
-} from '../../../shared/missingDependency';
+import { missingDependencyCause } from '../../../shared/missingDependency';
 import type { ConfigDependencyFailure } from '../../../shared/notInstalled';
 
 interface ConfigDependencyObserver {
-  resolveFrom(candidate: ConfigModuleCandidate): string;
   report(failure: ConfigDependencyFailure): void;
   reportError(message: string): void;
 }
@@ -128,14 +123,10 @@ export class LspConfigTransactionAdapter {
         results: response.results.map((result, index) => {
           if (result.status !== 'failed') return result;
           const candidate = request.candidates[index];
-          const cause =
-            candidate !== undefined &&
-            isMissingDependencyCode(result.error.code)
-              ? classifyMissingDependencyMessage(
-                  result.error.message,
-                  this.configDependencyObserver.resolveFrom(candidate),
-                )
-              : undefined;
+          const cause = missingDependencyCause(
+            result.error.code,
+            result.error.message,
+          );
           // Scan every failure: a later real error must not be hidden by the
           // first missing dependency, even though only that result is rewritten.
           if (cause === undefined || candidate === undefined) {

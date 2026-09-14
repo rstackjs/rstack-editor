@@ -239,7 +239,6 @@ class FmtFolderRuntime {
         if (configPath !== undefined) {
           const cause = classifyMissingDependencyMessage(
             firstLine.replace(/^Error(?: \[[A-Z_]+\])?: /, ''),
-            this.folderPath,
           );
           if (cause !== undefined) {
             this.#sessionError.clear();

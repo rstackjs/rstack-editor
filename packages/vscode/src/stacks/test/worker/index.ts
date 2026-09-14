@@ -92,9 +92,7 @@ export class Worker {
       // Classified here and not in the master: `code` does not survive the
       // IPC round-trip. Only this unprompted, per-config evaluation gets the
       // treatment — a run or list the user asked for reports its failure.
-      // The worker's spawn cwd is the project root (adaptation #5), which is
-      // where the config's dependencies are installed.
-      const cause = missingDependencyCauseOf(error, process.cwd());
+      const cause = missingDependencyCauseOf(error);
       if (cause !== undefined) {
         return { ok: false, message: cause };
       }

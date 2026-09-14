@@ -9,9 +9,9 @@ export type WorkerInitOptions = RstestConfig & {
 };
 
 /**
- * What the worker answers `getNormalizedConfig` with. A config that fails to
- * evaluate because a dependency is not installed is a result, not a rejection:
- * the IPC channel would strip the error's `code` (see
+ * What the worker answers `getNormalizedConfig` with. A config that fails
+ * to evaluate because Node cannot resolve one of its imports is a result,
+ * not a rejection: the IPC channel would strip the error's `code` (see
  * `missingDependencyCauseOf`), so the worker classifies it and reports the
  * loader's own first line as data.
  */
