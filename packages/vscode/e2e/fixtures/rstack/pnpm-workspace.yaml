@@ -1,0 +1,10 @@
+# E2E fixture install config; rationale in packages/vscode/e2e/setupFixtures.mjs.
+minimumReleaseAgeExclude:
+  - rstack
+  - '@rslint/core'
+  - '@rstest/core'
+  - '@rsbuild/core'
+  - '@rslib/core'
+  - '@rstackjs/*'
+  - rsbuild-plugin-dts
+  - '@rspack/*'

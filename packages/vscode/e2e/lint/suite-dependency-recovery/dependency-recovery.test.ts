@@ -1,14 +1,11 @@
 import * as assert from 'node:assert';
-import { execFile as execFileCallback } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { promisify } from 'node:util';
 import * as vscode from 'vscode';
+import { pnpmInstallFrozen } from '../../pnpmInstall';
 import type { StackState } from '../../../src/types';
 import { waitForRslintDiagnostics } from '../utils/diagnostics';
 import { extensionExports } from '../utils/extension';
-
-const execFile = promisify(execFileCallback);
 
 function lintExports(): {
   getFolderStates(): ReadonlyMap<string, StackState>;
@@ -61,17 +58,7 @@ suite('Rslint dependency polling recovery', function () {
     const beforeContents = fs.readFileSync(lockfile);
     const beforeMtime = fs.statSync(lockfile).mtimeMs;
 
-    await execFile(
-      'pnpm',
-      ['install', '--frozen-lockfile', '--ignore-scripts'],
-      {
-        cwd: root,
-        timeout: 90_000,
-        // Match setupFixtures.mjs/run.mjs: Windows needs a shell for pnpm's
-        // .cmd shim. All arguments are fixed safe tokens; cwd is not interpolated.
-        shell: process.platform === 'win32',
-      },
-    );
+    await pnpmInstallFrozen(root);
 
     assert.deepStrictEqual(
       fs.readFileSync(lockfile),
