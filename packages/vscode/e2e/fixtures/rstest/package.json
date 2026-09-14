@@ -5,6 +5,6 @@
   "type": "module",
   "description": "E2E fixture: a project detected as Rstest only, installed from the npm registry.",
   "dependencies": {
-    "@rstest/core": "0.11.11"
+    "@rstest/core": "0.11.12"
   }
 }
