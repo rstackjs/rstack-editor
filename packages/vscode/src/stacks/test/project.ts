@@ -17,7 +17,11 @@ import {
 } from './coreResolution';
 import { logger } from './logger';
 import { RstestApi } from './master';
-import { type ChildProjectRef, computeCoveredConfigs } from './projectCoverage';
+import {
+  type ChildProjectRef,
+  computeCoveredConfigs,
+  computeFileOwnership,
+} from './projectCoverage';
 import { status } from './status';
 import { ProjectFolder, TestFile, TestFolder, testData } from './testTree';
 
@@ -403,16 +407,29 @@ export class WorkspaceManager implements vscode.Disposable {
 
     // Standard single-project setup (one project using the default config name
     // at the workspace root): show its test files directly, with no project node.
-    if (activeProjects.size === 1) {
-      const [[, project]] = activeProjects;
-      const relative = relativeTo(this.workspaceFolder, project.sourceUri);
-      if (DEFAULT_ROOT_CONFIG_RE.test(relative)) {
-        project.refresh(collection, null);
-        return;
-      }
+    const [project] = activeProjects.values();
+    if (
+      activeProjects.size === 1 &&
+      DEFAULT_ROOT_CONFIG_RE.test(
+        relativeTo(this.workspaceFolder, project.sourceUri),
+      )
+    ) {
+      project.refresh(collection, null);
+    } else {
+      this.buildProjectTree(collection, activeProjects);
     }
 
-    this.buildProjectTree(collection, activeProjects);
+    const ownsFile = computeFileOwnership(
+      [...activeProjects].map(([key, project]) => ({
+        key,
+        root: project.root.fsPath,
+        include: project.include,
+        exclude: project.exclude,
+      })),
+    );
+    for (const [key, project] of activeProjects) {
+      project.setOwnsFile((uri) => ownsFile(key, uri.fsPath));
+    }
   }
 
   // A config file aggregated by *another* project via `projects` is shown only
@@ -562,6 +579,7 @@ export class Project implements vscode.Disposable {
   readonly rstestResolutionDir: string;
   readonly isBridge: boolean;
   #watch?: vscode.Disposable;
+  #ownsFile: (uri: vscode.Uri) => boolean = () => true;
   #collectionFailed = false;
   #configLoad: Promise<void> | undefined;
   readonly #configDependencyEpisode = new NotInstalledEpisode();
@@ -718,6 +736,14 @@ export class Project implements vscode.Disposable {
   /** The config file path Rstest is asked to load (`-c`). */
   get configFilePath(): string {
     return this.configFileUri.fsPath;
+  }
+
+  public setOwnsFile(predicate: (uri: vscode.Uri) => boolean) {
+    this.#ownsFile = predicate;
+  }
+
+  public ownsFile(uri: vscode.Uri): boolean {
+    return this.#ownsFile(uri);
   }
 
   private applyWatch() {

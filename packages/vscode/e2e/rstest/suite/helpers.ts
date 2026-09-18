@@ -158,8 +158,11 @@ export function createCollectingMockRun() {
   const deferred = Promise.withResolvers<null>();
   let output = '';
   const failedMessages: vscode.TestMessage[] = [];
+  const failedItems: vscode.TestItem[] = [];
   const passedItems: vscode.TestItem[] = [];
   const skippedItems: vscode.TestItem[] = [];
+  const enqueuedItems: vscode.TestItem[] = [];
+  const startedItems: vscode.TestItem[] = [];
 
   const createMockRun = (): vscode.TestRun => ({
     isPersisted: true,
@@ -173,9 +176,12 @@ export function createCollectingMockRun() {
     end: () => {
       deferred.resolve(null);
     },
-    enqueued: () => {},
+    enqueued: (test) => {
+      enqueuedItems.push(test);
+    },
     errored: () => {},
-    failed: (_test, message = []) => {
+    failed: (test, message = []) => {
+      failedItems.push(test);
       failedMessages.push(...(message as vscode.TestMessage[]));
     },
     passed: (test) => {
@@ -184,7 +190,9 @@ export function createCollectingMockRun() {
     skipped: (test) => {
       skippedItems.push(test);
     },
-    started: () => {},
+    started: (test) => {
+      startedItems.push(test);
+    },
   });
 
   return {
@@ -195,7 +203,10 @@ export function createCollectingMockRun() {
       return output;
     },
     failedMessages,
+    failedItems,
     passedItems,
     skippedItems,
+    enqueuedItems,
+    startedItems,
   };
 }

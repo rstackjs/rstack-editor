@@ -1,7 +1,9 @@
-import { describe, expect, it } from '@rstest/core';
+import path from 'node:path';
+import { describe, expect, it, rs } from '@rstest/core';
 import {
   type ChildProjectRef,
   computeCoveredConfigs,
+  computeFileOwnership,
 } from '../../../src/stacks/test/projectCoverage';
 
 // Paths are absolute in practice; use POSIX-looking paths for readability.
@@ -26,6 +28,129 @@ const file = (configFilePath: string): ChildProjectRef => ({
 const inline = (root: string): ChildProjectRef => ({
   configFilePath: null,
   root,
+});
+
+const owner = (
+  key: string,
+  root: string,
+  include: string[] = ['**/*.test.ts'],
+  exclude: string[] = [],
+) => ({ key, root, include, exclude });
+
+describe('computeFileOwnership', () => {
+  it('preserves glob case on win32 while containing a lowercase-drive file', () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    const separator = Object.getOwnPropertyDescriptor(path, 'sep')!;
+    const mocks = [
+      rs.spyOn(path, 'normalize').mockImplementation(path.win32.normalize),
+      rs.spyOn(path, 'parse').mockImplementation(path.win32.parse),
+      rs.spyOn(path, 'relative').mockImplementation(path.win32.relative),
+      rs.spyOn(path, 'isAbsolute').mockImplementation(path.win32.isAbsolute),
+    ];
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    Object.defineProperty(path, 'sep', { value: '\\' });
+    // Picomatch checks navigator before process on Node versions exposing it.
+    rs.stubGlobal('navigator', { platform: 'Win32' });
+    try {
+      const owns = computeFileOwnership([
+        owner('root', 'C:\\Repo'),
+        owner(
+          'nested',
+          'C:\\Repo\\Package',
+          ['Tests/**/*.test.ts'],
+          ['Tests/Excluded/**'],
+        ),
+      ]);
+      const file = 'c:\\Repo\\Package\\Tests\\a.test.ts';
+      expect(owns('nested', file)).toBe(true);
+      expect(owns('root', file)).toBe(false);
+      expect(owns('nested', 'c:\\Repo\\Package\\tests\\a.test.ts')).toBe(false);
+      expect(
+        owns('nested', 'c:\\Repo\\Package\\Tests\\Excluded\\a.test.ts'),
+      ).toBe(false);
+      expect(
+        owns('root', 'c:\\Repo\\Package\\Tests\\Excluded\\a.test.ts'),
+      ).toBe(true);
+    } finally {
+      mocks.forEach((mock) => mock.mockRestore());
+      Object.defineProperty(process, 'platform', platform);
+      Object.defineProperty(path, 'sep', separator);
+      rs.unstubAllGlobals();
+    }
+  });
+
+  it('assigns a file to the deepest matching root', () => {
+    const owns = computeFileOwnership([
+      owner('root', '/repo'),
+      owner('package', '/repo/packages/a'),
+    ]);
+
+    expect(owns('root', '/repo/packages/a/src/a.test.ts')).toBe(false);
+    expect(owns('package', '/repo/packages/a/src/a.test.ts')).toBe(true);
+    expect(owns('root', '/repo/packages/ab/a.test.ts')).toBe(true);
+    expect(owns('package', '/repo/packages/ab/a.test.ts')).toBe(false);
+  });
+
+  it('retains all matching projects with equal roots', () => {
+    const owns = computeFileOwnership([
+      owner('unit', '/repo'),
+      owner('integration', '/repo'),
+    ]);
+
+    expect(owns('unit', '/repo/a.test.ts')).toBe(true);
+    expect(owns('integration', '/repo/a.test.ts')).toBe(true);
+  });
+
+  it('normalizes roots and trailing separators, including the filesystem root', () => {
+    const owns = computeFileOwnership([
+      owner('filesystem', '/'),
+      owner('repo', '/repo/./packages/'),
+    ]);
+
+    expect(owns('filesystem', '/repo/packages/a.test.ts')).toBe(false);
+    expect(owns('repo', '/repo/packages/a.test.ts')).toBe(true);
+    expect(owns('repo', '/elsewhere/a.test.ts')).toBe(false);
+  });
+
+  it('matches hidden files with dot enabled', () => {
+    const owns = computeFileOwnership([
+      owner('repo', '/repo'),
+      owner('nested', '/repo/.hidden'),
+    ]);
+    expect(owns('repo', '/repo/.hidden/.a.test.ts')).toBe(false);
+    expect(owns('nested', '/repo/.hidden/.a.test.ts')).toBe(true);
+  });
+
+  it('ignores projects with unresolved empty includes', () => {
+    const owns = computeFileOwnership([
+      owner('unresolved', '/repo/deep', []),
+      owner('root', '/repo'),
+    ]);
+    expect(owns('root', '/repo/deep/a.test.ts')).toBe(true);
+    expect(owns('unresolved', '/repo/deep/a.test.ts')).toBe(false);
+  });
+
+  it('leaves a shallow owner when a deeper project narrows the file out', () => {
+    const owns = computeFileOwnership([
+      owner('root', '/repo'),
+      owner('deep', '/repo/deep', ['src/**/*.test.ts'], ['src/excluded/**']),
+    ]);
+
+    expect(owns('root', '/repo/deep/other/a.test.ts')).toBe(true);
+    expect(owns('root', '/repo/deep/src/excluded/a.test.ts')).toBe(true);
+    expect(owns('deep', '/repo/deep/other/a.test.ts')).toBe(false);
+    expect(owns('deep', '/repo/deep/src/excluded/a.test.ts')).toBe(false);
+    expect(owns('deep', '/repo/deep/src/a.test.ts')).toBe(true);
+  });
+
+  it('allows every project when nobody claims the file', () => {
+    const owns = computeFileOwnership([
+      owner('repo', '/repo'),
+      owner('lookalike', '/repo-name'),
+    ]);
+
+    expect(owns('repo', '/repo-name/file.ts')).toBe(true);
+  });
 });
 
 describe('computeCoveredConfigs', () => {

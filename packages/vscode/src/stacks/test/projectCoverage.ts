@@ -1,4 +1,6 @@
 import path from 'node:path';
+import picomatch from 'picomatch';
+import { relativeIsContained } from '../../shared/pathContains';
 
 export type ChildProjectRef = {
   // The child's own config file, or null for an inline project.
@@ -12,9 +14,15 @@ export type ChildProjectRef = {
 // path without one; on Windows paths are case-insensitive and VS Code
 // lowercases drive letters in `Uri.fsPath` while core reports paths as the
 // process resolved them.
-const normalizePath = (value: string): string => {
-  const normalized = path.normalize(value).replace(/[\\/]+$/, '');
-  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+const normalizePath = (value: string, comparisonKey = true): string => {
+  const normalized = path.normalize(value);
+  const withoutTrailingSeparator =
+    normalized === path.parse(normalized).root
+      ? normalized
+      : normalized.replace(/[\\/]+$/, '');
+  return comparisonKey && process.platform === 'win32'
+    ? withoutTrailingSeparator.toLowerCase()
+    : withoutTrailingSeparator;
 };
 
 const isSubset = (a: Set<string>, b: Set<string>): boolean => {
@@ -34,8 +42,47 @@ const isSubset = (a: Set<string>, b: Set<string>): boolean => {
 const isStrictAncestor = (ancestor: string, descendant: string): boolean => {
   const rel = path.relative(ancestor, descendant);
   // `rel === ''` covers the equal-path case (not a strict ancestor).
-  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+  return rel !== '' && relativeIsContained(rel);
 };
+
+export function computeFileOwnership(
+  projects: {
+    key: string;
+    root: string;
+    include: string[];
+    exclude: string[];
+  }[],
+): (key: string, filePath: string) => boolean {
+  const owners = projects
+    .filter((project) => project.include.length > 0)
+    .map((project) => ({
+      key: project.key,
+      root: normalizePath(project.root, false),
+      include: picomatch(project.include, { dot: true }),
+      exclude: picomatch(project.exclude, { dot: true }),
+    }));
+
+  return (key, filePath) => {
+    const candidates = owners.filter((owner) => {
+      const relative = path.relative(owner.root, filePath);
+      return (
+        relativeIsContained(relative) &&
+        owner.include(relative) &&
+        !owner.exclude(relative)
+      );
+    });
+    if (candidates.length === 0) {
+      return true;
+    }
+    const deepestRootLength = Math.max(
+      ...candidates.map((candidate) => candidate.root.length),
+    );
+    return candidates.some(
+      (candidate) =>
+        candidate.key === key && candidate.root.length === deepestRootLength,
+    );
+  };
+}
 
 type Node = {
   key: string;

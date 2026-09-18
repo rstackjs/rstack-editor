@@ -1,0 +1,10 @@
+{
+  "name": "rstack-editor-fixture-rstest-ownership",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@rstest/core": "0.11.12",
+    "rstack": "0.7.4"
+  }
+}

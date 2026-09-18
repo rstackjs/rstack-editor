@@ -43,6 +43,7 @@ export const FIXTURES = {
   rslint: path.join(FIXTURES_DIR, 'rslint'),
   rstest: path.join(FIXTURES_DIR, 'rstest'),
   rstack: path.join(FIXTURES_DIR, 'rstack'),
+  'rstest-ownership': path.join(FIXTURES_DIR, 'rstest-ownership'),
   'fmt-missing-config-dependency': path.join(
     FIXTURES_DIR,
     'fmt-missing-config-dependency',

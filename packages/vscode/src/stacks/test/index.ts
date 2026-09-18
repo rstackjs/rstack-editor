@@ -11,6 +11,7 @@ import { logger } from './logger';
 import { runningWorkers, warmWorkerNodePreflight } from './master';
 import { NODE_EXECUTABLE_SETTING } from '../../shared/nodeResolution';
 import { Project, WorkspaceManager } from './project';
+import { routeToOwners } from './runRouting';
 import { status } from './status';
 import { disposeTerminal } from './terminal';
 import { RstestFileCoverage } from './testRunReporter';
@@ -400,6 +401,18 @@ class Rstest implements vscode.Disposable {
     // used by e2e tests
     createTestRun = this.ctrl.createTestRun.bind(this.ctrl),
   ) => {
+    const include =
+      request.include &&
+      routeToOwners(request.include, (item) => {
+        const data = testData.get(item);
+        if (data instanceof TestFile || data instanceof TestCase) {
+          return {
+            uri: data.uri,
+            ownsFile: data.api.project.ownsFile(data.uri),
+          };
+        }
+        return undefined;
+      });
     const run = createTestRun(request);
     const enqueuedTests = (tests: readonly vscode.TestItem[]) => {
       for (const test of tests) {
@@ -414,7 +427,7 @@ class Rstest implements vscode.Disposable {
       }
     };
 
-    enqueuedTests(request.include ?? gatherTestItems(this.ctrl.items, false));
+    enqueuedTests(include ?? gatherTestItems(this.ctrl.items, false));
 
     const commonOptions = {
       run,
@@ -427,7 +440,7 @@ class Rstest implements vscode.Disposable {
       createTestRun: () =>
         createTestRun(
           new vscode.TestRunRequest(
-            request.include,
+            include,
             request.exclude,
             request.profile,
             request.continuous,
@@ -481,7 +494,7 @@ class Rstest implements vscode.Disposable {
     };
 
     try {
-      if (!request.include?.length) {
+      if (!include?.length) {
         if (this.workspaces.size === 1) {
           const workspace = this.workspaces.values().next().value!;
           if (workspace.activeProjects.size === 1) {
@@ -493,9 +506,7 @@ class Rstest implements vscode.Disposable {
           }
         }
       }
-      await discoverTests(
-        request.include ?? gatherTestItems(this.ctrl.items, false),
-      );
+      await discoverTests(include ?? gatherTestItems(this.ctrl.items, false));
     } catch (error) {
       logUnlessReported('Error running tests:', error);
     } finally {

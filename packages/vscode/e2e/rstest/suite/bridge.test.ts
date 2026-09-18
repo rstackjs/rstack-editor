@@ -32,6 +32,24 @@ import {
 const RSTACK_FIXTURE = path.resolve(FIXTURES_ROOT, '../../fixtures/rstack');
 const RSTACK_FIXTURE_URI = vscode.Uri.file(RSTACK_FIXTURE);
 
+const addFixtureFolder = (uri: vscode.Uri) => {
+  assert.ok(
+    vscode.workspace.updateWorkspaceFolders(
+      vscode.workspace.workspaceFolders?.length || 0,
+      0,
+      { uri },
+    ),
+  );
+};
+const removeFixtureFolder = (uri: vscode.Uri) => {
+  // URI comparison also handles Windows drive-letter casing.
+  const index = vscode.workspace.workspaceFolders?.findIndex(
+    (folder) => folder.uri.toString() === uri.toString(),
+  );
+  assert.ok(index !== undefined && index >= 0);
+  assert.ok(vscode.workspace.updateWorkspaceFolders(index, 1));
+};
+
 const WORKSPACE_1_FILES = [
   { label: 'each.test.ts' },
   { label: 'foo.test.ts' },
@@ -45,25 +63,11 @@ const WORKSPACE_1_FILES = [
 suite('Rstack bridge suite', () => {
   suiteSetup(async () => {
     await getRstestExports();
-    const added = vscode.workspace.updateWorkspaceFolders(
-      vscode.workspace.workspaceFolders?.length || 0,
-      0,
-      { uri: RSTACK_FIXTURE_URI },
-    );
-    assert.ok(added, 'adding the rstack fixture folder should be accepted');
+    addFixtureFolder(RSTACK_FIXTURE_URI);
   });
 
   suiteTeardown(async () => {
-    // Compare `uri.toString()`, not `fsPath`: `fsPath` lower-cases the Windows
-    // drive letter while `path.resolve` keeps it as-is, so a raw string
-    // compare can miss on Windows — and a missed removal here would leak the
-    // folder into every later suite.
-    const index = vscode.workspace.workspaceFolders?.findIndex(
-      (folder) => folder.uri.toString() === RSTACK_FIXTURE_URI.toString(),
-    );
-    assert.ok(index !== undefined && index >= 0);
-    const removed = vscode.workspace.updateWorkspaceFolders(index, 1);
-    assert.ok(removed, 'removing the rstack fixture folder should be accepted');
+    removeFixtureFolder(RSTACK_FIXTURE_URI);
     // Later suites assert on the unwrapped single-folder tree; leave only
     // after the controller has actually settled back into it.
     await waitFor(() => {
@@ -167,5 +171,146 @@ suite('Rstack bridge suite', () => {
       ['basic.test.ts', 'trims a string'],
     );
     assert.match(collecting.output, /1 passed/);
+  });
+
+  test('publishes both projects but routes merged file and case runs to the owner', async () => {
+    const fixture = path.resolve(
+      FIXTURES_ROOT,
+      '../../fixtures/rstest-ownership',
+    );
+    const fixtureUri = vscode.Uri.file(fixture);
+    const testUri = vscode.Uri.file(
+      path.join(fixture, 'host/tests/ownership.test.ts'),
+    );
+    addFixtureFolder(fixtureUri);
+    const assertOwnership = () => {
+      const exports = currentRstestExports();
+      const folder = getTestItemByLabels(exports.testController.items, [
+        'rstest-ownership',
+      ]);
+      const root = getTestItemByLabels(folder.children, ['rstack.config.ts']);
+      const host = getTestItemByLabels(folder.children, ['host']);
+      // Both configs publish their CLI scope, even where the files overlap.
+      assert.ok(exports.getResolvedRstestPath(root.id));
+      assert.ok(exports.getResolvedRstestPath(host.id));
+      assert.equal(root.busy, false);
+      assert.equal(host.busy, false);
+      const files: vscode.TestItem[] = [];
+      const visit = (items: vscode.TestItemCollection) =>
+        items.forEach((item) => {
+          if (
+            item.uri?.toString() === testUri.toString() &&
+            item.label === 'ownership.test.ts'
+          )
+            files.push(item);
+          visit(item.children);
+        });
+      visit(folder.children);
+      assert.equal(
+        files.length,
+        2,
+        'both projects must publish their own copy of the same URI',
+      );
+      const rootFile = getTestItemByLabels(root.children, [
+        path.join('host', 'tests'),
+        'ownership.test.ts',
+      ]);
+      const hostFile = getTestItemByLabels(host.children, [
+        'tests',
+        'ownership.test.ts',
+      ]);
+      assert.notStrictEqual(rootFile, hostFile);
+      assert.deepStrictEqual(new Set(files), new Set([rootFile, hostFile]));
+      assert.equal(rootFile.children.size, 1);
+      assert.equal(hostFile.children.size, 1);
+      const rootCase = getTestItemByLabels(rootFile.children, [
+        'uses the nested config and cwd',
+      ]);
+      const hostCase = getTestItemByLabels(hostFile.children, [
+        'uses the nested config and cwd',
+      ]);
+      return { exports, root, rootFile, hostFile, rootCase, hostCase };
+    };
+    const cancellation = new vscode.CancellationTokenSource();
+    try {
+      const { exports, root, rootFile, hostFile } = await waitFor(
+        assertOwnership,
+        {
+          timeoutMs: 60_000,
+        },
+      );
+      for (const kind of ['file', 'case']) {
+        const { rootCase, hostCase } = assertOwnership();
+        const include =
+          kind === 'file' ? [rootFile, hostFile] : [rootCase, hostCase];
+        const collecting = createCollectingMockRun();
+        await exports.startTestRun(
+          new vscode.TestRunRequest(include, undefined, exports.runProfile),
+          cancellation.token,
+          false,
+          collecting.createMockRun,
+        );
+        await collecting.ended;
+        assert.ok(
+          collecting.passedItems.some(
+            (item) =>
+              item.parent === hostFile &&
+              item.label === 'uses the nested config and cwd',
+          ),
+        );
+        assert.equal(collecting.failedItems.length, 0);
+        for (const records of [
+          collecting.enqueuedItems,
+          collecting.startedItems,
+          collecting.passedItems,
+          collecting.failedItems,
+        ]) {
+          assert.ok(
+            !records.some(
+              (item) => item === rootFile || item.parent === rootFile,
+            ),
+          );
+        }
+      }
+      // Project Run All keeps the root CLI scope, which lacks the host alias.
+      const rootRun = createCollectingMockRun();
+      await exports.startTestRun(
+        new vscode.TestRunRequest([root], undefined, exports.runProfile),
+        cancellation.token,
+        false,
+        rootRun.createMockRun,
+      );
+      await rootRun.ended;
+      assert.ok(rootRun.failedItems.includes(rootFile));
+      assert.match(
+        rootRun.failedMessages
+          .map((message) => String(message.message))
+          .join('\n'),
+        /@host-value/,
+      );
+      for (const records of [
+        rootRun.enqueuedItems,
+        rootRun.startedItems,
+        rootRun.passedItems,
+        rootRun.failedItems,
+      ]) {
+        assert.ok(
+          !records.some(
+            (item) => item === hostFile || item.parent === hostFile,
+          ),
+        );
+      }
+    } finally {
+      cancellation.dispose();
+      removeFixtureFolder(fixtureUri);
+      await waitFor(() => {
+        assert.equal(currentRstestExports().testController.items.size, 2);
+        assert.ok(
+          !vscode.workspace.workspaceFolders?.some(
+            (folder) => folder.uri.toString() === fixtureUri.toString(),
+          ),
+        );
+      });
+    }
   });
 });
