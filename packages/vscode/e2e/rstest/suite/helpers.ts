@@ -98,6 +98,15 @@ export function getTestItems(collection: vscode.TestItemCollection) {
   return items;
 }
 
+export function getTestItemsRecursive(
+  collection: vscode.TestItemCollection,
+): vscode.TestItem[] {
+  return getTestItems(collection).flatMap((item) => [
+    item,
+    ...getTestItemsRecursive(item.children),
+  ]);
+}
+
 export function getProjectItems(testController: vscode.TestController) {
   const folders = getTestItems(testController.items);
   assert.equal(folders.length, 1);
@@ -158,8 +167,10 @@ export function createCollectingMockRun() {
   const deferred = Promise.withResolvers<null>();
   let output = '';
   const failedMessages: vscode.TestMessage[] = [];
+  const failedItems: vscode.TestItem[] = [];
   const passedItems: vscode.TestItem[] = [];
   const skippedItems: vscode.TestItem[] = [];
+  const enqueuedItems: vscode.TestItem[] = [];
 
   const createMockRun = (): vscode.TestRun => ({
     isPersisted: true,
@@ -173,9 +184,12 @@ export function createCollectingMockRun() {
     end: () => {
       deferred.resolve(null);
     },
-    enqueued: () => {},
+    enqueued: (test) => {
+      enqueuedItems.push(test);
+    },
     errored: () => {},
-    failed: (_test, message = []) => {
+    failed: (test, message = []) => {
+      failedItems.push(test);
       failedMessages.push(...(message as vscode.TestMessage[]));
     },
     passed: (test) => {
@@ -195,7 +209,9 @@ export function createCollectingMockRun() {
       return output;
     },
     failedMessages,
+    failedItems,
     passedItems,
     skippedItems,
+    enqueuedItems,
   };
 }

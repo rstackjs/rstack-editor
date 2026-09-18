@@ -34,7 +34,12 @@ const SLICES = [
     // The ported Rstest suites, plus `suite/bridge.test.ts`, which adds the
     // shared `rstack` fixture as a second workspace folder.
     name: 'rstest',
-    fixtures: ['rstest-workspace-1', 'rstest-workspace-2', 'rstack'],
+    fixtures: [
+      'rstest-workspace-1',
+      'rstest-workspace-2',
+      'rstack',
+      'rstest-ownership',
+    ],
     entry: 'tests-dist/e2e/rstest/runTest.js',
     compile: true,
   },

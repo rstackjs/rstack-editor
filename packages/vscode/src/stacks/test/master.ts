@@ -153,7 +153,7 @@ export class RstestApi {
      */
     private cwd: string,
     private configFilePath: string,
-    private project: Project,
+    public readonly project: Project,
     /**
      * Where the default `@rstest/core` (and CLI bin) walk-up starts. Chosen
      * by `Project` — see `ProjectSource.rstestResolutionDir`; an explicit

@@ -27,6 +27,10 @@ Glossary of terms used across rstack-editor. Code, docs, commit messages and rev
 - **Config root** — the directory a tool's config is loaded from, which is also the directory the tool's process stands in. For the fmt server the editor anchors it at the workspace folder root, so it loads the config a terminal opened on that folder would, and a subproject that needs its own config becomes its own workspace folder. The test stack does not share this anchor: a project's cwd is set per project (for native configs, upstream's config-file-directory rule). _Avoid_: config directory, project root.
 - **Ownership** — the editor-side rule choosing one config source for a tool's unit of work when both a native config and a Rstack config are present: the atomic tool's native config wins and the bridge yields. The unit is the tool's own — a project for test (one per config directory), a workspace folder for lint (one config choice per folder, locked for each lint runtime's lifetime). This rule exists only in the editor; upstream CLIs never face the choice, since each reads only its own config.
 
+## test
+
+- **Test file owner** — for one run request, a project whose root is deepest among the published items sharing a file URI, with ties sharing ownership. This per-request choice routes single-file/case selections across projects; explicit single-project selections and project-wide runs retain CLI scope.
+
 ## lint
 
 - **Rslint core** — one `@rslint/core` package directory, identified by its real path (two copies of the same version are two cores; a symlink to one copy is that copy). Everything a lint runtime runs — the Go binary, config host, protocol version, plugin host — derives from one Rslint core. _Avoid_: core (bare), installation, binary.
