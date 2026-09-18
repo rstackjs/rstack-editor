@@ -6,13 +6,14 @@ type Item = {
   uri: string;
   root: string;
   namePath?: string[];
+  type?: 'suite' | 'case';
 };
 const resolve = (item: Item) =>
   item.kind === 'file' || item.kind === 'case'
     ? {
         key:
           item.kind === 'case'
-            ? `${item.uri}#${JSON.stringify(item.namePath)}`
+            ? `${item.uri}#${item.type}:${JSON.stringify(item.namePath)}`
             : item.uri,
         root: item.root,
       }
@@ -23,8 +24,18 @@ const rootFile: Item = {
   root: '/repo',
 };
 const hostFile: Item = { ...rootFile, root: '/repo/host' };
-const rootCase: Item = { ...rootFile, kind: 'case', namePath: ['suite', 'A'] };
-const hostCase: Item = { ...hostFile, kind: 'case', namePath: ['suite', 'A'] };
+const rootCase: Item = {
+  ...rootFile,
+  kind: 'case',
+  type: 'case',
+  namePath: ['suite', 'A'],
+};
+const hostCase: Item = {
+  ...hostFile,
+  kind: 'case',
+  type: 'case',
+  namePath: ['suite', 'A'],
+};
 
 describe('routeToOwners', () => {
   it('keeps distinct cases from different projects but routes the same case to its owner', () => {
@@ -36,6 +47,11 @@ describe('routeToOwners', () => {
     expect(routeToOwners([rootCase, hostCase], resolve)).toEqual({
       kept: [hostCase],
       dropped: [rootCase],
+    });
+    const hostSuite: Item = { ...hostCase, type: 'suite' };
+    expect(routeToOwners([rootCase, hostSuite], resolve)).toEqual({
+      kept: [rootCase, hostSuite],
+      dropped: [],
     });
   });
 
