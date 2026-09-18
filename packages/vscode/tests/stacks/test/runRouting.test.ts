@@ -5,10 +5,17 @@ type Item = {
   kind: 'file' | 'case' | 'project' | 'folder';
   uri: string;
   root: string;
+  namePath?: string[];
 };
 const resolve = (item: Item) =>
   item.kind === 'file' || item.kind === 'case'
-    ? { uri: item.uri, root: item.root }
+    ? {
+        key:
+          item.kind === 'case'
+            ? `${item.uri}#${JSON.stringify(item.namePath)}`
+            : item.uri,
+        root: item.root,
+      }
     : undefined;
 const rootFile: Item = {
   kind: 'file',
@@ -16,10 +23,22 @@ const rootFile: Item = {
   root: '/repo',
 };
 const hostFile: Item = { ...rootFile, root: '/repo/host' };
-const rootCase: Item = { ...rootFile, kind: 'case' };
-const hostCase: Item = { ...hostFile, kind: 'case' };
+const rootCase: Item = { ...rootFile, kind: 'case', namePath: ['suite', 'A'] };
+const hostCase: Item = { ...hostFile, kind: 'case', namePath: ['suite', 'A'] };
 
 describe('routeToOwners', () => {
+  it('keeps distinct cases from different projects but routes the same case to its owner', () => {
+    const hostCaseB: Item = { ...hostCase, namePath: ['suite', 'B'] };
+    expect(routeToOwners([rootCase, hostCaseB], resolve)).toEqual({
+      kept: [rootCase, hostCaseB],
+      dropped: [],
+    });
+    expect(routeToOwners([rootCase, hostCase], resolve)).toEqual({
+      kept: [hostCase],
+      dropped: [rootCase],
+    });
+  });
+
   it('keeps an explicit non-owner file or case selection', () => {
     expect(routeToOwners([rootFile, rootCase], resolve)).toEqual({
       kept: [rootFile, rootCase],

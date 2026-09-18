@@ -407,7 +407,10 @@ class Rstest implements vscode.Disposable {
         const data = testData.get(item);
         if (data instanceof TestFile || data instanceof TestCase) {
           return {
-            uri: data.uri.toString(),
+            key:
+              data instanceof TestCase
+                ? `${data.uri.toString()}#${JSON.stringify([...data.parentNames, item.label])}`
+                : data.uri.toString(),
             root: data.api.project.root.fsPath,
           };
         }
