@@ -1,20 +1,27 @@
-/** Prefer owners among same-file selections; keep explicit non-owner runs. */
+/** Prefer the deepest published project among same-file selections. */
 export function routeToOwners<T>(
   items: readonly T[],
-  resolve: (
-    item: T,
-  ) => { uri: { toString(): string }; ownsFile: boolean } | undefined,
-): T[] {
-  const entries = items.map((item) => ({ item, target: resolve(item) }));
-  const ownedUris = new Set(
-    entries
-      .filter(({ target }) => target?.ownsFile)
-      .map(({ target }) => target!.uri.toString()),
-  );
-  return entries
-    .filter(
-      ({ target }) =>
-        !target || target.ownsFile || !ownedUris.has(target.uri.toString()),
-    )
-    .map(({ item }) => item);
+  resolve: (item: T) => { uri: string; root: string } | undefined,
+): { kept: T[]; dropped: T[] } {
+  const deepestRoots = new Map<string, number>();
+  const entries = items.map((item) => {
+    const target = resolve(item);
+    if (target) {
+      deepestRoots.set(
+        target.uri,
+        Math.max(deepestRoots.get(target.uri) ?? 0, target.root.length),
+      );
+    }
+    return { item, target };
+  });
+  const kept: T[] = [];
+  const dropped: T[] = [];
+  for (const { item, target } of entries) {
+    if (!target || target.root.length === deepestRoots.get(target.uri)) {
+      kept.push(item);
+    } else {
+      dropped.push(item);
+    }
+  }
+  return { kept, dropped };
 }

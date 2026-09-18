@@ -4,37 +4,34 @@ import { routeToOwners } from '../../../src/stacks/test/runRouting';
 type Item = {
   kind: 'file' | 'case' | 'project' | 'folder';
   uri: string;
-  ownsFile: boolean;
+  root: string;
 };
 const resolve = (item: Item) =>
   item.kind === 'file' || item.kind === 'case'
-    ? { uri: { toString: () => item.uri }, ownsFile: item.ownsFile }
+    ? { uri: item.uri, root: item.root }
     : undefined;
 const rootFile: Item = {
   kind: 'file',
   uri: 'file:///repo/host/a.test.ts',
-  ownsFile: false,
+  root: '/repo',
 };
-const hostFile: Item = { ...rootFile, ownsFile: true };
+const hostFile: Item = { ...rootFile, root: '/repo/host' };
 const rootCase: Item = { ...rootFile, kind: 'case' };
 const hostCase: Item = { ...hostFile, kind: 'case' };
 
 describe('routeToOwners', () => {
-  it('keeps only the owner when two projects select the same file URI', () => {
-    expect(routeToOwners([rootFile, hostFile], resolve)).toEqual([hostFile]);
-  });
-
   it('keeps an explicit non-owner file or case selection', () => {
-    expect(routeToOwners([rootFile, rootCase], resolve)).toEqual([
-      rootFile,
-      rootCase,
-    ]);
+    expect(routeToOwners([rootFile, rootCase], resolve)).toEqual({
+      kept: [rootFile, rootCase],
+      dropped: [],
+    });
   });
 
   it('preserves unrelated items and order while routing mixed file and case items', () => {
     const project: Item = { ...rootFile, kind: 'project' };
     const folder: Item = { ...hostFile, kind: 'folder' };
     const unrelated: Item = { ...rootFile, uri: 'file:///repo/other.test.ts' };
+    const tied = { ...hostFile };
     const items = [
       project,
       rootCase,
@@ -42,21 +39,12 @@ describe('routeToOwners', () => {
       hostFile,
       folder,
       rootFile,
+      tied,
       hostCase,
     ];
-    expect(routeToOwners(items, resolve)).toEqual([
-      project,
-      unrelated,
-      hostFile,
-      folder,
-      hostCase,
-    ]);
-    expect(items).toHaveLength(7);
-  });
-
-  it('keeps tied owners and an empty selection', () => {
-    const tied = { ...hostFile };
-    expect(routeToOwners([hostFile, tied], resolve)).toEqual([hostFile, tied]);
-    expect(routeToOwners([], resolve)).toEqual([]);
+    expect(routeToOwners(items, resolve)).toEqual({
+      kept: [project, unrelated, hostFile, folder, tied, hostCase],
+      dropped: [rootCase, rootFile],
+    });
   });
 });

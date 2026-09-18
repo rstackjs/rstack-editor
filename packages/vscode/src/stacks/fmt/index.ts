@@ -15,7 +15,6 @@ import {
 import { RSTACK_CONFIG_GLOB } from '../../detection';
 import { MessageLatch } from '../../shared/messageLatch';
 import { displayPath } from '../../shared/displayPath';
-import { contains } from '../../shared/pathContains';
 import { classifyMissingDependencyMessage } from '../../shared/missingDependency';
 import { getConfiguredNodeExecutable } from '../../shared/nodeExecutableSetting';
 import {
@@ -110,6 +109,17 @@ const createFolderDocumentSelector = (
  * same window detection uses to coalesce a redetect burst.
  */
 const CONFIG_RESTART_DEBOUNCE_MS = 300;
+
+/** True when `filePath` is inside `dir` (or is `dir` itself). */
+const contains = (dir: string, filePath: string): boolean => {
+  const relative = path.relative(path.resolve(dir), path.resolve(filePath));
+  return (
+    relative === '' ||
+    (relative !== '..' &&
+      !relative.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relative))
+  );
+};
 
 /**
  * vscode-languageclient calls `stop()` without observing its promise when an

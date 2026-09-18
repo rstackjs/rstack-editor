@@ -98,6 +98,15 @@ export function getTestItems(collection: vscode.TestItemCollection) {
   return items;
 }
 
+export function getTestItemsRecursive(
+  collection: vscode.TestItemCollection,
+): vscode.TestItem[] {
+  return getTestItems(collection).flatMap((item) => [
+    item,
+    ...getTestItemsRecursive(item.children),
+  ]);
+}
+
 export function getProjectItems(testController: vscode.TestController) {
   const folders = getTestItems(testController.items);
   assert.equal(folders.length, 1);
@@ -162,7 +171,6 @@ export function createCollectingMockRun() {
   const passedItems: vscode.TestItem[] = [];
   const skippedItems: vscode.TestItem[] = [];
   const enqueuedItems: vscode.TestItem[] = [];
-  const startedItems: vscode.TestItem[] = [];
 
   const createMockRun = (): vscode.TestRun => ({
     isPersisted: true,
@@ -190,9 +198,7 @@ export function createCollectingMockRun() {
     skipped: (test) => {
       skippedItems.push(test);
     },
-    started: (test) => {
-      startedItems.push(test);
-    },
+    started: () => {},
   });
 
   return {
@@ -207,6 +213,5 @@ export function createCollectingMockRun() {
     passedItems,
     skippedItems,
     enqueuedItems,
-    startedItems,
   };
 }

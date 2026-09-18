@@ -24,6 +24,7 @@ import {
   FIXTURES_ROOT,
   getRstestExports,
   getTestItemByLabels,
+  getTestItemsRecursive,
   toLabelTree,
   waitFor,
 } from './helpers';
@@ -195,32 +196,33 @@ suite('Rstack bridge suite', () => {
       assert.ok(exports.getResolvedRstestPath(host.id));
       assert.equal(root.busy, false);
       assert.equal(host.busy, false);
-      const files: vscode.TestItem[] = [];
-      const visit = (items: vscode.TestItemCollection) =>
-        items.forEach((item) => {
-          if (
-            item.uri?.toString() === testUri.toString() &&
-            item.label === 'ownership.test.ts'
-          )
-            files.push(item);
-          visit(item.children);
-        });
-      visit(folder.children);
+      const files = getTestItemsRecursive(folder.children).filter(
+        (item) =>
+          item.uri?.toString() === testUri.toString() &&
+          item.label === 'ownership.test.ts',
+      );
+      const matches = files.map((file) => {
+        const ancestors: vscode.TestItem[] = [];
+        for (let parent = file.parent; parent; parent = parent.parent) {
+          ancestors.unshift(parent);
+        }
+        return { file, ancestors };
+      });
       assert.equal(
         files.length,
         2,
         'both projects must publish their own copy of the same URI',
       );
-      const rootFile = getTestItemByLabels(root.children, [
-        path.join('host', 'tests'),
-        'ownership.test.ts',
-      ]);
-      const hostFile = getTestItemByLabels(host.children, [
-        'tests',
-        'ownership.test.ts',
-      ]);
-      assert.notStrictEqual(rootFile, hostFile);
-      assert.deepStrictEqual(new Set(files), new Set([rootFile, hostFile]));
+      const rootFiles = matches.filter(({ ancestors }) =>
+        ancestors.includes(root),
+      );
+      const hostFiles = matches.filter(({ ancestors }) =>
+        ancestors.includes(host),
+      );
+      assert.equal(rootFiles.length, 1, 'expected one file under root');
+      assert.equal(hostFiles.length, 1, 'expected one file under host');
+      const rootFile = rootFiles[0].file;
+      const hostFile = hostFiles[0].file;
       assert.equal(rootFile.children.size, 1);
       assert.equal(hostFile.children.size, 1);
       const rootCase = getTestItemByLabels(rootFile.children, [
@@ -259,9 +261,12 @@ suite('Rstack bridge suite', () => {
           ),
         );
         assert.equal(collecting.failedItems.length, 0);
+        assert.deepStrictEqual(
+          collecting.skippedItems,
+          kind === 'file' ? [rootFile, rootCase] : [rootCase],
+        );
         for (const records of [
           collecting.enqueuedItems,
-          collecting.startedItems,
           collecting.passedItems,
           collecting.failedItems,
         ]) {
@@ -290,7 +295,6 @@ suite('Rstack bridge suite', () => {
       );
       for (const records of [
         rootRun.enqueuedItems,
-        rootRun.startedItems,
         rootRun.passedItems,
         rootRun.failedItems,
       ]) {

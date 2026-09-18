@@ -401,33 +401,42 @@ class Rstest implements vscode.Disposable {
     // used by e2e tests
     createTestRun = this.ctrl.createTestRun.bind(this.ctrl),
   ) => {
-    const include =
+    const routed =
       request.include &&
       routeToOwners(request.include, (item) => {
         const data = testData.get(item);
         if (data instanceof TestFile || data instanceof TestCase) {
           return {
-            uri: data.uri,
-            ownsFile: data.api.project.ownsFile(data.uri),
+            uri: data.uri.toString(),
+            root: data.api.project.root.fsPath,
           };
         }
         return undefined;
       });
+    const include = routed?.kept;
+    // Keep the original request's scope so the first run can report dropped items skipped.
     const run = createTestRun(request);
-    const enqueuedTests = (tests: readonly vscode.TestItem[]) => {
-      for (const test of tests) {
+    const forEachRunnable = (
+      items: readonly vscode.TestItem[],
+      fn: (item: vscode.TestItem) => void,
+    ) => {
+      for (const test of items) {
         if (request.exclude?.includes(test)) {
           continue;
         }
         const data = testData.get(test);
         if (data instanceof TestFile || data instanceof TestCase) {
-          run.enqueued(test);
+          fn(test);
         }
-        enqueuedTests(gatherTestItems(test.children, false));
+        forEachRunnable(gatherTestItems(test.children, false), fn);
       }
     };
 
-    enqueuedTests(include ?? gatherTestItems(this.ctrl.items, false));
+    forEachRunnable(routed?.dropped ?? [], (item) => run.skipped(item));
+    forEachRunnable(
+      include ?? gatherTestItems(this.ctrl.items, false),
+      (item) => run.enqueued(item),
+    );
 
     const commonOptions = {
       run,

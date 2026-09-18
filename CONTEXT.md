@@ -29,7 +29,7 @@ Glossary of terms used across rstack-editor. Code, docs, commit messages and rev
 
 ## test
 
-- **Test file owner** — a project whose normalized root is deepest among those including the file, with ties sharing ownership. Ownership routes editor single-file/case selections spanning projects; each project still publishes and runs its own CLI scope when selected explicitly.
+- **Test file owner** — for one run request, a project whose root is deepest among the published items sharing a file URI, with ties sharing ownership. This per-request choice routes single-file/case selections across projects; explicit single-project selections and project-wide runs retain CLI scope.
 
 ## lint
 
