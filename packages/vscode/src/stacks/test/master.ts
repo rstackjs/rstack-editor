@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { statSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import net from 'node:net';
 import path, { dirname } from 'node:path';
 import { type BirpcReturn, createBirpc } from 'birpc';
@@ -486,12 +487,10 @@ export class RstestApi {
         }
       }
 
-      const apiPath = this.resolveFromCwd(
-        '@rstest/core/api',
-        configured,
-        dirname(corePackageJsonPath),
-      );
-      if (!apiPath) return undefined;
+      // Resolve through the core package's own exports, including configured
+      // copies outside node_modules that require package self-reference.
+      const apiPath =
+        createRequire(corePackageJsonPath).resolve('@rstest/core/api');
       if (!this.disposed) {
         this.unsupportedCoreMessage.clear();
         status.versionOk(this.statusSource);

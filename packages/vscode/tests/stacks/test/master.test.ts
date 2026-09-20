@@ -266,6 +266,22 @@ describe('RstestApi package-resolution anchor', () => {
     });
   });
 
+  it('resolves the configured core API outside node_modules by self-reference', () => {
+    const installed = writeCoreInstall(root);
+    const packageDir = path.join(root, 'vendor', 'rstest-core');
+    fs.mkdirSync(path.dirname(packageDir), { recursive: true });
+    fs.renameSync(installed.packageDir, packageDir);
+    settings.rstestPackagePath = path.join(packageDir, 'package.json');
+
+    expect(resolveRstestPaths(createApi(cwd))).toEqual({
+      paths: {
+        apiPath: path.join(packageDir, 'api.js'),
+        rstestPath: path.join(packageDir, 'index.js'),
+      },
+      bin: path.join(packageDir, 'bin', 'rstest.js'),
+    });
+  });
+
   it('deduplicates each unsupported-version message until a supported version resolves', () => {
     writeCoreInstall(cwd, '0.5.0');
     const api = createApi(cwd);
