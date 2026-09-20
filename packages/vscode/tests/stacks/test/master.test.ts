@@ -1,11 +1,16 @@
-import type { ChildProcess } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
+import { spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, rs } from '@rstest/core';
 import { logger } from '../../../src/stacks/test/logger';
-import { RstestApi } from '../../../src/stacks/test/master';
+import {
+  RstestApi,
+  runningWorkers,
+  WATCHER_CLOSE_TIMEOUT_MS,
+} from '../../../src/stacks/test/master';
 import { nodeRequire } from '../../../src/stacks/test/nodeRequire';
 import {
   type NodeProbe,
@@ -13,8 +18,18 @@ import {
   resetUserNodeCaches,
 } from '../../../src/shared/nodeResolution';
 import { status } from '../../../src/stacks/test/status';
+import type { TestRunReporter } from '../../../src/stacks/test/testRunReporter';
+import type { WorkerInitOptions } from '../../../src/stacks/test/types';
+import { Worker } from '../../../src/stacks/test/worker';
 import type { StackState, StatusReporter } from '../../../src/types';
 import { createStatusRecorder } from './statusRecorder';
+
+rs.mock('node:child_process', () => {
+  const original = createRequire(__filename)(
+    'node:child_process',
+  ) as typeof import('node:child_process');
+  return { ...original, spawn: rs.fn(original.spawn) };
+});
 
 // The Rstest runner injects its own `@rstest/core` into every resolution path so
 // that test files can import it, which makes "the project has no @rstest/core"
@@ -65,6 +80,7 @@ const loggedErrors: string[] = [];
 const loggedWarnings: string[] = [];
 const createdTerminals: string[] = [];
 const settings: Record<string, unknown> = {};
+let startDebugging = async (): Promise<boolean> => true;
 
 const channel = {
   debug: () => {},
@@ -84,6 +100,8 @@ logger.bind(channel as never);
 rs.mock('vscode', () => {
   const vscode = {
     TestRunProfileKind: { Run: 1, Debug: 2, Coverage: 3 },
+    debug: { startDebugging: () => startDebugging() },
+    env: { shell: '/bin/sh' },
     FileCoverage: class {},
     Position: class {},
     Range: class {},
@@ -151,7 +169,7 @@ const createApi = (cwd = noCoreDir, rstestResolutionDir = cwd) => {
   );
 };
 
-const writeCoreInstall = (root: string, version = '0.11.8') => {
+const writeCoreInstall = (root: string, version = '0.12.0') => {
   const packageDir = path.join(root, 'node_modules', '@rstest', 'core');
   const entry = path.join(packageDir, 'index.js');
   const bin = path.join(packageDir, 'bin', 'rstest.js');
@@ -161,17 +179,25 @@ const writeCoreInstall = (root: string, version = '0.11.8') => {
     JSON.stringify({
       name: '@rstest/core',
       version,
-      main: 'index.js',
+      exports: {
+        '.': './index.js',
+        './api': './api.js',
+        './package.json': './package.json',
+      },
       bin: { rstest: 'bin/rstest.js' },
     }),
   );
   fs.writeFileSync(entry, 'module.exports = {};\n');
+  fs.writeFileSync(path.join(packageDir, 'api.js'), 'module.exports = {};\n');
   fs.writeFileSync(bin, '#!/usr/bin/env node\n');
   return { packageDir, entry, bin };
 };
 
 const resolveRstestPaths = (api: RstestApi) => ({
-  entry: (api as any).resolveRstestPath() as string,
+  paths: (api as any).resolveRstestPaths() as {
+    apiPath: string;
+    rstestPath: string;
+  },
   bin: (api as any).resolveRstestBin() as string,
 });
 
@@ -202,7 +228,10 @@ describe('RstestApi package-resolution anchor', () => {
     writeCoreInstall(storeEntry);
 
     expect(resolveRstestPaths(createApi(cwd))).toEqual({
-      entry: native.entry,
+      paths: {
+        apiPath: path.join(native.packageDir, 'api.js'),
+        rstestPath: native.entry,
+      },
       bin: native.bin,
     });
   });
@@ -212,7 +241,10 @@ describe('RstestApi package-resolution anchor', () => {
     const bridged = writeCoreInstall(storeEntry);
 
     expect(resolveRstestPaths(createApi(cwd, rstackDir))).toEqual({
-      entry: bridged.entry,
+      paths: {
+        apiPath: path.join(bridged.packageDir, 'api.js'),
+        rstestPath: bridged.entry,
+      },
       bin: bridged.bin,
     });
   });
@@ -226,8 +258,27 @@ describe('RstestApi package-resolution anchor', () => {
     );
 
     expect(resolveRstestPaths(createApi(cwd, rstackDir))).toEqual({
-      entry: configured.entry,
+      paths: {
+        apiPath: path.join(configured.packageDir, 'api.js'),
+        rstestPath: configured.entry,
+      },
       bin: configured.bin,
+    });
+  });
+
+  it('resolves the configured core API outside node_modules by self-reference', () => {
+    const installed = writeCoreInstall(root);
+    const packageDir = path.join(root, 'vendor', 'rstest-core');
+    fs.mkdirSync(path.dirname(packageDir), { recursive: true });
+    fs.renameSync(installed.packageDir, packageDir);
+    settings.rstestPackagePath = path.join(packageDir, 'package.json');
+
+    expect(resolveRstestPaths(createApi(cwd))).toEqual({
+      paths: {
+        apiPath: path.join(packageDir, 'api.js'),
+        rstestPath: path.join(packageDir, 'index.js'),
+      },
+      bin: path.join(packageDir, 'bin', 'rstest.js'),
     });
   });
 
@@ -255,6 +306,28 @@ describe('RstestApi package-resolution anchor', () => {
 
     resolveRstestPaths(createApi(cwd));
     expect(loggedErrors).toHaveLength(4);
+  });
+
+  it('rejects 0.11 before spawning and reports only a version mismatch', async () => {
+    writeCoreInstall(cwd, '0.11.12');
+    const recorder = createStatusRecorder();
+    status.bind(recorder.reporter);
+    shownMessages.length = 0;
+    rs.mocked(spawn).mockClear();
+    try {
+      await expect(createApi(cwd).createChildProcess()).rejects.toMatchObject({
+        name: 'ReportedRstestResolutionError',
+      });
+      expect(recorder.reported.at(-1)).toEqual({
+        kind: 'version-mismatch',
+        detail:
+          '@rstest/core 0.11.12 is not supported, this extension requires >=0.12.0',
+      });
+      expect(spawn).not.toHaveBeenCalled();
+      expect(shownMessages).toEqual([]);
+    } finally {
+      status.unbind();
+    }
   });
 });
 
@@ -372,7 +445,7 @@ describe('RstestApi with an unresolvable rstestPackagePath', () => {
     );
     const installed = writeCoreInstall(root);
     const api = createApi(root);
-    const resolve = () => (api as any).resolveRstestPath() as string;
+    const resolve = () => (api as any).resolveRstestPaths();
 
     try {
       expect(resolve).toThrow();
@@ -383,7 +456,7 @@ describe('RstestApi with an unresolvable rstestPackagePath', () => {
         installed.packageDir,
         'package.json',
       );
-      expect(resolve()).toBe(installed.entry);
+      expect(resolve().rstestPath).toBe(installed.entry);
 
       settings.rstestPackagePath = configured;
       expect(resolve).toThrow();
@@ -411,16 +484,16 @@ describe('RstestApi with an unresolvable rstestPackagePath', () => {
         return original(specifier, options);
       });
     const api = createApi(root);
-    const resolve = () => (api as any).resolveRstestPath() as string;
+    const resolve = () => (api as any).resolveRstestPaths();
     try {
-      expect(resolve()).toBe('');
-      expect(resolve()).toBe('');
+      expect(resolve()).toBeUndefined();
+      expect(resolve()).toBeUndefined();
       expect(shownMessages).toHaveLength(1);
       expect(loggedErrors).toHaveLength(1);
       broken = false;
-      expect(resolve()).toBe(installed.entry);
+      expect(resolve().rstestPath).toBe(installed.entry);
       broken = true;
-      expect(resolve()).toBe('');
+      expect(resolve()).toBeUndefined();
       expect(shownMessages).toHaveLength(2);
       expect(loggedErrors).toHaveLength(2);
     } finally {
@@ -540,9 +613,12 @@ describe('RstestApi with a configured nodeExecutable', () => {
     // resolution failure.
     await seedProbe({ kind: 'ok', version: '24.3.0' });
     const api = createApi(packageDir);
+    const spawnMock = rs.mocked(spawn);
+    spawnMock.mockClear();
     const spawning = api.createChildProcess();
     api.dispose();
     await expect(spawning).rejects.toThrow('disposed');
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 });
 
@@ -618,22 +694,26 @@ describe('RstestApi worker spawn failures', () => {
       'console.log("worker-up"); setInterval(() => {}, 1000)',
     ];
     api = createApi(packageDir);
-
-    await api.createChildProcess();
-    const child = [...((api as any).childProcesses as Set<ChildProcess>)][0]!;
-    // Await the child's first stdout chunk, not the 'spawn' event: Node gives
-    // no timing guarantee for 'spawn' relative to this continuation, while
-    // stream data is buffered until a listener attaches — and 'spawn' (which
-    // precedes all other events, setting the handler's latch) is guaranteed
-    // delivered by the time data flows.
-    await new Promise<void>((resolve) => {
-      child.stdout?.on('data', () => resolve());
-    });
-
-    child.emit('error', new Error('write EPIPE'));
-
-    expect(shownMessages).toEqual([]);
-    expect(crashes()).toEqual([]);
+    const spawnMock = rs.mocked(spawn);
+    spawnMock.mockClear();
+    try {
+      const { worker } = await api.createChildProcess();
+      const child = spawnMock.mock.results[0].value!;
+      // Await the child's first stdout chunk, not the 'spawn' event: Node gives
+      // no timing guarantee for 'spawn' relative to this continuation, while
+      // stream data is buffered until a listener attaches — and 'spawn' (which
+      // precedes all other events, setting the handler's latch) is guaranteed
+      // delivered by the time data flows.
+      await new Promise<void>((resolve) => {
+        child.stdout?.on('data', () => resolve());
+      });
+      child.emit('error', new Error('write EPIPE'));
+      expect(shownMessages).toEqual([]);
+      expect(crashes()).toEqual([]);
+      worker.$close();
+    } finally {
+      spawnMock.mockClear();
+    }
   });
 });
 
@@ -641,6 +721,7 @@ it('closes the config worker when config evaluation rejects', async () => {
   const api = createApi();
   const close = rs.fn();
   rs.spyOn(api, 'createChildProcess').mockResolvedValue({
+    apiPath: '/project/rstest/api',
     rstestPath: '/project/rstest',
     worker: {
       getNormalizedConfig: async () => {
@@ -653,6 +734,555 @@ it('closes the config worker when config evaluation rejects', async () => {
     await expect(api.getNormalizedConfig()).rejects.toThrow('Invalid config');
     expect(close).toHaveBeenCalledTimes(1);
   } finally {
-    api.dispose();
+    await api.dispose();
   }
+});
+
+describe('RstestApi graceful disposal', () => {
+  afterEach(() => {
+    rs.useRealTimers();
+  });
+
+  it('waits for watcher teardown before terminating the worker', async () => {
+    const api = createApi();
+    const order: string[] = [];
+    const teardown = Promise.withResolvers<void>();
+    const worker = {
+      closeWatcher: rs.fn(async () => {
+        await teardown.promise;
+        order.push('teardown');
+      }),
+      $close: rs.fn(() => order.push('kill')),
+    };
+    (api as any).workers = new Set([worker]);
+
+    const disposal = api.dispose();
+    await Promise.resolve();
+    expect(order).toEqual([]);
+
+    teardown.resolve();
+    await disposal;
+
+    expect(worker.closeWatcher).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['teardown', 'kill']);
+  });
+});
+
+class MockRstestProcess extends EventEmitter {
+  static nextPid = 10_000;
+  connected = true;
+  respondToClose = true;
+  killSignals: (NodeJS.Signals | number | undefined)[] = [];
+  pid = MockRstestProcess.nextPid++;
+  stderr = new EventEmitter();
+  stdout = new EventEmitter();
+
+  send(data: unknown): boolean {
+    const request = data as { i?: string; m?: string; t?: string };
+    if (
+      this.respondToClose &&
+      request.t === 'q' &&
+      request.i &&
+      request.m === 'closeWatcher'
+    ) {
+      this.emit('message', { t: 's', i: request.i, r: undefined });
+    }
+    return true;
+  }
+
+  kill(signal?: NodeJS.Signals | number): boolean {
+    this.killSignals.push(signal);
+    this.connected = false;
+    queueMicrotask(() => this.emit('exit', 0, signal));
+    return true;
+  }
+}
+
+const spawnedProcesses: MockRstestProcess[] = [];
+const realSpawn = createRequire(__filename)('node:child_process')
+  .spawn as typeof spawn;
+
+const mockWorker = (
+  api: RstestApi,
+  runTest: (data: WorkerInitOptions) => Promise<void> = async () => {},
+) => {
+  const worker = {
+    $close: rs.fn(),
+    closeWatcher: rs.fn(async () => {}),
+    listTests: rs.fn(async () => []),
+    runTest: rs.fn(runTest),
+  };
+  rs.spyOn(api, 'createChildProcess').mockResolvedValue({
+    worker,
+    apiPath: '/rstest/api.js',
+    rstestPath: '/rstest/index.js',
+  } as any);
+  return worker;
+};
+
+const createInFlightOneShotWorker = (shouldReject = false) => {
+  const order: string[] = [];
+  const runStarted = Promise.withResolvers<void>();
+  const runFinished = Promise.withResolvers<void>();
+  const worker = new Worker();
+  rs.spyOn(worker as any, 'init').mockResolvedValue({
+    command: 'run',
+    fileFilters: undefined,
+    rstest: {
+      run: async () => {
+        runStarted.resolve();
+        await runFinished.promise;
+        order.push('teardown');
+        if (shouldReject) throw new Error('test run failed');
+        return { status: 'pass', unhandledErrors: [] };
+      },
+    },
+  });
+  return {
+    worker,
+    order,
+    started: runStarted.promise,
+    finish: runFinished.resolve,
+  };
+};
+
+const createRunContext = () => {
+  const output: string[] = [];
+  let cancellationHandler: (() => void) | undefined;
+  const token = {
+    isCancellationRequested: false,
+    onCancellationRequested: (handler: () => void) => {
+      cancellationHandler = handler;
+      return { dispose: () => {} };
+    },
+  };
+  return {
+    output,
+    run: { appendOutput: (message: string) => output.push(message) } as any,
+    token: token as any,
+    cancel() {
+      token.isCancellationRequested = true;
+      cancellationHandler?.();
+    },
+  };
+};
+
+describe('Rstest public API', () => {
+  beforeEach(async () => {
+    spawnedProcesses.length = 0;
+    shownMessages.length = 0;
+    loggedWarnings.length = 0;
+    startDebugging = async () => true;
+    resetUserNodeCaches();
+    settings['rstack.nodeExecutable'] = process.execPath;
+    await configuredNodeBelowFloor(process.execPath, {
+      probe: async () => ({ kind: 'ok', version: '24.0.0' }),
+    });
+    rs.mocked(spawn).mockImplementation(() => {
+      const child = new MockRstestProcess();
+      spawnedProcesses.push(child);
+      return child as never;
+    });
+  });
+
+  afterEach(() => {
+    status.unbind();
+    resetUserNodeCaches();
+    rs.useRealTimers();
+    rs.restoreAllMocks();
+    rs.mocked(spawn).mockImplementation(realSpawn);
+    for (const key of Object.keys(settings)) delete settings[key];
+  });
+
+  describe('Rstest public test listing', () => {
+    it('quotes file paths for targeted runtime discovery', async () => {
+      const api = createApi();
+      const worker = mockWorker(api);
+      await api.listTests(['/x/file.test.ts']);
+      expect(worker.listTests).toHaveBeenCalledWith(
+        expect.objectContaining({ fileFilters: ['"/x/file.test.ts"'] }),
+      );
+    });
+
+    it('returns file rows together with declarations for full discovery', async () => {
+      const testPath = '/x/empty.test.ts';
+      const declaration = {
+        fullName: 'case',
+        name: 'case',
+        parentNames: [],
+        project: 'rstest',
+        testPath,
+        type: 'case',
+      } as const;
+      const file = { project: 'rstest', testPath, type: 'file' } as const;
+      const listTests = rs.fn(async ({ filesOnly }: { filesOnly?: boolean }) =>
+        filesOnly ? [file] : [declaration],
+      );
+      const worker = new Worker();
+      rs.spyOn(worker as any, 'init').mockResolvedValue({
+        fileFilters: undefined,
+        rstest: { listTests },
+      });
+      await expect(worker.listTests({} as WorkerInitOptions)).resolves.toEqual([
+        file,
+        declaration,
+      ]);
+      expect(listTests).toHaveBeenCalledWith({
+        filesOnly: true,
+        filters: undefined,
+      });
+    });
+
+    it('collects declarations only for filtered refreshes', async () => {
+      const testPath = '/x/example.test.ts';
+      const declaration = {
+        fullName: 'case',
+        name: 'case',
+        parentNames: [],
+        project: 'rstest',
+        testPath,
+        type: 'case',
+      } as const;
+      const listTests = rs.fn(async () => [declaration]);
+      const worker = new Worker();
+      rs.spyOn(worker as any, 'init').mockResolvedValue({
+        fileFilters: [`"${testPath}"`],
+        rstest: { listTests },
+      });
+      await expect(worker.listTests({} as WorkerInitOptions)).resolves.toEqual([
+        declaration,
+      ]);
+      expect(listTests).toHaveBeenCalledTimes(1);
+      expect(listTests).toHaveBeenCalledWith({
+        filters: [`"${testPath}"`],
+        includeTaskLocation: true,
+        includeSuites: true,
+      });
+    });
+
+    it('closes the worker when test collection rejects', async () => {
+      const api = createApi();
+      const worker = {
+        $close: rs.fn(() => runningWorkers.delete(worker as any)),
+        listTests: rs.fn(async () => {
+          throw new Error('Test collection failed.');
+        }),
+      };
+      runningWorkers.add(worker as any);
+      rs.spyOn(api, 'createChildProcess').mockResolvedValue({
+        worker,
+        apiPath: '/rstest/api.js',
+        rstestPath: '/rstest/index.js',
+      } as any);
+      await expect(api.listTests()).rejects.toThrow('Test collection failed.');
+      expect(worker.$close).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('Rstest public run lifecycle', () => {
+    it.each([
+      { filter: '/x/tests', kind: 'folder' },
+      { filter: '"/x/tests/file.test.ts"', kind: 'file' },
+    ])('forwards the $kind path without a filter mode', async ({ filter }) => {
+      const api = createApi();
+      const engineRun = rs.fn(async () => ({
+        status: 'pass',
+        unhandledErrors: [],
+      }));
+      const coreWorker = new Worker();
+      rs.spyOn(coreWorker as any, 'init').mockResolvedValue({
+        command: 'run',
+        fileFilters: [filter],
+        rstest: { run: engineRun },
+      });
+      const worker = mockWorker(api, (data) => coreWorker.runTest(data));
+      const { run, token } = createRunContext();
+      await api.runTest({ fileFilter: filter, run, token });
+      expect(worker.runTest).toHaveBeenCalledWith(
+        expect.objectContaining({ fileFilters: [filter] }),
+      );
+      expect(engineRun).toHaveBeenCalledWith({ filters: [filter] });
+    });
+
+    it('finishes when a worker resolves without a reporter end event', async () => {
+      const api = createApi();
+      const worker = mockWorker(api);
+      const { run, token } = createRunContext();
+      await expect(api.runTest({ run, token })).resolves.toBeUndefined();
+      expect(worker.$close).toHaveBeenCalledTimes(1);
+    });
+
+    it('surfaces every unhandled error from a one-shot run', async () => {
+      const api = createApi();
+      const coreWorker = new Worker();
+      rs.spyOn(coreWorker as any, 'init').mockResolvedValue({
+        command: 'run',
+        fileFilters: undefined,
+        rstest: {
+          run: async () => ({
+            status: 'error',
+            unhandledErrors: [
+              { message: 'Build failed' },
+              { message: 'Invalid config' },
+            ],
+          }),
+        },
+      });
+      const worker = mockWorker(api, (data) => coreWorker.runTest(data));
+      const { output, run, token } = createRunContext();
+      await api.runTest({ run, token });
+      expect(worker.$close).toHaveBeenCalledTimes(1);
+      expect(output.join('')).toContain('Build failed\r\n\r\nInvalid config');
+      expect(shownMessages).toContain(
+        'Rstest test run failed: Build failed\n\nInvalid config',
+      );
+    });
+
+    it('does not surface ordinary test failures as a global run error', async () => {
+      const api = createApi();
+      const coreWorker = new Worker();
+      rs.spyOn(coreWorker as any, 'init').mockResolvedValue({
+        command: 'run',
+        fileFilters: undefined,
+        rstest: {
+          run: async () => ({
+            status: 'fail',
+            summary: { tests: { failed: 1 }, files: { failed: 1 } },
+            unhandledErrors: [],
+          }),
+        },
+      });
+      mockWorker(api, (data) => coreWorker.runTest(data));
+      const { output, run, token } = createRunContext();
+      await api.runTest({ run, token });
+      expect(output).toEqual([]);
+      expect(shownMessages).toEqual([]);
+    });
+
+    it('waits for an active one-shot run when cancellation closes the worker', async () => {
+      const api = createApi();
+      const {
+        worker: coreWorker,
+        order,
+        started,
+        finish,
+      } = createInFlightOneShotWorker();
+      const worker = mockWorker(api, (data) => coreWorker.runTest(data));
+      worker.closeWatcher.mockImplementation(() => coreWorker.closeWatcher());
+      worker.$close.mockImplementation(() => {
+        if ((worker as any).$closed) return;
+        (worker as any).$closed = true;
+        order.push('kill');
+      });
+      const { run, token, cancel } = createRunContext();
+      const running = api.runTest({ run, token });
+      await started;
+      cancel();
+      await new Promise<void>((resolve) => setTimeout(resolve));
+      expect(worker.$close).not.toHaveBeenCalled();
+      finish();
+      await running;
+      await expect.poll(() => worker.$close.mock.calls.length).toBe(1);
+      expect(order).toEqual(['teardown', 'kill']);
+    });
+
+    it('surfaces coverage failures without test-level failures', async () => {
+      const api = createApi();
+      const coreWorker = new Worker();
+      rs.spyOn(coreWorker as any, 'init').mockResolvedValue({
+        command: 'run',
+        fileFilters: undefined,
+        rstest: {
+          run: async () => ({
+            status: 'fail',
+            summary: { tests: { failed: 0 }, files: { failed: 0 } },
+            unhandledErrors: [],
+          }),
+        },
+      });
+      mockWorker(api, (data) => coreWorker.runTest(data));
+      const { output, run, token } = createRunContext();
+      await api.runTest({ run, token });
+      expect(output.join('')).toContain(
+        'Rstest run failed without test-level failures',
+      );
+      expect(shownMessages[0]).toContain(
+        'coverage report errors or unmet coverage thresholds',
+      );
+    });
+
+    it('finishes a rejected continuous run and surfaces its error', async () => {
+      const api = createApi();
+      const worker = mockWorker(api, async () => {
+        throw new Error('Browser launch failed');
+      });
+      const { output, run, token } = createRunContext();
+      await api.runTest({ run, token, continuous: true });
+      expect(worker.$close).toHaveBeenCalledTimes(1);
+      expect(output.join('')).toContain('Browser launch failed');
+    });
+
+    it('waits for continuous worker startup after the first reporter cycle', async () => {
+      const api = createApi();
+      const startup = Promise.withResolvers<void>();
+      let reporter: TestRunReporter | undefined;
+      const worker = {
+        $close: rs.fn(),
+        closeWatcher: rs.fn(async () => {}),
+        runTest: rs.fn(() => startup.promise),
+      };
+      rs.spyOn(api, 'createChildProcess').mockImplementation(async (value) => {
+        reporter = value;
+        return {
+          worker,
+          apiPath: '/rstest/api.js',
+          rstestPath: '/rstest/index.js',
+        } as any;
+      });
+      const { run, token } = createRunContext();
+      const order: string[] = [];
+      run.appendOutput = () => order.push('output');
+      run.end = () => order.push('end');
+      const hostRun = api
+        .runTest({ run, token, continuous: true })
+        .finally(() => run.end());
+      await Promise.resolve();
+      await reporter!.onTestRunEnd();
+      reporter!.onOutput('Waiting for file changes...');
+      await Promise.resolve();
+      expect(order).toEqual(['output']);
+      startup.resolve();
+      await hostRun;
+      expect(order).toEqual(['output', 'end']);
+    });
+
+    it('waits for watcher startup before terminating a canceled continuous run', async () => {
+      const api = createApi();
+      const order: string[] = [];
+      const watcherStartup = Promise.withResolvers<{
+        close(): Promise<void>;
+      }>();
+      const watcherStarted = Promise.withResolvers<void>();
+      const coreWorker = new Worker();
+      rs.spyOn(coreWorker as any, 'init').mockResolvedValue({
+        command: 'watch',
+        fileFilters: undefined,
+        rstest: {
+          watch: () => {
+            watcherStarted.resolve();
+            return watcherStartup.promise;
+          },
+        },
+      });
+      const worker = mockWorker(api, (data) => coreWorker.runTest(data));
+      worker.closeWatcher.mockImplementation(() => coreWorker.closeWatcher());
+      worker.$close.mockImplementation(() => {
+        if ((worker as any).$closed) return;
+        (worker as any).$closed = true;
+        order.push('kill');
+      });
+      const { run, token, cancel } = createRunContext();
+      const running = api.runTest({ run, token, continuous: true });
+      await watcherStarted.promise;
+      cancel();
+      expect(worker.$close).not.toHaveBeenCalled();
+      watcherStartup.resolve({
+        close: async () => {
+          order.push('teardown');
+        },
+      });
+      await running;
+      await expect.poll(() => worker.$close.mock.calls.length).toBe(1);
+      expect(order).toEqual(['teardown', 'kill']);
+    });
+  });
+
+  describe('Rstest public disposal and debug startup', () => {
+    let root: string;
+
+    beforeEach(() => {
+      root = fs.mkdtempSync(path.join(os.tmpdir(), 'rstest-public-api-'));
+      writeCoreInstall(root);
+    });
+
+    afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    it('waits for an active one-shot run before disposing the worker', async () => {
+      const api = createApi();
+      const {
+        worker: coreWorker,
+        order,
+        started,
+        finish,
+      } = createInFlightOneShotWorker(true);
+      const operation = coreWorker.runTest({} as WorkerInitOptions);
+      const result = operation.then(
+        () => 'resolved',
+        () => 'rejected',
+      );
+      await started;
+      const worker = {
+        closeWatcher: rs.fn(() => coreWorker.closeWatcher()),
+        $close: rs.fn(() => order.push('kill')),
+      };
+      (api as any).workers = new Set([worker]);
+      const disposal = api.dispose();
+      await new Promise<void>((resolve) => setTimeout(resolve));
+      expect(worker.$close).not.toHaveBeenCalled();
+      finish();
+      await expect(result).resolves.toBe('rejected');
+      await disposal;
+      expect(order).toEqual(['teardown', 'kill']);
+    });
+
+    it('uses SIGKILL when graceful watcher teardown times out', async () => {
+      rs.useFakeTimers();
+      loggedWarnings.length = 0;
+      const api = createApi(root);
+      await api.createChildProcess();
+      spawnedProcesses[0].respondToClose = false;
+      const disposal = api.dispose();
+      await rs.advanceTimersByTimeAsync(WATCHER_CLOSE_TIMEOUT_MS);
+      await disposal;
+      expect(spawnedProcesses[0].killSignals).toEqual(['SIGKILL']);
+      expect(loggedWarnings).toContain(
+        'Timed out waiting for the continuous test watcher to close; terminating the worker. Watcher teardown was skipped.',
+      );
+    });
+
+    it('closes a spawned worker when debugger attachment rejects', async () => {
+      startDebugging = async () => {
+        throw new Error('Debugger attachment failed.');
+      };
+      const api = createApi(root);
+      await expect(api.createChildProcess(undefined, true)).rejects.toThrow(
+        'Debugger attachment failed.',
+      );
+      expect(spawnedProcesses[0].killSignals).toEqual(['SIGTERM']);
+      expect((api as any).workers.size).toBe(0);
+      expect(runningWorkers.size).toBe(0);
+    });
+
+    it('closes a worker when disposal starts during debugger attachment', async () => {
+      const attachment = Promise.withResolvers<boolean>();
+      const started = Promise.withResolvers<void>();
+      startDebugging = () => {
+        started.resolve();
+        return attachment.promise;
+      };
+      const api = createApi(root);
+      const starting = api.createChildProcess(undefined, true);
+      await started.promise;
+      // dispose() sets this flag synchronously before closing its current worker
+      // snapshot; isolate the post-attach guard from the close RPC exercised by
+      // the disposal tests above.
+      (api as any).disposed = true;
+      attachment.resolve(true);
+      await expect(starting).rejects.toThrow(
+        'worker spawn aborted: this master was disposed while the debugger was attaching',
+      );
+      expect(spawnedProcesses[0].killSignals).toEqual(['SIGTERM']);
+      expect(runningWorkers.size).toBe(0);
+    });
+  });
 });

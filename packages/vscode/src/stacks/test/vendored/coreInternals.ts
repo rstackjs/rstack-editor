@@ -2,9 +2,10 @@
  * Vendored from `web-infra-dev/rstest` @ origin/main:
  * - `packages/core/src/utils/constants.ts` (`ROOT_SUITE_NAME`)
  * - `packages/core/src/utils/error.ts` (`parseErrorStacktrace`)
+ * - `packages/core/src/utils/helper.ts` (`quoteFilter`)
  *
- * Upstream's VS Code extension lives in the same monorepo and deep-imports both
- * from `../../core/src/...`. Neither is reachable from the published package:
+ * Upstream's VS Code extension lives in the same monorepo and deep-imports these
+ * from `../../core/src/...`. None is reachable from the published package:
  * `@rstest/core`'s exports map is `.`, `./api`, `./internal/adapter`,
  * `./internal/browser`, `./internal/browser-runtime`, `./package.json`,
  * `./globals`, `./importMeta` — so a standalone repo has to vendor them.
@@ -25,6 +26,8 @@
 import { parse as stackTraceParse, type StackFrame } from 'stacktrace-parser';
 
 export const ROOT_SUITE_NAME = 'Rstest:_internal_root_suite';
+
+export const quoteFilter = (path: string): string => `"${path}"`;
 
 const isHttpLikeFile = (file: string): boolean => /^https?:\/\//.test(file);
 

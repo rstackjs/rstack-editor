@@ -42,7 +42,7 @@ rs.mock('../../../src/shared/nodeResolution', () => ({
 }));
 rs.mock('../../../src/shared/packageResolve', () => ({
   findPackageJsonUncached: () => '/project/node_modules/rstack/package.json',
-  readPackageJson: () => ({ version: '0.7.2', bin: 'bin/rs.js' }),
+  readPackageJson: () => ({ version: '0.7.6', bin: 'bin/rs.js' }),
 }));
 rs.mock('../../../src/stacks/lint/LanguageServerProcessOwner', () => ({
   LanguageServerProcessOwner: class {

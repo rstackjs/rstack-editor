@@ -63,6 +63,7 @@ const location = (line: number) => ({ line, column: 3 });
 // suite "outer" @ line 7, cases "a" @ 12 and "b" @ 16 (1-based, like core)
 const withLocations = [
   {
+    testId: 'outer',
     type: 'suite',
     name: 'outer',
     location: location(7),
@@ -75,6 +76,7 @@ const withLocations = [
 
 const withoutLocations = [
   {
+    testId: 'outer',
     type: 'suite',
     name: 'outer',
     location: undefined,
@@ -120,6 +122,7 @@ describe('TestFile.updateFromList', () => {
     file.updateFromList(withLocations);
     file.updateFromList([
       {
+        testId: 'outer',
         type: 'suite',
         name: 'outer',
         location: location(9),
@@ -143,8 +146,20 @@ describe('TestFile.updateFromList', () => {
     file.setTestItem(root);
 
     const dup = [
-      { type: 'case', name: 'renders', location: location(4), tests: [] },
-      { type: 'case', name: 'renders', location: location(9), tests: [] },
+      {
+        testId: 'renders-1',
+        type: 'case',
+        name: 'renders',
+        location: location(4),
+        tests: [],
+      },
+      {
+        testId: 'renders-2',
+        type: 'case',
+        name: 'renders',
+        location: location(9),
+        tests: [],
+      },
     ] as any;
     file.updateFromList(dup);
     // duplicate siblings get distinct ids by occurrence index
@@ -158,8 +173,20 @@ describe('TestFile.updateFromList', () => {
     // location-less rebuild must keep each occurrence's own range, not collapse
     // both onto the last one's.
     file.updateFromList([
-      { type: 'case', name: 'renders', location: undefined, tests: [] },
-      { type: 'case', name: 'renders', location: undefined, tests: [] },
+      {
+        testId: 'renders-1',
+        type: 'case',
+        name: 'renders',
+        location: undefined,
+        tests: [],
+      },
+      {
+        testId: 'renders-2',
+        type: 'case',
+        name: 'renders',
+        location: undefined,
+        tests: [],
+      },
     ] as any);
     expect(root.children.get(getTestItemId('renders', 0)).range.startLine).toBe(
       3,
@@ -167,5 +194,174 @@ describe('TestFile.updateFromList', () => {
     expect(root.children.get(getTestItemId('renders', 1)).range.startLine).toBe(
       8,
     );
+  });
+
+  it('builds a hierarchy from flat listed tests', async () => {
+    const { TestFile } = await import('../../../src/stacks/test/testTree');
+    const controller = createController();
+    const uri = { fsPath: '/x/flat.test.ts', toString: () => 'file:///x' };
+    const file = new TestFile({} as any, uri as any, controller);
+    const root = controller.createTestItem('root', 'flat.test.ts', uri);
+    file.setTestItem(root);
+    file.updateFromListedTests([
+      {
+        testPath: uri.fsPath,
+        name: 'outer',
+        fullName: 'outer',
+        parentNames: [],
+        project: 'rstest',
+        type: 'suite',
+      },
+      {
+        testPath: uri.fsPath,
+        name: 'case',
+        fullName: 'outer > case',
+        parentNames: ['outer'],
+        project: 'rstest',
+        type: 'case',
+      },
+    ] as any);
+    expect(root.children.get('outer').children.get('case').label).toBe('case');
+  });
+
+  it('keeps empty-named cases under an empty-named listed suite', async () => {
+    const { TestFile } = await import('../../../src/stacks/test/testTree');
+    const controller = createController();
+    const uri = {
+      fsPath: '/x/empty-names.test.ts',
+      toString: () => 'file:///x',
+    };
+    const file = new TestFile({} as any, uri as any, controller);
+    const root = controller.createTestItem('root', 'empty-names.test.ts', uri);
+    file.setTestItem(root);
+    file.updateFromListedTests([
+      {
+        testPath: uri.fsPath,
+        name: '',
+        fullName: '',
+        parentNames: [],
+        project: 'rstest',
+        type: 'suite',
+      },
+      {
+        testPath: uri.fsPath,
+        name: '',
+        fullName: ' > ',
+        parentNames: [''],
+        project: 'rstest',
+        type: 'case',
+      },
+      {
+        testPath: uri.fsPath,
+        name: 'normal',
+        fullName: ' > normal',
+        parentNames: [''],
+        project: 'rstest',
+        type: 'case',
+      },
+    ]);
+    const suite = root.children.get('');
+    expect(suite).toBeDefined();
+    expect(root.children.size).toBe(1);
+    expect(suite.children.size).toBe(2);
+    expect(suite.children.get('').label).toBe('');
+    expect(suite.children.get('normal').label).toBe('normal');
+  });
+
+  it('groups files and seeds empty filtered refreshes', async () => {
+    const { TestFile, groupListedTestsByFile } =
+      await import('../../../src/stacks/test/testTree');
+    const testPath = '/x/empty.test.ts';
+    expect(
+      groupListedTestsByFile([
+        { project: 'rstest', testPath, type: 'file' },
+      ] as any)[0]?.tests,
+    ).toEqual([]);
+    const removed = '/x/removed.test.ts';
+    const [group] = groupListedTestsByFile([], [removed]);
+    expect(group.uri.fsPath).toBe(removed);
+    const controller = createController();
+    const file = new TestFile({} as any, group.uri, controller);
+    const root = controller.createTestItem(
+      'root',
+      'removed.test.ts',
+      group.uri,
+    );
+    file.setTestItem(root);
+    file.updateFromList(withLocations);
+    expect(root.children.size).toBe(1);
+    file.updateFromListedTests(group.tests);
+    expect(root.children.size).toBe(0);
+  });
+
+  it('renders skipped and todo tests from a structured list', async () => {
+    const { TestFile } = await import('../../../src/stacks/test/testTree');
+    const controller = createController();
+    const uri = { fsPath: '/x/modes.test.ts', toString: () => 'file:///x' };
+    const file = new TestFile({} as any, uri as any, controller);
+    const root = controller.createTestItem('root', 'modes.test.ts', uri);
+    file.setTestItem(root);
+    file.updateFromListedTests(
+      ['skip', 'todo'].map((runMode) => ({
+        testPath: uri.fsPath,
+        name: runMode,
+        fullName: runMode,
+        parentNames: [],
+        project: 'rstest',
+        type: 'case',
+        runMode,
+      })) as any,
+    );
+    expect(root.children.get('skip').description).toBe('skip');
+    expect(root.children.get('todo').description).toBe('todo');
+  });
+
+  it('renders only the first project hierarchy for a shared file', async () => {
+    const { TestFile, groupListedTestsByFile } =
+      await import('../../../src/stacks/test/testTree');
+    const controller = createController();
+    const uri = { fsPath: '/x/shared.test.ts', toString: () => 'file:///x' };
+    const file = new TestFile({} as any, uri as any, controller);
+    const root = controller.createTestItem('root', 'shared.test.ts', uri);
+    file.setTestItem(root);
+    const [group] = groupListedTestsByFile([
+      {
+        testPath: uri.fsPath,
+        name: 'suite',
+        fullName: 'suite',
+        parentNames: [],
+        project: 'alpha',
+        type: 'suite',
+      },
+      {
+        testPath: uri.fsPath,
+        name: 'alpha',
+        fullName: 'suite > alpha',
+        parentNames: ['suite'],
+        project: 'alpha',
+        type: 'case',
+      },
+      {
+        testPath: uri.fsPath,
+        name: 'suite',
+        fullName: 'suite',
+        parentNames: [],
+        project: 'beta',
+        type: 'suite',
+      },
+      {
+        testPath: uri.fsPath,
+        name: 'beta',
+        fullName: 'suite > beta',
+        parentNames: ['suite'],
+        project: 'beta',
+        type: 'case',
+      },
+    ] as any);
+    file.updateFromListedTests(group.tests);
+    expect(root.children.get('suite').children.get('alpha').label).toBe(
+      'alpha',
+    );
+    expect(root.children.get('suite').children.get('beta')).toBeUndefined();
   });
 });
