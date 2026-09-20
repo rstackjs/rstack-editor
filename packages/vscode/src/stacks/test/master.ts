@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { statSync } from 'node:fs';
 import net from 'node:net';
 import path, { dirname } from 'node:path';
@@ -43,6 +43,8 @@ import { injectForceColor } from './shared/colorEnv';
 import { NODE_RUNTIME_STATUS_SOURCE, status } from './status';
 import { runInTerminal as sendToTerminal, shellQuote } from './terminal';
 import { TestRunReporter } from './testRunReporter';
+import type { WorkerInitOptions } from './types';
+import { quoteFilter } from './vendored/coreInternals';
 import { toErrorMessage } from './utils';
 import type { Worker } from './worker';
 
@@ -55,7 +57,49 @@ const CORE_NOT_INSTALLED_STATUS = formatNotInstalledStatus(
 );
 const CORE_NOT_INSTALLED_CONSEQUENCE = `install the project dependencies, or set "${CONFIG_SECTION}.rstestPackagePath" to an installed @rstest/core package.json`;
 
-export const runningWorkers = new Set<BirpcReturn<Worker, TestRunReporter>>();
+type WorkerRpc = BirpcReturn<Worker, TestRunReporter>;
+type RstestPaths = Pick<WorkerInitOptions, 'apiPath' | 'rstestPath'>;
+export const runningWorkers = new Set<WorkerRpc>();
+export const WATCHER_CLOSE_TIMEOUT_MS = 30_000;
+const forceKilledWorkers = new WeakSet<WorkerRpc>();
+const workerClosePromises = new WeakMap<WorkerRpc, Promise<void>>();
+
+export const closeWorkerGracefully = (worker: WorkerRpc): Promise<void> => {
+  if (worker.$closed) return Promise.resolve();
+  const pendingClose = workerClosePromises.get(worker);
+  if (pendingClose) return pendingClose;
+  const closePromise = (async () => {
+    let timer: NodeJS.Timeout | undefined;
+    let closeTimedOut = false;
+    try {
+      await Promise.race([
+        Promise.resolve()
+          .then(() => worker.closeWatcher())
+          .catch((error) => {
+            logger.warn('Failed to close the continuous test watcher', error);
+          }),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(() => {
+            closeTimedOut = true;
+            resolve();
+          }, WATCHER_CLOSE_TIMEOUT_MS);
+          timer.unref();
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+      if (closeTimedOut) {
+        forceKilledWorkers.add(worker);
+        logger.warn(
+          'Timed out waiting for the continuous test watcher to close; terminating the worker. Watcher teardown was skipped.',
+        );
+      }
+      if (!worker.$closed) worker.$close();
+    }
+  })();
+  workerClosePromises.set(worker, closePromise);
+  return closePromise;
+};
 
 /**
  * The host-level inputs to the worker-node preflight. `notify` must not close
@@ -125,10 +169,8 @@ const isPortAvailable = (port: number, host?: string): Promise<boolean> =>
   });
 
 export class RstestApi {
-  private childProcesses = new Set<ChildProcess>();
-  // Processes killed on purpose outside the `$close` → `off` path (dispose,
-  // failed debugger attach). Their `exit` events are not crashes.
-  private readonly expectedExits = new WeakSet<ChildProcess>();
+  private workers = new Set<WorkerRpc>();
+  private disposePromise?: Promise<void>;
   // Flipped by `dispose()` and checked wherever an await can outlive a
   // restart — see `reportNodeRuntimeIssue` and the spawn abort in
   // `createChildProcess`.
@@ -359,10 +401,10 @@ export class RstestApi {
     return true;
   }
 
-  // Returns '' when resolution failed. Every such branch has already reported
+  // Returns undefined when resolution failed. Every such branch has already reported
   // itself — silently for a missing core, with a notification otherwise — so
   // callers must fail quietly rather than report again.
-  private resolveRstestPath(): string {
+  private resolveRstestPaths(): RstestPaths | undefined {
     try {
       const configured = this.resolveConfiguredPackageJson();
 
@@ -374,7 +416,7 @@ export class RstestApi {
         // fixed path, so cache staleness is moot.
         // `dirname` turns the package.json specifier into its package entry.
         nodeExport = this.resolveFromCwd(dirname(configured), configured);
-        if (!nodeExport) return '';
+        if (!nodeExport) return undefined;
         try {
           corePackageJsonPath = nodeRequire.resolve(configured, {
             paths: [this.cwd],
@@ -387,7 +429,7 @@ export class RstestApi {
           ) {
             logger.error('Failed to resolve @rstest/core/package.json', e);
           }
-          return '';
+          return undefined;
         }
       } else {
         // The uncached walk-up runs first (see `findPackageJsonUncached`);
@@ -401,7 +443,7 @@ export class RstestApi {
         );
         if (!found) {
           this.reportCoreNotInstalled(this.rstestResolutionDir);
-          return '';
+          return undefined;
         }
         corePackageJsonPath = found;
         nodeExport = this.resolveFromCwd(
@@ -409,7 +451,7 @@ export class RstestApi {
           undefined,
           dirname(corePackageJsonPath),
         );
-        if (!nodeExport) return '';
+        if (!nodeExport) return undefined;
       }
 
       this.coreMissingEpisode.clear();
@@ -440,15 +482,23 @@ export class RstestApi {
           if (this.unsupportedCoreMessage.changed(message)) {
             logger.error(message);
           }
-        } else {
-          this.unsupportedCoreMessage.clear();
-          status.versionOk(this.statusSource);
+          return undefined;
         }
       }
 
+      const apiPath = this.resolveFromCwd(
+        '@rstest/core/api',
+        configured,
+        dirname(corePackageJsonPath),
+      );
+      if (!apiPath) return undefined;
+      if (!this.disposed) {
+        this.unsupportedCoreMessage.clear();
+        status.versionOk(this.statusSource);
+      }
       this.lastResolvedRstestPath = nodeExport;
       this.resolutionErrorMessage.clear();
-      return nodeExport;
+      return { rstestPath: nodeExport, apiPath };
     } catch (e) {
       this.reportResolutionError(toErrorMessage(e));
       throw e;
@@ -485,10 +535,10 @@ export class RstestApi {
   }
 
   public async getNormalizedConfig() {
-    const { worker, rstestPath } = await this.createChildProcess();
+    const { worker, ...paths } = await this.createChildProcess();
     try {
       return await worker.getNormalizedConfig({
-        rstestPath,
+        ...paths,
         configFilePath: this.configFilePath,
       });
     } finally {
@@ -496,16 +546,18 @@ export class RstestApi {
     }
   }
 
-  public async listTests(include?: string[]) {
-    const { worker, rstestPath } = await this.createChildProcess();
-    const tests = await worker.listTests({
-      rstestPath,
-      configFilePath: this.configFilePath,
-      include,
-      includeTaskLocation: true,
-    });
-    worker.$close();
-    return tests;
+  public async listTests(fileFilters?: string[]) {
+    const { worker, ...paths } = await this.createChildProcess();
+    try {
+      return await worker.listTests({
+        ...paths,
+        configFilePath: this.configFilePath,
+        fileFilters: fileFilters?.map(quoteFilter),
+        includeTaskLocation: true,
+      });
+    } finally {
+      worker.$close();
+    }
   }
 
   public async runTest({
@@ -553,21 +605,23 @@ export class RstestApi {
       this.project,
       testCaseNamePath,
       coverageEnabled,
-      onFinish,
+      // The worker RPC settles after post-report checks for one-shot runs and
+      // after the initial watch session is established for continuous runs. It
+      // also settles on startup failures that emit no reporter end event.
+      undefined,
       createTestRun,
       this.configFilePath,
       applyDiagnostic ? diagnostics : undefined,
       errorStore,
     );
 
-    const { worker, rstestPath } = await this.createChildProcess(
+    const { worker, ...paths } = await this.createChildProcess(
       testRunReporter,
       kind === vscode.TestRunProfileKind.Debug,
       run,
     );
     token.onCancellationRequested(() => {
-      worker.$close();
-      onFinish();
+      void closeWorkerGracefully(worker).finally(onFinish);
     });
 
     void worker
@@ -579,10 +633,11 @@ export class RstestApi {
           : undefined,
         update: updateSnapshot,
         configFilePath: this.configFilePath,
-        rstestPath,
+        ...paths,
         coverage: coverageEnabled ? { enabled: true } : undefined,
         includeTaskLocation: true,
       })
+      .then(onFinish)
       .catch((error) => {
         if (!token.isCancellationRequested) {
           const message = toErrorMessage(error);
@@ -712,8 +767,8 @@ export class RstestApi {
     // Resolved once per spawn and handed back to the caller: the callers'
     // worker requests need the same path, and re-resolving would repeat the
     // uncached `node_modules` walk (and its status reporting).
-    const rstestPath = this.resolveRstestPath();
-    if (!rstestPath) {
+    const paths = this.resolveRstestPaths();
+    if (!paths) {
       throw new ReportedRstestResolutionError();
     }
     const debuggerPort = getConfigValue('debuggerPort', this.workspace);
@@ -780,7 +835,6 @@ export class RstestApi {
         env: workerEnv,
       },
     );
-    this.childProcesses.add(rstestProcess);
 
     rstestProcess.stdout?.on('data', (d) => {
       const content = d.toString();
@@ -810,17 +864,20 @@ export class RstestApi {
       bind: 'functions',
       timeout: 600_000,
       off: () => {
-        rstestProcess.kill();
-        this.childProcesses.delete(rstestProcess);
+        rstestProcess.kill(
+          forceKilledWorkers.has(worker) ? 'SIGKILL' : 'SIGTERM',
+        );
+        this.workers.delete(worker);
         runningWorkers.delete(worker);
       },
     });
 
+    this.workers.add(worker);
     runningWorkers.add(worker);
 
     logger.debug('Sent init payload to worker', {
       root: this.cwd,
-      rstestPath,
+      ...paths,
       configFilePath: this.configFilePath,
     });
 
@@ -870,19 +927,12 @@ export class RstestApi {
     rstestProcess.on('exit', (code, signal) => {
       logger.debug('Worker process exited', { code, signal });
       if (worker.$closed) return;
-      if (!this.expectedExits.has(rstestProcess)) {
-        // An exit nobody asked for: every deliberate teardown either runs
-        // `$close` first (its `off` handler kills after `$closed` flips) or
-        // marks the process in `expectedExits` before killing. The process
-        // *did* spawn — which cleared the crash latch — and nothing else
-        // will report; e.g. an invalid `nodeExecArgs` option makes Node exit
-        // right after a successful spawn, and without this the status keeps
-        // saying running over an empty Test Explorer.
-        status.crashed(
-          `worker process exited unexpectedly (code: ${String(code)}, signal: ${String(signal)})`,
-          this.statusSource,
-        );
-      }
+      // Every deliberate teardown closes the RPC before killing the process.
+      // An exit reaching here must clear the otherwise-stale running status.
+      status.crashed(
+        `worker process exited unexpectedly (code: ${String(code)}, signal: ${String(signal)})`,
+        this.statusSource,
+      );
       // Always unblock pending calls (and drop the worker from the tracking
       // set via `off`) when the worker exits before we closed it — expected
       // or not.
@@ -894,42 +944,49 @@ export class RstestApi {
     // handled instead of throwing uncaught in the extension host.
     if (startDebugging) {
       const debugOutFiles = getConfigValue('debugOutFiles', this.workspace);
-      const startedDebugging = await vscode.debug.startDebugging(
-        this.workspace,
-        {
-          type: 'node',
-          name: 'Rstest Debug',
-          request: 'attach',
-          skipFiles: getConfigValue('debugExclude', this.workspace),
-          ...(debugOutFiles.length ? { outFiles: debugOutFiles } : {}),
-          ...(debuggerPort
-            ? {
-                port: debuggerPort,
-                address: debuggerAddress ?? DEFAULT_DEBUG_HOST,
-              }
-            : { processId: rstestProcess.pid }),
-        },
-        { testRun },
-      );
-      if (!startedDebugging) {
-        this.expectedExits.add(rstestProcess);
-        rstestProcess.kill();
-        throw new Error(
-          `Failed to attach debugger to test worker process (PID: ${rstestProcess.pid})`,
+      try {
+        const startedDebugging = await vscode.debug.startDebugging(
+          this.workspace,
+          {
+            type: 'node',
+            name: 'Rstest Debug',
+            request: 'attach',
+            skipFiles: getConfigValue('debugExclude', this.workspace),
+            ...(debugOutFiles.length ? { outFiles: debugOutFiles } : {}),
+            ...(debuggerPort
+              ? {
+                  port: debuggerPort,
+                  address: debuggerAddress ?? DEFAULT_DEBUG_HOST,
+                }
+              : { processId: rstestProcess.pid }),
+          },
+          { testRun },
         );
+        if (this.disposed) {
+          throw new Error(
+            'worker spawn aborted: this master was disposed while the debugger was attaching',
+          );
+        }
+        if (!startedDebugging) {
+          throw new Error(
+            `Failed to attach debugger to test worker process (PID: ${rstestProcess.pid})`,
+          );
+        }
+      } catch (error) {
+        if (!worker.$closed) worker.$close();
+        throw error;
       }
     }
 
-    return { worker, rstestPath };
+    return { worker, ...paths };
   }
 
-  public dispose() {
+  public dispose(): Promise<void> {
     this.disposed = true;
     status.forget(this.nodeRuntimeStatusSource);
-    for (const child of this.childProcesses) {
-      this.expectedExits.add(child);
-      child.kill();
-    }
-    this.childProcesses.clear();
+    this.disposePromise ??= Promise.all(
+      Array.from(this.workers, closeWorkerGracefully),
+    ).then(() => undefined);
+    return this.disposePromise;
   }
 }

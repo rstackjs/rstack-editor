@@ -1,5 +1,6 @@
 import { TextDecoder } from 'node:util';
 import type { TestInfo } from '@rstest/core';
+import type { ListedTest } from '@rstest/core/api';
 import vscode from 'vscode';
 import { logger } from './logger';
 import type { RstestApi } from './master';
@@ -54,6 +55,48 @@ export function gatherTestItems(
   });
   return items;
 }
+
+const createPreviousRangeLookup = (items: vscode.TestItem[]) => {
+  const previousRanges = new Map<string, vscode.Range>();
+  const snapshot = (item: vscode.TestItem, idPath: string[]) => {
+    if (item.range) previousRanges.set(idPath.join('\x00'), item.range);
+    item.children.forEach((child) => snapshot(child, [...idPath, child.id]));
+  };
+  items.forEach((item) => snapshot(item, [item.id]));
+  return (idPath: string[]) => previousRanges.get(idPath.join('\x00'));
+};
+
+const toVscodeRange = (
+  location: { line: number; column: number } | undefined,
+): vscode.Range | undefined => {
+  if (!location) return undefined;
+  const line = location.line - 1;
+  const column = location.column - 1;
+  return new vscode.Range(line, column, line, column);
+};
+
+export const groupListedTestsByFile = (
+  tests: ListedTest[],
+  requestedFiles: string[] = [],
+): Array<{ uri: vscode.Uri; tests: ListedTest[] }> => {
+  // Seed filtered refreshes so deleted or newly excluded files clear the tree.
+  const byFile = new Map<string, ListedTest[]>(
+    requestedFiles.map((file) => [file, []]),
+  );
+  // A file has one VS Code URI; render the first project's declaration tree.
+  const projects = new Map<string, ListedTest['project']>();
+  for (const test of tests) {
+    if (!projects.has(test.testPath)) projects.set(test.testPath, test.project);
+    if (projects.get(test.testPath) !== test.project) continue;
+    const entries = byFile.get(test.testPath) ?? [];
+    byFile.set(test.testPath, entries);
+    if (test.type !== 'file') entries.push(test);
+  }
+  return Array.from(byFile, ([file, entries]) => ({
+    uri: vscode.Uri.file(file),
+    tests: entries,
+  }));
+};
 
 export class TestFolder {
   constructor(
@@ -155,13 +198,7 @@ export class TestFile {
     // collapsing to line 1, which would move every gutter icon to the imports.
     // Keys are the path of duplicate-aware item ids so that duplicate sibling
     // names each keep their own range.
-    const previousRanges = new Map<string, vscode.Range>();
-    const rangeKey = (idPath: string[]) => idPath.join('\x00');
-    const snapshot = (item: vscode.TestItem, idPath: string[]) => {
-      if (item.range) previousRanges.set(rangeKey(idPath), item.range);
-      item.children.forEach((child) => snapshot(child, [...idPath, child.id]));
-    };
-    this.children.forEach((item) => snapshot(item, [item.id]));
+    const getPreviousRange = createPreviousRangeLookup(this.children);
 
     const handleChild = (
       test: TestInfo,
@@ -174,15 +211,7 @@ export class TestFile {
         ...parentIds,
         getTestItemId(test.name, siblingIndexOf(parent, test.name)),
       ];
-      let range: vscode.Range | undefined;
-      if (test.location) {
-        // vscode location is zero based
-        const line = test.location.line - 1;
-        const column = test.location.column - 1;
-        range = new vscode.Range(line, column, line, column);
-      } else {
-        range = previousRanges.get(rangeKey(ids));
-      }
+      const range = toVscodeRange(test.location) ?? getPreviousRange(ids);
       const testItem = this.onTest(
         range,
         test.name,
@@ -207,6 +236,59 @@ export class TestFile {
       handleChild(test, children, [], []);
     });
     this.children = children;
+    this.testItem?.children.replace(this.children);
+  }
+
+  public updateFromListedTests(tests: ListedTest[]): void {
+    const getPreviousRange = createPreviousRangeLookup(this.children);
+    type Parent = {
+      names: string[];
+      ids: string[];
+      children: vscode.TestItem[];
+      item?: vscode.TestItem;
+    };
+    const root: Parent = { names: [], ids: [], children: [] };
+    const parents: Parent[] = [root];
+    const finalizeParent = (): void => {
+      const parent = parents.pop()!;
+      parent.item?.children.replace(parent.children);
+    };
+
+    for (const test of tests) {
+      const parentNames = test.parentNames ?? [];
+      const parentKey = parentNames.join('\x00');
+      while (
+        parents.length > 1 &&
+        parents.at(-1)!.names.join('\x00') !== parentKey
+      ) {
+        finalizeParent();
+      }
+      const parent = parents.at(-1)!;
+      if (!test.name) continue;
+      const id = getTestItemId(
+        test.name,
+        siblingIndexOf(parent.children, test.name),
+      );
+      const ids = [...parent.ids, id];
+      const testItem = this.onTest(
+        toVscodeRange(test.location) ?? getPreviousRange(ids),
+        test.name,
+        test.type === 'suite' ? 'suite' : 'test',
+        parent.children,
+        parentNames,
+      );
+      testItem.description = test.runMode;
+      if (test.type === 'suite') {
+        parents.push({
+          names: [...parentNames, test.name],
+          ids,
+          children: [],
+          item: testItem,
+        });
+      }
+    }
+    while (parents.length > 1) finalizeParent();
+    this.children = root.children;
     this.testItem?.children.replace(this.children);
   }
 

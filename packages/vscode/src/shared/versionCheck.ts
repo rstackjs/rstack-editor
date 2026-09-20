@@ -9,7 +9,8 @@ import { readPackageJson } from './packageResolve';
  *
  * Launch floors (verified against npm):
  * - `@rslint/core >= 0.8.0` — explicit protocol-2 config selection.
- * - `@rstest/core >= 0.6.0` — the existing `MIN_CORE_VERSION` upstream.
+ * - `@rstest/core >= 0.12.0` — the first release exporting the public
+ *   `@rstest/core/api` createRstest instance API; older cores lack it.
  * - `rstack >= 0.7.0` — the first release whose lint shim sets `basePath` and
  *   itself pins `@rslint/core` 0.9.0, preserving project-relative config
  *   paths (#431).
@@ -21,7 +22,7 @@ import { readPackageJson } from './packageResolve';
  */
 export const SUPPORT_MATRIX = {
   '@rslint/core': '>=0.8.0',
-  '@rstest/core': '>=0.6.0',
+  '@rstest/core': '>=0.12.0',
   rstack: '>=0.7.0',
 } as const;
 

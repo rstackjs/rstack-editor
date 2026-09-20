@@ -8,7 +8,12 @@ import { logUnlessReported } from './coreResolution';
 import { RstestDiagnostics } from './diagnostics';
 import { TestErrorStore, testMessageText } from './errorStore';
 import { logger } from './logger';
-import { runningWorkers, warmWorkerNodePreflight } from './master';
+import {
+  closeWorkerGracefully,
+  runningWorkers,
+  warmWorkerNodePreflight,
+} from './master';
+import { quoteFilter } from './vendored/coreInternals';
 import { NODE_EXECUTABLE_SETTING } from '../../shared/nodeResolution';
 import { Project, WorkspaceManager } from './project';
 import { routeToOwners } from './runRouting';
@@ -484,20 +489,18 @@ class Rstest implements vscode.Disposable {
         } else if (data instanceof ProjectFolder) {
           // grouping folder spans multiple projects; recurse into children
           await discoverTests(gatherTestItems(test.children, false));
-        } else if (data instanceof TestFolder) {
+        } else if (data instanceof TestFile || data instanceof TestFolder) {
           await data.api.runTest({
             ...commonOptions,
-            fileFilter: data.uri.fsPath,
-          });
-        } else if (data instanceof TestFile) {
-          await data.api.runTest({
-            ...commonOptions,
-            fileFilter: data.uri.fsPath,
+            fileFilter:
+              data instanceof TestFolder
+                ? data.uri.fsPath
+                : quoteFilter(data.uri.fsPath),
           });
         } else if (data instanceof TestCase) {
           await data.api.runTest({
             ...commonOptions,
-            fileFilter: data.uri.fsPath,
+            fileFilter: quoteFilter(data.uri.fsPath),
             testCaseNamePath: data.parentNames.concat(test.label),
             isSuite: data.type === 'suite',
           });
@@ -526,13 +529,12 @@ class Rstest implements vscode.Disposable {
     }
   };
 
-  dispose() {
+  dispose(): void {
     this.disposed = true;
     // Upstream's `deactivate()`. A worker is a child process, so it outlives a
     // plain `TestController.dispose()` and has to be closed explicitly.
-    for (const worker of runningWorkers) {
-      worker.$close();
-    }
+    // Start teardown without awaiting it so the shell's serialized restart queue stays responsive.
+    for (const worker of runningWorkers) void closeWorkerGracefully(worker);
     disposeTerminal();
     for (const workspace of this.workspaces.values()) {
       workspace.dispose();

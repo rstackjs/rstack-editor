@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import type { TestInfo } from '@rstest/core';
+import type { ListedTest } from '@rstest/core/api';
 import picomatch from 'picomatch';
 import { glob } from 'tinyglobby';
 import vscode from 'vscode';
@@ -19,7 +19,13 @@ import { logger } from './logger';
 import { RstestApi } from './master';
 import { type ChildProjectRef, computeCoveredConfigs } from './projectCoverage';
 import { status } from './status';
-import { ProjectFolder, TestFile, TestFolder, testData } from './testTree';
+import {
+  groupListedTestsByFile,
+  ProjectFolder,
+  TestFile,
+  TestFolder,
+  testData,
+} from './testTree';
 
 // The default config file name at the workspace root. A lone project using it
 // is shown without a project node (its test files sit directly under the root).
@@ -49,7 +55,7 @@ export type ProjectSource = {
    */
   readonly sourceUri: vscode.Uri;
   /**
-   * The config file handed to Rstest (`-c` / `initCli({ config })`). Defaults
+   * The config file handed to Rstest (`-c` / `loadConfig({ path })`). Defaults
    * to `sourceUri`; differs only for the rstack bridge, where it is
    * `<rstack>/dist/rstestConfig.js`.
    */
@@ -772,7 +778,7 @@ export class Project implements vscode.Disposable {
   }
   dispose() {
     this.#watch?.dispose();
-    this.api.dispose();
+    void this.api.dispose();
     this.cancellationSource.cancel();
     // This project's failures must not outlive it (config removed, folder
     // closed, bridge rebuilt). The master latches under the source URI —
@@ -801,7 +807,7 @@ export class Project implements vscode.Disposable {
           this.testItem.busy = true;
         }
         try {
-          const files: { uri: vscode.Uri; tests?: TestInfo[] }[] =
+          const files: { uri: vscode.Uri; tests?: ListedTest[] }[] =
             method === 'ast'
               ? // ast
                 await glob(this.include, {
@@ -814,12 +820,7 @@ export class Project implements vscode.Disposable {
                   files.map((file) => ({ uri: vscode.Uri.file(file) })),
                 )
               : // runtime
-                await this.api.listTests().then((files) =>
-                  files.map((file) => ({
-                    uri: vscode.Uri.file(file.testPath),
-                    tests: file.tests,
-                  })),
-                );
+                await this.api.listTests().then(groupListedTestsByFile);
 
           if (token.isCancellationRequested) return;
 
@@ -850,11 +851,13 @@ export class Project implements vscode.Disposable {
           const updateOrCreateByRuntime = (uri: vscode.Uri) => {
             void this.api
               .listTests([uri.fsPath])
-              .then((files) => {
+              .then((listedTests) => {
                 if (token.isCancellationRequested) return;
-                for (const { testPath, tests } of files) {
-                  const uri = vscode.Uri.file(testPath);
-                  this.updateOrCreateFile(uri, tests);
+                for (const { uri: listedUri, tests } of groupListedTestsByFile(
+                  listedTests,
+                  [uri.fsPath],
+                )) {
+                  this.updateOrCreateFile(listedUri, tests);
                 }
                 this.buildTree();
               })
@@ -910,14 +913,14 @@ export class Project implements vscode.Disposable {
     return watcher;
   }
   // TODO pass cancellation token to updateFromDisk
-  private updateOrCreateFile(uri: vscode.Uri, tests?: TestInfo[]) {
+  private updateOrCreateFile(uri: vscode.Uri, tests?: ListedTest[]) {
     let data = this.testFiles.get(uri.toString());
     if (!data) {
       data = new TestFile(this.api, uri, this.testController);
       this.testFiles.set(uri.toString(), data);
     }
     if (tests) {
-      data.updateFromList(tests);
+      data.updateFromListedTests(tests);
     } else {
       data.updateFromDisk();
     }

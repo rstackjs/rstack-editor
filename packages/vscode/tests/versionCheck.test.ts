@@ -15,7 +15,7 @@ describe('support matrix', () => {
   it('pins the launch support floors', () => {
     expect(SUPPORT_MATRIX).toEqual({
       '@rslint/core': '>=0.8.0',
-      '@rstest/core': '>=0.6.0',
+      '@rstest/core': '>=0.12.0',
       rstack: '>=0.7.0',
     });
   });
@@ -25,7 +25,7 @@ describe('checkPackageVersion', () => {
   it('accepts versions at and above the floor', () => {
     expect(checkPackageVersion('@rslint/core', '0.8.0').kind).toBe('ok');
     expect(checkPackageVersion('@rslint/core', '1.2.3').kind).toBe('ok');
-    expect(checkPackageVersion('@rstest/core', '0.11.5').kind).toBe('ok');
+    expect(checkPackageVersion('@rstest/core', '0.12.0').kind).toBe('ok');
     expect(checkPackageVersion('rstack', '0.7.0').kind).toBe('ok');
   });
 
@@ -34,11 +34,11 @@ describe('checkPackageVersion', () => {
   });
 
   it('rejects versions below the floor', () => {
-    const result = checkPackageVersion('@rstest/core', '0.5.9');
+    const result = checkPackageVersion('@rstest/core', '0.11.12');
     expect(result.kind).toBe('mismatch');
     if (result.kind === 'mismatch') {
       expect(formatVersionMismatch('@rstest/core', result)).toContain(
-        '>=0.6.0',
+        '>=0.12.0',
       );
     }
   });
