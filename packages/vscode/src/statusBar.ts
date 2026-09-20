@@ -99,9 +99,11 @@ const STATE_STYLES: Readonly<
     severity: 3,
     item: {
       // Keeps the idle glyph, unlike every other state that colours the item.
-      // A version mismatch is advisory — the run goes ahead — so the amber
-      // background is the whole signal; swapping the glyph too reads as
-      // "stopped", which is the one thing that has not happened.
+      // Every stack holds off on a mismatch — lint, fmt and Rstest all stop
+      // before spawning anything — but nothing broke: the tool is merely too
+      // old, and the fix (upgrading a package) is the user's, not a restart.
+      // The amber background carries that; the error glyph is reserved for a
+      // crash, which this is not.
       text: IDLE_ITEM_TEXT,
       background: 'statusBarItem.warningBackground',
     },
