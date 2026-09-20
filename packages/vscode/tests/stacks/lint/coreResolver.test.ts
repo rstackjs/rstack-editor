@@ -90,7 +90,7 @@ describe('CoreResolver', () => {
     // the core alone.
     const root = temporaryDirectory();
     installPackage(root, '@rslint/core', '0.9.0');
-    const rstack = installPackage(root, 'rstack', '0.7.2');
+    const rstack = installPackage(root, 'rstack', '0.7.6');
     const shimPath = installShim(rstack);
     const folder = folderOf(root);
     const resolver = new CoreResolver();

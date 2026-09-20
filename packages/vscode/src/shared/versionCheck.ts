@@ -11,9 +11,10 @@ import { readPackageJson } from './packageResolve';
  * - `@rslint/core >= 0.8.0` — explicit protocol-2 config selection.
  * - `@rstest/core >= 0.12.0` — the first release exporting the public
  *   `@rstest/core/api` createRstest instance API; older cores lack it.
- * - `rstack >= 0.7.0` — the first release whose lint shim sets `basePath` and
- *   itself pins `@rslint/core` 0.9.0, preserving project-relative config
- *   paths (#431).
+ * - `rstack >= 0.7.6` — the first release pinning `@rstest/core ~0.12.0`
+ *   (https://github.com/rstackjs/rstack-cli/releases/tag/v0.7.6).
+ *   Bridged `rstack.config.*` projects resolve core from the rstack package
+ *   directory, so earlier releases carry a core below the `@rstest/core` floor.
  *
  * The rstack floor is **uniform across consumers by decision**: lint, Rstest
  * and fmt all check the same entry, so "which rstack does the extension
@@ -23,7 +24,7 @@ import { readPackageJson } from './packageResolve';
 export const SUPPORT_MATRIX = {
   '@rslint/core': '>=0.8.0',
   '@rstest/core': '>=0.12.0',
-  rstack: '>=0.7.0',
+  rstack: '>=0.7.6',
 } as const;
 
 export type SupportedPackage = keyof typeof SUPPORT_MATRIX;
