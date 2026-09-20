@@ -224,6 +224,50 @@ describe('TestFile.updateFromList', () => {
     expect(root.children.get('outer').children.get('case').label).toBe('case');
   });
 
+  it('keeps empty-named cases under an empty-named listed suite', async () => {
+    const { TestFile } = await import('../../../src/stacks/test/testTree');
+    const controller = createController();
+    const uri = {
+      fsPath: '/x/empty-names.test.ts',
+      toString: () => 'file:///x',
+    };
+    const file = new TestFile({} as any, uri as any, controller);
+    const root = controller.createTestItem('root', 'empty-names.test.ts', uri);
+    file.setTestItem(root);
+    file.updateFromListedTests([
+      {
+        testPath: uri.fsPath,
+        name: '',
+        fullName: '',
+        parentNames: [],
+        project: 'rstest',
+        type: 'suite',
+      },
+      {
+        testPath: uri.fsPath,
+        name: '',
+        fullName: ' > ',
+        parentNames: [''],
+        project: 'rstest',
+        type: 'case',
+      },
+      {
+        testPath: uri.fsPath,
+        name: 'normal',
+        fullName: ' > normal',
+        parentNames: [''],
+        project: 'rstest',
+        type: 'case',
+      },
+    ]);
+    const suite = root.children.get('');
+    expect(suite).toBeDefined();
+    expect(root.children.size).toBe(1);
+    expect(suite.children.size).toBe(2);
+    expect(suite.children.get('').label).toBe('');
+    expect(suite.children.get('normal').label).toBe('normal');
+  });
+
   it('groups files and seeds empty filtered refreshes', async () => {
     const { TestFile, groupListedTestsByFile } =
       await import('../../../src/stacks/test/testTree');

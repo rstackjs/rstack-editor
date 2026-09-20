@@ -264,7 +264,8 @@ export class TestFile {
         finalizeParent();
       }
       const parent = parents.at(-1)!;
-      if (!test.name) continue;
+      // Empty-string names are valid declarations; only file rows lack a name.
+      if (test.name === undefined) continue;
       const id = getTestItemId(
         test.name,
         siblingIndexOf(parent.children, test.name),
