@@ -21,7 +21,10 @@ suite('VS Code test harness fail-closed guards', function () {
       {
         consecutiveSuccessfulWindows: 2,
         timeoutMs: 1_000,
-        retryDelayMs: 0,
+        // Deviation from upstream (0): a positive delay so the delayed-retry
+        // branch is exercised here, with a budget that a stalled runner cannot
+        // exhaust across three 5ms waits.
+        retryDelayMs: 5,
         description: 'the injected readiness sequence',
       },
     );
