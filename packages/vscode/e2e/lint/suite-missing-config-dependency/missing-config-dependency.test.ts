@@ -1,5 +1,4 @@
 import * as assert from 'node:assert';
-import fs from 'node:fs';
 import path from 'node:path';
 import * as vscode from 'vscode';
 import type { StackState } from '../../../src/types';
@@ -8,6 +7,7 @@ import {
   waitForRslintDiagnostics,
 } from '../utils/diagnostics';
 import { extensionExports } from '../utils/extension';
+import { writeFileAtomicSync } from '../../shared/atomicWrite';
 
 function lintExports(): {
   getFolderStates(): ReadonlyMap<string, StackState>;
@@ -68,14 +68,14 @@ suite('Rslint missing config dependency', function () {
     assert.ok(!warnings[0].includes('\n'), 'warning must remain one line');
 
     const configPath = path.join(root, 'rslint.config.mjs');
-    fs.writeFileSync(
+    writeFileAtomicSync(
       configPath,
       "export default [{ files: ['src/**/*.ts'], rules: { 'no-debugger': 'error' } }];\n",
     );
     await waitForRslintDiagnostics(document);
     await waitForRuntimeKind('running');
 
-    fs.writeFileSync(
+    writeFileAtomicSync(
       configPath,
       "import 'missing-rslint-config-dependency';\nexport default [];\n",
     );

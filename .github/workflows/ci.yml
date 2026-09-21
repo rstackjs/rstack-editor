@@ -56,13 +56,16 @@ jobs:
       - name: Unit Test
         run: pnpm run test:unit
 
-  # ======== E2E: Windows + macOS, no Linux ========
-  # These are the platforms the extension is actually used on, and the only
-  # ones upstream rstest runs its ported VS Code suites on. Linux is excluded
-  # deliberately: the Extension Host needs xvfb there, and inotify reports a
-  # non-atomic file rewrite as separate truncate/write events, so fixture edits
-  # in the watch-mode suites race the watcher in a way no user hits. Do not add
-  # a Linux E2E job back without also making every fixture edit atomic.
+  # ======== E2E: Windows + macOS + Linux ========
+  # Windows and macOS are the platforms the extension is actually used on.
+  # Linux is here for a different reason: rstack-ecosystem-ci runs every suite
+  # on ubuntu-latest, so a Linux E2E run is the prerequisite for joining it
+  # (rstackjs/rstack-editor#40). Linux needs two things the other two do not —
+  # an X server for the Extension Host (`xvfb-run`) and the GTK/NSS/GBM/ALSA
+  # libraries Electron links against. It also needs every fixture rewrite to
+  # be atomic: inotify reports a truncate-then-write as two events, so a
+  # watcher reading on the first one sees an empty file. All fixture writes go
+  # through `e2e/shared/atomicWrite.ts`; route new ones through it too.
   e2e:
     name: E2E (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -70,7 +73,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        os: [windows-latest, macos-latest, ubuntu-latest]
 
     steps:
       - name: Checkout
@@ -94,6 +97,18 @@ jobs:
       - name: Build
         run: pnpm run build
 
+      # Electron links against these at process start; ubuntu-latest (24.04)
+      # ships none of them. The `t64` names are the Ubuntu 24.04 time_t
+      # transition spellings — `libasound2` / `libgtk-3-0` no longer exist
+      # there. `xvfb` is preinstalled on the image; naming it keeps the
+      # dependency explicit.
+      - name: Install Extension Host Dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2t64 libgbm1 libgtk-3-0t64 libnss3 xvfb
+
       # `@vscode/test-electron` downloads a full VS Code into
       # `packages/vscode/.vscode-test`. Cache only the immutable distribution
       # directories, keyed on the extension manifest (which carries
@@ -111,4 +126,11 @@ jobs:
       # (e2e/setupFixtures.mjs, invoked by test:e2e), so this step needs
       # network access.
       - name: E2E Test
+        if: runner.os != 'Linux'
         run: pnpm run test:e2e
+
+      # One `xvfb-run` around the whole chain: every slice launches its own VS
+      # Code, and they must all land on the same display.
+      - name: E2E Test (xvfb)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a pnpm run test:e2e

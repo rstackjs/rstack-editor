@@ -1,9 +1,12 @@
-// Ported verbatim from web-infra-dev/rslint
+// Ported from web-infra-dev/rslint
 // `packages/vscode-extension/__tests__/utils/configuration.ts` (origin/main).
+// One deviation: the settings restore goes through `writeFileAtomicSync`, so
+// VS Code never observes the truncated intermediate state on Linux.
 import fs from 'node:fs';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import * as vscode from 'vscode';
+import { writeFileAtomicSync } from '../../shared/atomicWrite';
 
 type CodeActionsOnSave = Record<string, 'always' | 'explicit' | 'never'>;
 
@@ -39,7 +42,7 @@ function captureWorkspaceSettings(
 function restoreWorkspaceSettings(snapshot: WorkspaceSettingsSnapshot): void {
   if (snapshot.content) {
     fs.mkdirSync(snapshot.directoryPath, { recursive: true });
-    fs.writeFileSync(snapshot.filePath, snapshot.content);
+    writeFileAtomicSync(snapshot.filePath, snapshot.content);
     if (!fs.readFileSync(snapshot.filePath).equals(snapshot.content)) {
       throw new Error(
         `Could not restore workspace settings: ${snapshot.filePath}`,

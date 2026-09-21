@@ -19,6 +19,7 @@ import {
 } from '../utils/diagnostics';
 import { closeTextEditor, revertTextDocument } from '../utils/documents';
 import { waitForLintStackRegistration } from '../utils/extension';
+import { writeFileAtomicSync } from '../../shared/atomicWrite';
 
 suite('rslint JS config support', function () {
   this.timeout(120_000);
@@ -155,7 +156,7 @@ suite('rslint JS config support', function () {
               diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
             ),
         );
-        fs.writeFileSync(configPath, newConfig, 'utf8');
+        writeFileAtomicSync(configPath, newConfig, 'utf8');
         const updatedDiags = await reloaded;
         assert.ok(
           updatedDiags.some((d) =>
@@ -176,7 +177,7 @@ suite('rslint JS config support', function () {
             diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
           ),
         );
-        fs.writeFileSync(configPath, originalConfig, 'utf8');
+        writeFileAtomicSync(configPath, originalConfig, 'utf8');
         await restored;
       },
       'Config hot-reload test',
@@ -220,7 +221,7 @@ export default [{
             ),
         );
         fs.rmSync(markerPath, { force: true });
-        fs.writeFileSync(configPath, countedConfig, 'utf8');
+        writeFileAtomicSync(configPath, countedConfig, 'utf8');
         await reloaded;
 
         // A duplicate didChangeWatchedFiles transaction used to race the
@@ -241,7 +242,7 @@ export default [{
                 diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
               ),
             );
-            fs.writeFileSync(configPath, originalConfig, 'utf8');
+            writeFileAtomicSync(configPath, originalConfig, 'utf8');
             await restored;
           },
           async () => fs.rmSync(markerPath, { force: true }),
@@ -285,7 +286,7 @@ export default [{
       async () => {
         // Restoring the config re-detects the folder and re-registers the
         // stack without a window reload.
-        fs.writeFileSync(configPath, originalConfig, 'utf8');
+        writeFileAtomicSync(configPath, originalConfig, 'utf8');
         await waitForLintStackRegistration(true);
         await waitForDiagnostics(doc, (diags) =>
           diags.some((d) =>
@@ -340,7 +341,7 @@ export default [{
         const created = waitForDiagnostics(doc, (diags) =>
           diags.some((d) => diagnosticRuleIdIncludes(d, 'no-explicit-any')),
         );
-        fs.writeFileSync(configPath, newConfig, 'utf8');
+        writeFileAtomicSync(configPath, newConfig, 'utf8');
         const afterCreateDiags = await created;
         assert.ok(
           afterCreateDiags.some((d) =>
@@ -355,7 +356,7 @@ export default [{
             diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
           ),
         );
-        fs.writeFileSync(configPath, originalConfig, 'utf8');
+        writeFileAtomicSync(configPath, originalConfig, 'utf8');
         await restored;
       },
       'JS-config creation test',
@@ -391,8 +392,8 @@ export default [{
     await withFailClosedCleanup(
       async () => {
         fs.mkdirSync(nestedDir, { recursive: true });
-        fs.writeFileSync(nestedFilePath, 'debugger;\n', 'utf8');
-        fs.writeFileSync(rootConfigPath, rootConfigWithMarker, 'utf8');
+        writeFileAtomicSync(nestedFilePath, 'debugger;\n', 'utf8');
+        writeFileAtomicSync(rootConfigPath, rootConfigWithMarker, 'utf8');
 
         await vscode.window.showTextDocument(rootDoc);
         await waitForDiagnostics(rootDoc, (diags) =>
@@ -414,7 +415,7 @@ export default [{
         await closeTextEditor(nestedDoc);
         nestedDoc = undefined;
 
-        fs.writeFileSync(
+        writeFileAtomicSync(
           nestedConfigPath,
           `import fs from 'node:fs';
 fs.writeFileSync(${JSON.stringify(attemptedLoadPath)}, 'attempted', 'utf8');
@@ -434,7 +435,7 @@ export default [];
         // so its diagnostics cannot be a stale snapshot from before the failed
         // refresh. Its first lint must run after the blocking config transaction
         // and resolve through the still-valid ancestor config.
-        fs.writeFileSync(postFailureFilePath, 'debugger;\n', 'utf8');
+        writeFileAtomicSync(postFailureFilePath, 'debugger;\n', 'utf8');
         postFailureDoc =
           await vscode.workspace.openTextDocument(postFailureFilePath);
         await vscode.window.showTextDocument(postFailureDoc);
@@ -480,7 +481,7 @@ export default [];
                   ) && diagnostic.severity === vscode.DiagnosticSeverity.Error,
               ),
             );
-            fs.writeFileSync(rootConfigPath, originalRootConfig, 'utf8');
+            writeFileAtomicSync(rootConfigPath, originalRootConfig, 'utf8');
             // Wait for the restored root config to take effect BEFORE deleting
             // the nested directory: on Windows the server still holds handles
             // inside it (the broken config's evaluator) until the refresh
@@ -528,8 +529,8 @@ export default [];
     await withFailClosedCleanup(
       async () => {
         fs.mkdirSync(nestedDir, { recursive: true });
-        fs.writeFileSync(nestedFilePath, 'console.log("nested");\n', 'utf8');
-        fs.writeFileSync(
+        writeFileAtomicSync(nestedFilePath, 'console.log("nested");\n', 'utf8');
+        writeFileAtomicSync(
           nestedConfigPath,
           `import fs from 'node:fs';
 fs.appendFileSync(${JSON.stringify(loadMarkerPath)}, 'x');
@@ -577,7 +578,7 @@ export default [{ files: ['**/*.ts'], rules: { 'no-console': 'error' } }];
             ),
         );
 
-        fs.writeFileSync(rootConfigPath, ignoredRootConfig, 'utf8');
+        writeFileAtomicSync(rootConfigPath, ignoredRootConfig, 'utf8');
         await Promise.all([parentApplied, nestedCleared]);
 
         assert.strictEqual(
@@ -605,7 +606,7 @@ export default [{ files: ['**/*.ts'], rules: { 'no-console': 'error' } }];
               diagnosticRuleIdIncludes(diagnostic, 'no-explicit-any'),
             ),
         );
-        fs.writeFileSync(rootConfigPath, originalRootConfig, 'utf8');
+        writeFileAtomicSync(rootConfigPath, originalRootConfig, 'utf8');
         await restored;
         fs.rmSync(nestedDir, {
           recursive: true,
@@ -639,7 +640,7 @@ export default [{ files: ['**/*.ts'], rules: { 'no-console': 'error' } }];
       async () => {
         for (let index = 0; index < probes.length; index++) {
           fs.mkdirSync(probes[index], { recursive: true });
-          fs.writeFileSync(
+          writeFileAtomicSync(
             path.join(probes[index], 'rslint.config.mjs'),
             `import fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(markerPaths[index])}, 'loaded'); export default [];`,
             'utf8',
@@ -652,7 +653,7 @@ export default [{ files: ['**/*.ts'], rules: { 'no-console': 'error' } }];
             diagnosticRuleIdIncludes(diagnostic, 'no-explicit-any'),
           ),
         );
-        fs.writeFileSync(rootConfigPath, changedRootConfig, 'utf8');
+        writeFileAtomicSync(rootConfigPath, changedRootConfig, 'utf8');
         await reloaded;
 
         for (const markerPath of markerPaths) {
@@ -688,7 +689,7 @@ export default [{ files: ['**/*.ts'], rules: { 'no-console': 'error' } }];
             // Leave a concurrently populated directory intact.
           }
         }
-        fs.writeFileSync(rootConfigPath, originalRootConfig, 'utf8');
+        writeFileAtomicSync(rootConfigPath, originalRootConfig, 'utf8');
         await restored;
       },
       'Excluded-config search test',
@@ -760,17 +761,17 @@ export default [{ files: ['**/*.ts'], rules: { 'no-console': 'error' } }];
 
     await withFailClosedCleanup(
       async () => {
-        fs.writeFileSync(
+        writeFileAtomicSync(
           mjsPath,
           configFor('@typescript-eslint/no-explicit-any'),
           'utf8',
         );
-        fs.writeFileSync(
+        writeFileAtomicSync(
           tsPath,
           configFor('@typescript-eslint/no-unsafe-member-access'),
           'utf8',
         );
-        fs.writeFileSync(
+        writeFileAtomicSync(
           mtsPath,
           configFor('@typescript-eslint/no-explicit-any'),
           'utf8',
@@ -794,7 +795,7 @@ export default [{ files: ['**/*.ts'], rules: { 'no-console': 'error' } }];
               d.severity === vscode.DiagnosticSeverity.Error,
           ),
         );
-        fs.writeFileSync(jsPath, originalJS, 'utf8');
+        writeFileAtomicSync(jsPath, originalJS, 'utf8');
         fs.rmSync(mjsPath, { force: true });
         fs.rmSync(tsPath, { force: true });
         fs.rmSync(mtsPath, { force: true });
@@ -828,8 +829,8 @@ export default [{ files: ['**/*.ts'], rules: { 'no-console': 'error' } }];
 
     await withFailClosedCleanup(
       async () => {
-        fs.writeFileSync(mjsPath, lowerPriorityConfig, 'utf8');
-        fs.writeFileSync(
+        writeFileAtomicSync(mjsPath, lowerPriorityConfig, 'utf8');
+        writeFileAtomicSync(
           jsPath,
           `import fs from 'node:fs';
 fs.writeFileSync(${JSON.stringify(attemptedLoadPath)}, 'attempted');
@@ -895,7 +896,7 @@ export default [];
             diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
           ),
         );
-        fs.writeFileSync(jsPath, originalJS, 'utf8');
+        writeFileAtomicSync(jsPath, originalJS, 'utf8');
         fs.rmSync(mjsPath, { force: true });
         fs.rmSync(attemptedLoadPath, { force: true });
         await restored;

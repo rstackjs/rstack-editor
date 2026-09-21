@@ -2,7 +2,6 @@
 // `packages/vscode-extension/__tests__/suite-eslint-plugins/eslint-plugins.test.ts` (origin/main).
 import * as assert from 'assert';
 import * as vscode from 'vscode';
-import fs from 'node:fs';
 import path from 'node:path';
 import { waitForContentChange } from '../suite/fixall-helpers';
 import { saveDocumentOnce } from '../utils/codeActionRegistry';
@@ -15,6 +14,7 @@ import {
   closeAndDeleteTemporaryDocument,
   temporaryFilePath,
 } from '../utils/documents';
+import { writeFileAtomicSync } from '../../shared/atomicWrite';
 
 // End-to-end VS Code coverage for the object-form `plugins` reverse-dispatch
 // path: the LSP server lints natively but dispatches rules mounted via a
@@ -45,7 +45,7 @@ suite('rslint object-form plugins integration', function () {
       path.join(workspaceRoot(), 'src'),
       '_fixall_plugin_',
     );
-    fs.writeFileSync(tmpFile, '// placeholder\n', 'utf-8');
+    writeFileAtomicSync(tmpFile, '// placeholder\n', 'utf-8');
 
     let doc: vscode.TextDocument | undefined;
     let testError: unknown;

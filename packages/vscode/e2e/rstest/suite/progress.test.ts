@@ -7,7 +7,7 @@
 // the copied stack keeps `diagnostic.source === 'rstest'` and the reporter
 // output format.
 import assert from 'node:assert';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import vscode from 'vscode';
 import {
@@ -17,6 +17,7 @@ import {
   getTestItemByLabels,
   waitFor,
 } from './helpers';
+import { writeFileAtomic } from '../../shared/atomicWrite';
 
 suite('Test Progress Reporting', () => {
   let deferred = Promise.withResolvers<null>();
@@ -231,7 +232,7 @@ suite('Test Progress Reporting', () => {
       replaceValue: string,
     ) => {
       const fullPath = path.resolve(FIXTURES_ROOT, 'workspace-1/test', file);
-      await writeFile(
+      await writeFileAtomic(
         fullPath,
         (await readFile(fullPath, 'utf-8')).replace(searchValue, replaceValue),
       );

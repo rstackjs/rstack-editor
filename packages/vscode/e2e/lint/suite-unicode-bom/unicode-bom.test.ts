@@ -7,6 +7,7 @@ import {
   waitForRslintDiagnostics,
 } from '../utils/diagnostics';
 import { waitForCodeActionRegistryQuiescence } from '../utils/codeActionRegistry';
+import { writeFileAtomicSync } from '../../shared/atomicWrite';
 
 // Intentional adaptation from upstream: issue #27 moves rule ids from the
 // diagnostic message into VS Code's clickable diagnostic-code field. Matching
@@ -69,7 +70,7 @@ suite('rslint unicode-bom over LSP', function () {
   }
 
   suiteSetup(() => {
-    fs.writeFileSync(fixturePath('marked.ts'), BOM + markedSource, 'utf8');
+    writeFileAtomicSync(fixturePath('marked.ts'), BOM + markedSource, 'utf8');
   });
 
   suiteTeardown(() => {

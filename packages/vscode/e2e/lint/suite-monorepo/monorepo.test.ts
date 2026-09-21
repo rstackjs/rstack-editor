@@ -14,6 +14,7 @@ import { revertTextDocument } from '../utils/documents';
 import { CoreResolver } from '../../../src/stacks/lint/CoreResolver';
 import type { StackState } from '../../../src/types';
 import { extensionExports } from '../utils/extension';
+import { writeFileAtomicSync } from '../../shared/atomicWrite';
 
 function getRuntimeStates(): ReadonlyMap<string, StackState> {
   const exports = extensionExports().getStackExports('rslint') as
@@ -315,7 +316,7 @@ suite('rslint monorepo multi-config support', function () {
 `;
 
     try {
-      fs.writeFileSync(fooConfigPath, newConfig, 'utf8');
+      writeFileAtomicSync(fooConfigPath, newConfig, 'utf8');
       await new Promise((resolve) => setTimeout(resolve, 2000));
       await triggerRelint(editor);
 
@@ -336,7 +337,7 @@ suite('rslint monorepo multi-config support', function () {
         'After change: foo file should NOT see no-unsafe-member-access',
       );
     } finally {
-      fs.writeFileSync(fooConfigPath, originalConfig, 'utf8');
+      writeFileAtomicSync(fooConfigPath, originalConfig, 'utf8');
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
   });
@@ -386,7 +387,7 @@ suite('rslint monorepo multi-config support', function () {
         'After delete: foo file should NOT see no-unsafe-member-access (off in root)',
       );
     } finally {
-      fs.writeFileSync(fooConfigPath, originalConfig, 'utf8');
+      writeFileAtomicSync(fooConfigPath, originalConfig, 'utf8');
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
   });
@@ -414,7 +415,11 @@ suite('rslint monorepo multi-config support', function () {
     const originalConfig = fs.readFileSync(fooConfigPath, 'utf8');
 
     try {
-      fs.writeFileSync(fooConfigPath, 'export default [BROKEN SYNTAX;', 'utf8');
+      writeFileAtomicSync(
+        fooConfigPath,
+        'export default [BROKEN SYNTAX;',
+        'utf8',
+      );
       await new Promise((resolve) => setTimeout(resolve, 2000));
 
       // 3. Root config should still work for bar
@@ -429,7 +434,7 @@ suite('rslint monorepo multi-config support', function () {
         'Bar file should still use root config after foo config is corrupted',
       );
     } finally {
-      fs.writeFileSync(fooConfigPath, originalConfig, 'utf8');
+      writeFileAtomicSync(fooConfigPath, originalConfig, 'utf8');
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
   });
@@ -471,7 +476,7 @@ suite('rslint monorepo multi-config support', function () {
 `;
 
     try {
-      fs.writeFileSync(barConfigPath, barConfig, 'utf8');
+      writeFileAtomicSync(barConfigPath, barConfig, 'utf8');
       await new Promise((resolve) => setTimeout(resolve, 3000));
       await triggerRelint(editor);
 
@@ -620,7 +625,7 @@ suite('rslint monorepo multi-config support', function () {
           diagnosticRuleIdIncludes(diagnostic, 'no-explicit-any'),
         ),
       );
-      fs.writeFileSync(rootConfigPath, originalRootConfig, 'utf8');
+      writeFileAtomicSync(rootConfigPath, originalRootConfig, 'utf8');
       await triggerRelint(await vscode.window.showTextDocument(barDoc));
       await rootRestored;
     } catch (error) {
@@ -673,7 +678,7 @@ suite('rslint monorepo multi-config support', function () {
 `;
 
     try {
-      fs.writeFileSync(rootConfigPath, newConfig, 'utf8');
+      writeFileAtomicSync(rootConfigPath, newConfig, 'utf8');
       await new Promise((resolve) => setTimeout(resolve, 2000));
       await triggerRelint(editor);
 
@@ -696,7 +701,7 @@ suite('rslint monorepo multi-config support', function () {
         'After change: bar file should NOT see no-explicit-any (off in updated root)',
       );
     } finally {
-      fs.writeFileSync(rootConfigPath, originalConfig, 'utf8');
+      writeFileAtomicSync(rootConfigPath, originalConfig, 'utf8');
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
   });
