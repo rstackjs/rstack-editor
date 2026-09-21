@@ -3,6 +3,7 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import path from 'node:path';
+import fs from 'node:fs';
 import {
   diagnosticRuleIdIncludes,
   waitForRslintDiagnostics,
@@ -15,7 +16,6 @@ import {
   temporaryFilePath,
 } from '../utils/documents';
 import { waitForCodeActionRegistryQuiescence } from '../utils/codeActionRegistry';
-import { writeFileAtomic } from '../../shared/atomicWrite';
 
 export { saveDocumentOnce } from '../utils/codeActionRegistry';
 export { diagnosticRuleIdIncludes } from '../utils/diagnostics';
@@ -112,7 +112,7 @@ export async function withTmpFile(
     path.join(getFixturesDir(), 'src'),
     '_fixall_tmp_',
   );
-  await writeFileAtomic(tmpFile, content, 'utf-8');
+  fs.writeFileSync(tmpFile, content, 'utf-8');
   let doc: vscode.TextDocument | undefined;
   let testError: unknown;
   try {
@@ -194,7 +194,7 @@ export async function withOnSaveFixAll(
     path.join(getFixturesDir(), 'src'),
     '_fixall_test_',
   );
-  await writeFileAtomic(tmpFile, '// placeholder\n', 'utf-8');
+  fs.writeFileSync(tmpFile, '// placeholder\n', 'utf-8');
 
   let doc: vscode.TextDocument | undefined;
   let testError: unknown;

@@ -10,6 +10,10 @@
 // up-to-date fixture, and unknown names throw there), then the entries run
 // sequentially — each `compile`d entry launches its own VS Code via
 // `@vscode/test-electron`.
+//
+// On Linux that VS Code needs an X display, so this file re-execs itself under
+// `xvfb-run` when there is none — running the whole chain, not just the
+// entries, under one server.
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -58,6 +62,29 @@ const packageRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '..',
 );
+
+// The Extension Host needs an X display. `xvfb-run` exports DISPLAY into the
+// child, so the re-exec'd process fails this check — it cannot recurse.
+if (process.platform === 'linux' && !process.env.DISPLAY) {
+  const result = spawnSync(
+    'xvfb-run',
+    [
+      '-a',
+      process.execPath,
+      fileURLToPath(import.meta.url),
+      ...process.argv.slice(2),
+    ],
+    { cwd: packageRoot, stdio: 'inherit' },
+  );
+  if (result.error) {
+    if (/** @type {NodeJS.ErrnoException} */ (result.error).code === 'ENOENT') {
+      console.error('[e2e] xvfb-run not found; install the xvfb package');
+      process.exit(1);
+    }
+    throw result.error;
+  }
+  process.exit(result.status ?? 1);
+}
 
 /**
  * @param {string} command

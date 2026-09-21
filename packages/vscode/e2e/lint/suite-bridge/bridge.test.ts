@@ -10,7 +10,6 @@ import {
   waitForRslintDiagnostics,
   waitForRslintDiagnosticsCount,
 } from '../utils/diagnostics';
-import { writeFileAtomic } from '../../shared/atomicWrite';
 
 const nativeConfigName = 'rslint.config.mjs';
 
@@ -92,7 +91,7 @@ suite('Rstack lint bridge', function () {
   }
 
   teardown(async () => {
-    await writeFileAtomic(rstackConfigPath, originalConfig, 'utf8');
+    fs.writeFileSync(rstackConfigPath, originalConfig, 'utf8');
     fs.rmSync(nativeConfigPath, { force: true });
     fs.rmSync(nativeNodeModulesPath, { recursive: true, force: true });
     fs.rmSync(markerPath, { force: true });
@@ -133,7 +132,7 @@ suite('Rstack lint bridge', function () {
       'rs lint should report the same configured rule as the editor',
     );
 
-    await writeFileAtomic(
+    fs.writeFileSync(
       rstackConfigPath,
       configSource('error', markerPath),
       'utf8',
@@ -159,11 +158,11 @@ suite('Rstack lint bridge', function () {
     const document = await openLintTarget();
     await waitForRslintDiagnostics(document, hasNoDebugger);
 
-    await writeFileAtomic(rstackConfigPath, configSource('off'), 'utf8');
+    fs.writeFileSync(rstackConfigPath, configSource('off'), 'utf8');
     const diagnostics = await waitForRslintDiagnosticsCount(document, 0);
     assert.deepStrictEqual(diagnostics, []);
 
-    await writeFileAtomic(rstackConfigPath, originalConfig, 'utf8');
+    fs.writeFileSync(rstackConfigPath, originalConfig, 'utf8');
     await waitForRslintDiagnostics(document, hasNoDebugger);
   });
 
@@ -172,7 +171,7 @@ suite('Rstack lint bridge', function () {
     await waitForRslintDiagnostics(document, hasNoDebugger);
 
     installNativeCore();
-    await writeFileAtomic(
+    fs.writeFileSync(
       nativeConfigPath,
       `export default [{ rules: { 'no-debugger': 'off' } }];\n`,
       'utf8',

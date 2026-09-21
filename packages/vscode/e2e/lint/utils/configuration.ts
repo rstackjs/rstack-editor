@@ -1,13 +1,9 @@
-// Ported from web-infra-dev/rslint
+// Ported verbatim from web-infra-dev/rslint
 // `packages/vscode-extension/__tests__/utils/configuration.ts` (origin/main).
-// One deviation: the settings restore goes through `writeFileAtomic`, so VS
-// Code never observes the truncated intermediate state on Linux. That makes
-// `restoreWorkspaceSettings` async; its one caller already awaits in place.
 import fs from 'node:fs';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import * as vscode from 'vscode';
-import { writeFileAtomic } from '../../shared/atomicWrite';
 
 type CodeActionsOnSave = Record<string, 'always' | 'explicit' | 'never'>;
 
@@ -40,12 +36,10 @@ function captureWorkspaceSettings(
   };
 }
 
-async function restoreWorkspaceSettings(
-  snapshot: WorkspaceSettingsSnapshot,
-): Promise<void> {
+function restoreWorkspaceSettings(snapshot: WorkspaceSettingsSnapshot): void {
   if (snapshot.content) {
     fs.mkdirSync(snapshot.directoryPath, { recursive: true });
-    await writeFileAtomic(snapshot.filePath, snapshot.content);
+    fs.writeFileSync(snapshot.filePath, snapshot.content);
     if (!fs.readFileSync(snapshot.filePath).equals(snapshot.content)) {
       throw new Error(
         `Could not restore workspace settings: ${snapshot.filePath}`,
@@ -191,7 +185,7 @@ export async function withCodeActionsOnSave<T>(
       restoreErrors.push(new Error('Workspace settings snapshot is missing'));
     } else {
       try {
-        await restoreWorkspaceSettings(settingsSnapshot);
+        restoreWorkspaceSettings(settingsSnapshot);
       } catch (error) {
         restoreErrors.push(error);
       }

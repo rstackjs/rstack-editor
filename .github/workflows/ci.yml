@@ -57,15 +57,10 @@ jobs:
         run: pnpm run test:unit
 
   # ======== E2E: Windows + macOS + Linux ========
-  # Windows and macOS are the platforms the extension is actually used on.
-  # Linux is here for a different reason: rstack-ecosystem-ci runs every suite
-  # on ubuntu-latest, so a Linux E2E run is the prerequisite for joining it
-  # (rstackjs/rstack-editor#40). Linux needs two things the other two do not —
-  # an X server for the Extension Host (`xvfb-run`) and the GTK/NSS/GBM/ALSA
-  # libraries Electron links against. It also needs every fixture rewrite to
-  # be atomic: inotify reports a truncate-then-write as two events, so a
-  # watcher reading on the first one sees an empty file. All fixture writes go
-  # through `e2e/shared/atomicWrite.ts`; route new ones through it too.
+  # Windows and macOS are the platforms users run the extension on.
+  # Linux is here because rstack-ecosystem-ci runs every suite on
+  # ubuntu-latest (rstackjs/rstack-editor#40). The Extension Host needs a
+  # display there; `e2e/run.mjs` re-execs under `xvfb-run` when DISPLAY is unset.
   e2e:
     name: E2E (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -97,20 +92,16 @@ jobs:
       - name: Build
         run: pnpm run build
 
-      # Electron links against these at process start. The current
-      # ubuntu-latest (24.04) image already carries all five — this step
-      # installs nothing today — but the image's package set is not a contract,
-      # and the runner images this job exists to mirror (rstack-ecosystem-ci)
-      # need not carry them either. Naming them keeps the dependency explicit
-      # and the job portable. The `t64` names are the Ubuntu 24.04 time_t
-      # transition spellings — `libasound2` / `libgtk-3-0` no longer exist
-      # there.
+      # The Electron runtime libraries plus xvfb. ubuntu-latest carries all
+      # five today, so this is a no-op there; naming them keeps the job working
+      # on images that lack them (`t64` is the Ubuntu 24.04 spelling).
       - name: Install Extension Host Dependencies
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libasound2t64 libgbm1 libgtk-3-0t64 libnss3 xvfb
+          dpkg -s libasound2t64 libgbm1 libgtk-3-0t64 libnss3 xvfb >/dev/null 2>&1 || {
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends libasound2t64 libgbm1 libgtk-3-0t64 libnss3 xvfb
+          }
 
       # `@vscode/test-electron` downloads a full VS Code into
       # `packages/vscode/.vscode-test`. Cache only the immutable distribution
@@ -129,11 +120,4 @@ jobs:
       # (e2e/setupFixtures.mjs, invoked by test:e2e), so this step needs
       # network access.
       - name: E2E Test
-        if: runner.os != 'Linux'
         run: pnpm run test:e2e
-
-      # One `xvfb-run` around the whole chain: every slice launches its own VS
-      # Code, and they must all land on the same display.
-      - name: E2E Test (xvfb)
-        if: runner.os == 'Linux'
-        run: xvfb-run -a pnpm run test:e2e
