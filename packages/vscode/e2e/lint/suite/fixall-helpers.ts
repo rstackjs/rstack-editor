@@ -15,7 +15,7 @@ import {
   temporaryFilePath,
 } from '../utils/documents';
 import { waitForCodeActionRegistryQuiescence } from '../utils/codeActionRegistry';
-import { writeFileAtomicSync } from '../../shared/atomicWrite';
+import { writeFileAtomic } from '../../shared/atomicWrite';
 
 export { saveDocumentOnce } from '../utils/codeActionRegistry';
 export { diagnosticRuleIdIncludes } from '../utils/diagnostics';
@@ -112,7 +112,7 @@ export async function withTmpFile(
     path.join(getFixturesDir(), 'src'),
     '_fixall_tmp_',
   );
-  writeFileAtomicSync(tmpFile, content, 'utf-8');
+  await writeFileAtomic(tmpFile, content, 'utf-8');
   let doc: vscode.TextDocument | undefined;
   let testError: unknown;
   try {
@@ -194,7 +194,7 @@ export async function withOnSaveFixAll(
     path.join(getFixturesDir(), 'src'),
     '_fixall_test_',
   );
-  writeFileAtomicSync(tmpFile, '// placeholder\n', 'utf-8');
+  await writeFileAtomic(tmpFile, '// placeholder\n', 'utf-8');
 
   let doc: vscode.TextDocument | undefined;
   let testError: unknown;

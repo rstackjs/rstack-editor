@@ -97,11 +97,14 @@ jobs:
       - name: Build
         run: pnpm run build
 
-      # Electron links against these at process start; ubuntu-latest (24.04)
-      # ships none of them. The `t64` names are the Ubuntu 24.04 time_t
+      # Electron links against these at process start. The current
+      # ubuntu-latest (24.04) image already carries all five — this step
+      # installs nothing today — but the image's package set is not a contract,
+      # and the runner images this job exists to mirror (rstack-ecosystem-ci)
+      # need not carry them either. Naming them keeps the dependency explicit
+      # and the job portable. The `t64` names are the Ubuntu 24.04 time_t
       # transition spellings — `libasound2` / `libgtk-3-0` no longer exist
-      # there. `xvfb` is preinstalled on the image; naming it keeps the
-      # dependency explicit.
+      # there.
       - name: Install Extension Host Dependencies
         if: runner.os == 'Linux'
         run: |

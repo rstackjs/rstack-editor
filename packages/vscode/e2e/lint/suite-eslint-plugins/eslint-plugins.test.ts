@@ -14,7 +14,7 @@ import {
   closeAndDeleteTemporaryDocument,
   temporaryFilePath,
 } from '../utils/documents';
-import { writeFileAtomicSync } from '../../shared/atomicWrite';
+import { writeFileAtomic } from '../../shared/atomicWrite';
 
 // End-to-end VS Code coverage for the object-form `plugins` reverse-dispatch
 // path: the LSP server lints natively but dispatches rules mounted via a
@@ -45,7 +45,7 @@ suite('rslint object-form plugins integration', function () {
       path.join(workspaceRoot(), 'src'),
       '_fixall_plugin_',
     );
-    writeFileAtomicSync(tmpFile, '// placeholder\n', 'utf-8');
+    await writeFileAtomic(tmpFile, '// placeholder\n', 'utf-8');
 
     let doc: vscode.TextDocument | undefined;
     let testError: unknown;

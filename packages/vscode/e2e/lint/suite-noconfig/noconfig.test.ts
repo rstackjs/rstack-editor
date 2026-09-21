@@ -27,7 +27,7 @@ import {
   isLintStackRegistered,
   waitForLintStackRegistration,
 } from '../utils/extension';
-import { writeFileAtomicSync } from '../../shared/atomicWrite';
+import { writeFileAtomic } from '../../shared/atomicWrite';
 
 suite('rslint no config fallback', function () {
   this.timeout(120000);
@@ -187,7 +187,7 @@ suite('rslint no config fallback', function () {
       // Upstream expected this write to produce `no-explicit-any`
       // diagnostics. This extension deliberately drops the deprecated JSON
       // format: it is not a detection signal, so nothing may happen.
-      writeFileAtomicSync(json, jsonConfig, 'utf8');
+      await writeFileAtomic(json, jsonConfig, 'utf8');
       await triggerDiagnosticRefresh(doc);
       await assertStaysUndetected(doc, 5_000, 'rslint.json only');
     });
@@ -200,7 +200,7 @@ suite('rslint no config fallback', function () {
 
       // ── Step 1: create the JS config → detection flips, the shell
       // registers the lint stack and the server produces diagnostics.
-      writeFileAtomicSync(js, jsConfig, 'utf8');
+      await writeFileAtomic(js, jsConfig, 'utf8');
       await waitForLintStackRegistration(true);
       const diags = await waitForDiagnostics(doc, (ds) =>
         ds.some((d) => diagnosticRuleIdIncludes(d, 'no-unsafe-member-access')),
@@ -244,8 +244,8 @@ suite('rslint no config fallback', function () {
 
         // Establish a positive publication first, so the later empty snapshot
         // cannot be the document's not-yet-linted initial state.
-        writeFileAtomicSync(json, jsonConfig, 'utf8');
-        writeFileAtomicSync(js, jsConfig, 'utf8');
+        await writeFileAtomic(json, jsonConfig, 'utf8');
+        await writeFileAtomic(js, jsConfig, 'utf8');
         await waitForLintStackRegistration(true);
         await waitForDiagnostics(doc, (ds) =>
           ds.some((d) =>
@@ -263,7 +263,7 @@ suite('rslint no config fallback', function () {
         // Create a broken JS config fresh. Detection lights the stack again;
         // the new server evaluates the module (observable via the marker),
         // fails, and has no last-good to keep — nor a JSON fallback to take.
-        writeFileAtomicSync(
+        await writeFileAtomic(
           js,
           `import fs from 'node:fs';
 fs.writeFileSync(${JSON.stringify(attemptedLoadPath)}, 'attempted');

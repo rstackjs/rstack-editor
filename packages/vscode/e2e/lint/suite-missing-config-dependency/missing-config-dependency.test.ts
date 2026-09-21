@@ -7,7 +7,7 @@ import {
   waitForRslintDiagnostics,
 } from '../utils/diagnostics';
 import { extensionExports } from '../utils/extension';
-import { writeFileAtomicSync } from '../../shared/atomicWrite';
+import { writeFileAtomic } from '../../shared/atomicWrite';
 
 function lintExports(): {
   getFolderStates(): ReadonlyMap<string, StackState>;
@@ -68,14 +68,14 @@ suite('Rslint missing config dependency', function () {
     assert.ok(!warnings[0].includes('\n'), 'warning must remain one line');
 
     const configPath = path.join(root, 'rslint.config.mjs');
-    writeFileAtomicSync(
+    await writeFileAtomic(
       configPath,
       "export default [{ files: ['src/**/*.ts'], rules: { 'no-debugger': 'error' } }];\n",
     );
     await waitForRslintDiagnostics(document);
     await waitForRuntimeKind('running');
 
-    writeFileAtomicSync(
+    await writeFileAtomic(
       configPath,
       "import 'missing-rslint-config-dependency';\nexport default [];\n",
     );
