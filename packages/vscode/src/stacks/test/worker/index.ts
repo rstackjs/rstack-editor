@@ -5,6 +5,7 @@ import { SUPPORT_MATRIX } from '../../../shared/versionCheck';
 import type { TestRunReporter } from '../testRunReporter';
 import type { NormalizedConfigResult, WorkerInitOptions } from '../types';
 import { retractForceColorIfDisabled } from '../shared/colorEnv';
+import { rpcErrorCodec } from '../shared/rpc';
 import { logger } from './logger';
 import { CoverageReporter, ProgressLogger, ProgressReporter } from './reporter';
 
@@ -209,6 +210,7 @@ export const masterApi = createBirpc<TestRunReporter, Worker>(worker, {
   post: (data) => process.send?.(data),
   on: (fn) => process.on('message', fn),
   bind: 'functions',
+  ...rpcErrorCodec,
 });
 
 if (process.argv[1] === __filename) {
