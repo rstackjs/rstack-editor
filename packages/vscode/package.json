@@ -437,7 +437,7 @@
     "@rstest/core": "^0.12.1",
     "@types/istanbul-lib-report": "^3.0.3",
     "@types/mocha": "^10.0.10",
-    "@types/node": "^22.20.2",
+    "@types/node": "^22.20.4",
     "@types/picomatch": "^4.0.3",
     "@types/semver": "^7.8.0",
     "@types/vscode": "1.97.0",
