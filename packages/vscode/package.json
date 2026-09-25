@@ -434,7 +434,7 @@
     "@rslib/core": "^1.0.2",
     "@rslint/core": "^0.9.3",
     "@rstackjs/load-config": "^1.0.1",
-    "@rstest/core": "^0.12.1",
+    "@rstest/core": "^0.12.2",
     "@types/istanbul-lib-report": "^3.0.3",
     "@types/mocha": "^10.0.10",
     "@types/node": "^22.20.2",
