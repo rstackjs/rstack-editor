@@ -66,8 +66,8 @@ importers:
         specifier: ^11.8.0
         version: 11.8.0
       ovsx:
-        specifier: ^1.0.2
-        version: 1.1.0(@types/node@22.20.2)(debug@4.4.3(supports-color@8.1.1))(supports-color@8.1.1)
+        specifier: ^1.2.0
+        version: 1.2.0(@types/node@22.20.2)(debug@4.4.3(supports-color@8.1.1))(supports-color@8.1.1)
       picomatch:
         specifier: ^4.0.7
         version: 4.0.7
@@ -2120,9 +2120,9 @@ packages:
     resolution: {integrity: sha512-weP+BZ8MVNnlCm8c0Qdc1WSWq4Qn7I+9CJGm7Qali6g44e/PUzbjNqJX5NJ9ljlNMosfJvg1fKEGILklK9cwnw==}
     engines: {node: '>=18'}
 
-  ovsx@1.1.0:
-    resolution: {integrity: sha512-portv4pwDJTlZrvgDMpLTgA+Ctu60kRQfD/cBu4JBhakXabeHVoBAzOba8jMt7RAq+4C0PMHvANalu/S3+s6+w==}
-    engines: {node: '>= 20'}
+  ovsx@1.2.0:
+    resolution: {integrity: sha512-12mauBqsLehlJ0cRiroQz4uKYVjblVS5OobgSJ278CdCtkDfRQD+SI3NQ00GNalDqzp5PDN11yx84miFUojeMw==}
+    engines: {node: '>=22.0.0'}
     hasBin: true
 
   p-limit@3.1.0:
@@ -4577,7 +4577,7 @@ snapshots:
       string-width: 7.2.0
       strip-ansi: 7.2.0
 
-  ovsx@1.1.0(@types/node@22.20.2)(debug@4.4.3(supports-color@8.1.1))(supports-color@8.1.1):
+  ovsx@1.2.0(@types/node@22.20.2)(debug@4.4.3(supports-color@8.1.1))(supports-color@8.1.1):
     dependencies:
       '@inquirer/prompts': 7.10.1(@types/node@22.20.2)
       '@vscode/vsce': 3.9.2(supports-color@8.1.1)
