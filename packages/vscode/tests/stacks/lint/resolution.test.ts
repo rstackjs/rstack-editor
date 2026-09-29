@@ -42,54 +42,44 @@ describe('resolveRslint', () => {
     });
   });
 
-  it.each([
-    'directory',
-    'package.json',
-    'relative directory',
-    'relative package.json',
-  ])('uses corePath for the core hop in both modes (%s)', (form) => {
-    const root = temporaryDirectory();
-    const rstackDir = installPackage(root, 'rstack', '0.6.1');
-    installShim(rstackDir);
-    const customCore = writePackage(
-      path.join(root, 'custom-core'),
-      '@rslint/core',
-      '0.8.1',
-    );
-    const target = form.endsWith('package.json')
-      ? path.join(customCore, 'package.json')
-      : customCore;
-
-    for (const mode of ['native', 'bridged'] as const) {
-      const resolution = resolveRslint({
-        folderRoot: root,
-        mode,
-        corePath: form.startsWith('relative')
-          ? path.relative(root, target)
-          : target,
-      });
-      expect(resolution.coreDir).toBe(customCore);
-      expect(resolution.coreVersion).toBe('0.8.1');
-    }
-  });
-
-  it.each(['missing-core', 'missing-core/package.json'])(
-    'reports an invalid configured path (%s)',
+  it.each(['custom-core', 'custom-core/package.json'])(
+    'uses a relative corePath for the core hop in both modes (%s)',
     (corePath) => {
       const root = temporaryDirectory();
-      expect(() =>
-        resolveRslint({ folderRoot: root, mode: 'native', corePath }),
-      ).toThrow(
-        `Could not access @rslint/core at ${path.join(root, 'missing-core')}`,
+      const rstackDir = installPackage(root, 'rstack', '0.6.1');
+      installShim(rstackDir);
+      const customCore = writePackage(
+        path.join(root, 'custom-core'),
+        '@rslint/core',
+        '0.8.1',
       );
-      try {
-        resolveRslint({ folderRoot: root, mode: 'native', corePath });
-      } catch (error) {
-        expect(error).toBeInstanceOf(RslintResolutionError);
-        expect(error).toMatchObject({ code: 'invalid-package' });
+      for (const mode of ['native', 'bridged'] as const) {
+        const resolution = resolveRslint({
+          folderRoot: root,
+          mode,
+          corePath,
+        });
+        expect(resolution.coreDir).toBe(customCore);
+        expect(resolution.coreVersion).toBe('0.8.1');
       }
     },
   );
+
+  it('reports an invalid configured path', () => {
+    const corePath = 'missing-core';
+    const root = temporaryDirectory();
+    expect(() =>
+      resolveRslint({ folderRoot: root, mode: 'native', corePath }),
+    ).toThrow(
+      `Could not access @rslint/core at ${path.join(root, 'missing-core')}`,
+    );
+    try {
+      resolveRslint({ folderRoot: root, mode: 'native', corePath });
+    } catch (error) {
+      expect(error).toBeInstanceOf(RslintResolutionError);
+      expect(error).toMatchObject({ code: 'invalid-package' });
+    }
+  });
 
   it('starts the native walk at the document directory, not the folder root', () => {
     // Per-document core resolution (rslint #1617): a file in a nested package

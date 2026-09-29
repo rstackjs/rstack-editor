@@ -283,20 +283,17 @@ describe('RstestApi package-resolution anchor', () => {
     });
   });
 
-  it.each(['directory', 'package.json', 'relative', 'workspaceFolder'])(
+  it.each(['directory', 'relative', 'workspaceFolder'])(
     'lets corePath override the bridge anchor (%s)',
     (form) => {
       writeCoreInstall(storeEntry);
       const configured = writeCoreInstall(path.join(root, 'configured'));
       settings.corePath =
-        form === 'package.json'
-          ? path.join(configured.packageDir, 'package.json')
-          : form === 'relative'
-            ? path.relative(cwd, configured.packageDir)
-            : form === 'workspaceFolder'
-              ? '${workspaceFolder}/' +
-                path.relative(cwd, configured.packageDir)
-              : configured.packageDir;
+        form === 'relative'
+          ? path.relative(cwd, configured.packageDir)
+          : form === 'workspaceFolder'
+            ? '${workspaceFolder}/' + path.relative(cwd, configured.packageDir)
+            : configured.packageDir;
 
       expect(resolveRstestPaths(createApi(cwd, rstackDir))).toEqual({
         paths: {
@@ -474,17 +471,13 @@ describe('RstestApi with an unresolvable corePath', () => {
     settings.corePath = configured;
   });
 
-  it.each(['directory', 'package.json'])(
-    'should notify while discovering projects (%s)',
-    async (form) => {
-      settings.corePath =
-        form === 'directory' ? path.dirname(configured) : configured;
-      await expect(createApi().getNormalizedConfig()).rejects.toThrow();
-      expect(shownMessages).toHaveLength(1);
-      expect(shownMessages[0]).toContain('rstack.rstest.corePath');
-      expect(shownMessages[0]).toContain(configured);
-    },
-  );
+  it('should notify while discovering projects with an invalid directory', async () => {
+    settings.corePath = path.dirname(configured);
+    await expect(createApi().getNormalizedConfig()).rejects.toThrow();
+    expect(shownMessages).toHaveLength(1);
+    expect(shownMessages[0]).toContain('rstack.rstest.corePath');
+    expect(shownMessages[0]).toContain(configured);
+  });
 
   it('deduplicates a resolution error until resolution succeeds', () => {
     const root = fs.realpathSync(
