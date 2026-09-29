@@ -529,7 +529,7 @@ describe('dependency recovery polling', () => {
 });
 
 describe('the extension manifest', () => {
-  it('scopes language-client tracing to the window', () => {
+  it('scopes core overrides to resources and language-client tracing to the window', () => {
     const manifest = require('../package.json') as {
       contributes: {
         configuration: Array<{
@@ -547,6 +547,8 @@ describe('the extension manifest', () => {
     // the running client never reads.
     expect(settings['rstack.rslint.trace.server']?.scope).toBe('window');
     expect(settings['rstack.fmt.trace.server']?.scope).toBe('window');
+    expect(settings['rstack.rslint.corePath']?.scope).toBe('resource');
+    expect(settings['rstack.rstest.corePath']?.scope).toBe('resource');
   });
 });
 

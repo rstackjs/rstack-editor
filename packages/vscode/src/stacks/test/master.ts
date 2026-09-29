@@ -57,7 +57,7 @@ const CORE_NOT_INSTALLED_STATUS = formatNotInstalledStatus(
   'rstest',
   '@rstest/core',
 );
-const CORE_NOT_INSTALLED_CONSEQUENCE = `install the project dependencies, or set "${CONFIG_SECTION}.rstestPackagePath" to an installed @rstest/core package.json`;
+const CORE_NOT_INSTALLED_CONSEQUENCE = `install the project dependencies, or set "${CONFIG_SECTION}.corePath" to an installed @rstest/core package directory or package.json`;
 
 type WorkerRpc = BirpcReturn<Worker, TestRunReporter>;
 type RstestPaths = Pick<WorkerInitOptions, 'apiPath' | 'rstestPath'>;
@@ -155,7 +155,7 @@ export const warmWorkerNodePreflight = (
   }
 };
 
-// The specifier used when `rstestPackagePath` is unset.
+// The specifier used when `corePath` is unset.
 const CORE_PACKAGE_JSON = '@rstest/core/package.json';
 
 export class RstestApi {
@@ -189,7 +189,7 @@ export class RstestApi {
     /**
      * Where the default `@rstest/core` (and CLI bin) walk-up starts. Chosen
      * by `Project` — see `ProjectSource.rstestResolutionDir`; an explicit
-     * `rstestPackagePath` bypasses it.
+     * `corePath` bypasses it.
      */
     private rstestResolutionDir: string,
   ) {}
@@ -314,24 +314,19 @@ export class RstestApi {
     }
   }
 
-  // The validated absolute path to the package.json a `rstestPackagePath`
-  // setting points at, or `undefined` when the setting is unset and the bare
+  // The absolute path to the package.json selected by a `corePath`
+  // setting, or `undefined` when the setting is unset and the bare
   // `CORE_PACKAGE_JSON` specifier applies. Shared by the worker resolution and
   // the terminal CLI resolution, which both also report the configured path.
   private resolveConfiguredPackageJson(): string | undefined {
     // TODO: support Yarn PnP
-    let configuredPackagePath = getConfigValue(
-      'rstestPackagePath',
-      this.workspace,
-    );
+    let configuredPackagePath = getConfigValue('corePath', this.workspace);
     if (!configuredPackagePath) {
       return undefined;
     }
     configuredPackagePath = this.expandWorkspaceFolder(configuredPackagePath);
     if (!configuredPackagePath.endsWith('package.json')) {
-      throw new Error(
-        `"${CONFIG_SECTION}.rstestPackagePath" must point to a package.json file, instead got: ${configuredPackagePath}`,
-      );
+      configuredPackagePath = path.join(configuredPackagePath, 'package.json');
     }
     return path.isAbsolute(configuredPackagePath)
       ? configuredPackagePath
@@ -343,7 +338,7 @@ export class RstestApi {
   // whose dependencies are not installed yet, so it is written to the output
   // channel and never raised as a notification. This is the only place that
   // policy lives, and it deliberately does not cover `configuredPackagePath`:
-  // a `rstestPackagePath` that does not resolve is a setting the user got
+  // a `corePath` that does not resolve is a setting the user got
   // wrong, so it is rethrown for the caller to report like any other failure.
   private resolveFromCwd(
     specifier: string,
@@ -400,7 +395,7 @@ export class RstestApi {
       let corePackageJsonPath: string;
       let nodeExport: string | undefined;
       if (configured) {
-        logger.debug('Using configured rstestPackagePath:', configured);
+        logger.debug('Using configured corePath:', configured);
         // An explicit pin, resolved exactly as before — the setting names one
         // fixed path, so cache staleness is moot.
         // `dirname` turns the package.json specifier into its package entry.
@@ -493,7 +488,7 @@ export class RstestApi {
   }
 
   // Resolve the rstest CLI executable (its package `bin`) for the terminal run
-  // mode, honoring a configured `rstestPackagePath` the same way as the worker
+  // mode, honoring a configured `corePath` the same way as the worker
   // resolution above.
   private resolveRstestBin(): string | undefined {
     const configured = this.resolveConfiguredPackageJson();
@@ -747,7 +742,7 @@ export class RstestApi {
     // runtime the user must fix: detection watches the config file and will
     // drop or re-add the project. Refusing here — before package resolution,
     // which would misread the deleted directory as "@rstest/core is not
-    // installed" (or notify for a `rstestPackagePath` inside it) — spares
+    // installed" (or notify for a `corePath` inside it) — spares
     // the caller a worker whose every call rejects with an opaque
     // "[birpc] rpc is closed", and spares the user Node's misreading of a
     // missing cwd as "spawn node ENOENT".

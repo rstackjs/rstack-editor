@@ -148,7 +148,7 @@
             "type": "string",
             "default": "",
             "scope": "resource",
-            "markdownDescription": "Path to an `@rslint/core` package directory. Relative paths are resolved from the workspace folder. When empty, a native folder uses the nearest installation above each file and a bridged folder (root `rstack.config.*`) uses the one its `rstack` depends on."
+            "markdownDescription": "Path to an `@rslint/core` installation, either its package directory or its `package.json` file. Relative paths are resolved from the workspace folder. Use this override only when automatic resolution does not select the installation you need. When empty, a native folder uses the nearest installation above each file and a bridged folder (root `rstack.config.*`) uses the one its `rstack` depends on."
           },
           "rstack.rslint.trace.server": {
             "order": 2,
@@ -175,11 +175,11 @@
             "scope": "window",
             "markdownDescription": "Enable the Rstest test explorer for detected workspace folders. This is a window-level kill switch; which folders run Rstest is decided by detection."
           },
-          "rstack.rstest.rstestPackagePath": {
+          "rstack.rstest.corePath": {
             "order": 1,
             "type": "string",
             "scope": "resource",
-            "markdownDescription": "The path to a `package.json` file of an Rstest installation (usually inside `node_modules`) in case the extension cannot find it. It will be used to resolve Rstest API paths. This should be used as a last resort fix. Supports the `${workspaceFolder}` placeholder."
+            "markdownDescription": "Path to an `@rstest/core` installation, either its package directory or its `package.json` file. Relative paths are resolved from the workspace folder. Supports the `${workspaceFolder}` placeholder. Use this override only when automatic resolution does not select the installation you need. It applies to both worker and Run in Terminal resolution."
           },
           "rstack.rstest.configFileGlobPattern": {
             "order": 2,
@@ -450,7 +450,6 @@
     "vscode": "^1.97.0"
   },
   "icon": "icon.png",
-  "preview": true,
   "capabilities": {
     "virtualWorkspaces": {
       "supported": "limited",

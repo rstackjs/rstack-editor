@@ -84,8 +84,11 @@ function resolveConfiguredCore(
   folderRoot: string,
   configuredPath: string,
 ): PackageLocation {
-  const directory = path.resolve(folderRoot, configuredPath);
-  const packageJsonPath = path.join(directory, 'package.json');
+  const resolvedPath = path.resolve(folderRoot, configuredPath);
+  const packageJsonPath = configuredPath.endsWith('package.json')
+    ? resolvedPath
+    : path.join(resolvedPath, 'package.json');
+  const directory = path.dirname(packageJsonPath);
   try {
     if (!fs.statSync(packageJsonPath).isFile()) throw new Error('not a file');
   } catch (error) {

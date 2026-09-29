@@ -78,13 +78,13 @@ All settings live under the unified `rstack.*` namespace. There are no `rslint.*
 | --- | --- | --- |
 | `rstack.nodeExecutable` | — | Node binary used for the processes that load your project: the lint worker, test worker and `rs fmt` language server. Empty means the extension picks one (`PATH` first, then the `node` your interactive shell resolves). |
 | `rstack.rslint.enable` | `true` | Enable/disable the Rslint integration. |
-| `rstack.rslint.corePath` | — | Path to an `@rslint/core` package directory; relative paths resolve from the workspace folder. |
+| `rstack.rslint.corePath` | — | Path to an `@rslint/core` package directory or its `package.json`; relative paths resolve from the workspace folder. Use only to override automatic resolution. |
 | `rstack.rslint.trace.server` | `off` | LSP trace level (`off` / `messages` / `verbose`). |
 | `rstack.rstest.enable` | `true` | Enable/disable the Rstest integration. |
 | `rstack.rstest.configFileGlobPattern` | `["**/rstest.config.{mjs,ts,js,cjs,mts,cts}"]` | Glob patterns used to discover config files. |
 | `rstack.rstest.testCaseCollectMethod` | `ast` | `ast` (fast) or `runtime` (supports dynamic test generation). |
 | `rstack.rstest.applyDiagnostic` | `true` | Show diagnostics in the editor and Problems panel for failures. |
-| `rstack.rstest.rstestPackagePath` | — | Explicit `@rstest/core` `package.json`, last-resort override. |
+| `rstack.rstest.corePath` | — | Path to an `@rstest/core` package directory or its `package.json`; relative paths resolve from the workspace folder and `${workspaceFolder}` is supported. Use only to override automatic resolution, for both workers and Run in Terminal. |
 | `rstack.rstest.nodeExecArgs` | `[]` | Extra Node args for the test worker. |
 | `rstack.rstest.nodeEnv` | `null` | Extra env for the test worker. |
 | `rstack.rstest.debugNodeEnv` | `null` | Extra env when debugging tests. |
@@ -101,7 +101,7 @@ Formatting runs one `rs fmt` language server per workspace folder, which loads `
 
 ## Coming from the standalone extensions
 
-Disable or uninstall the retired `rstack.rslint` / `rstack.rstest` extensions so only one copy of each tool runs. Settings and keybindings are not carried over from them: re-enter your settings under the `rstack.*` keys listed above and re-bind any keybinding to the new `rstack.*` command ids. Legacy `rslint.binPath` / `rslint.customBinPath` have no equivalent — use `rstack.rslint.corePath` to point at an `@rslint/core` package directory if you still need an override.
+Disable or uninstall the retired `rstack.rslint` / `rstack.rstest` extensions so only one copy of each tool runs. Settings and keybindings are not carried over from them: re-enter your settings under the `rstack.*` keys listed above and re-bind any keybinding to the new `rstack.*` command ids. Legacy `rslint.binPath` / `rslint.customBinPath` have no equivalent — use `rstack.rslint.corePath` to point at an `@rslint/core` package directory or its `package.json` if you still need an override.
 
 ## Community
 

@@ -9,7 +9,7 @@
  * embeds a multi-line require stack and says nothing about what to do. An
  * uninstalled core is the normal state of a freshly cloned repository and is
  * resolved for every config file without the user asking, so it is only
- * logged; a `rstestPackagePath` that does not resolve is a setting the user
+ * logged; a `corePath` that does not resolve is a setting the user
  * has to fix, so it is notified.
  */
 
@@ -56,5 +56,5 @@ export function isModuleNotFoundError(
 export function formatConfiguredCoreNotFoundMessage(
   configuredPackagePath: string,
 ): string {
-  return `Cannot find "@rstest/core" at the configured "rstack.rstest.rstestPackagePath": ${configuredPackagePath}. Update the setting to point at an installed "@rstest/core" package.json.`;
+  return `Cannot find "@rstest/core" at the configured "rstack.rstest.corePath": ${configuredPackagePath}. Update the setting to point at an installed "@rstest/core" package directory or package.json.`;
 }

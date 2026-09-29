@@ -23,9 +23,9 @@ export const CONFIG_SECTION = 'rstack.rstest';
 // Centralized configuration types for the extension.
 // Add new keys here to extend configuration in a type-safe way.
 const configSchema = object({
-  // The path to a package.json file of a Rstest executable.
+  // The path to an @rstest/core package directory or its package.json.
   // Used as a last resort if the extension cannot auto-detect @rstest/core.
-  rstestPackagePath: fallback(optional(string()), undefined),
+  corePath: fallback(optional(string()), undefined),
   nodeExecArgs: fallback(array(string()), []),
   nodeEnv: fallback(optional(record(string(), string())), undefined),
   debugNodeEnv: fallback(optional(record(string(), string())), undefined),
