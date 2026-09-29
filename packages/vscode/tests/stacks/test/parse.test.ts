@@ -531,4 +531,95 @@ describe('outer', () => {
       }),
     ).toThrow(SyntaxError);
   });
+
+  it('should infer default import and namespace member titles', () => {
+    const names: string[] = [];
+    parseTestFile(
+      `import Foo from './foo';
+       import * as mod from './foo';
+       describe(Foo, () => {});
+       test(mod.Bar, () => {});
+       test(mod, () => {});`,
+      {
+        onTest: (_range, name) => {
+          names.push(name);
+        },
+      },
+    );
+    expect(names).toEqual(['Foo', 'Bar', 'unnamed test']);
+  });
+
+  it('should match runtime function titles across declarations and assignments', () => {
+    const cases: Record<string, string> = {
+      'function declaration': `function Foo() {} describe(Foo, () => {});`,
+      'hoisted function': `describe(Foo, () => {}); function Foo() {}`,
+      'class declaration': `class Foo {} describe(Foo, () => {});`,
+      'const arrow': `const foo = () => {}; describe(foo, () => {});`,
+      'named expression': `const a = function b() {}; describe(a, () => {});`,
+      'alias chain': `function Foo() {} const A = Foo; const B = A; describe(B, () => {});`,
+      'inline arrow': `describe(() => {}, () => {});`,
+      'inline named function': `describe(function Foo() {}, () => {});`,
+      'inline anonymous class': `describe(class {}, () => {});`,
+      'let assigned later': `let foo; foo = () => {}; describe(foo, () => {});`,
+      'var reassigned': `var Foo = function A() {}; test(Foo, () => {}); Foo = function B() {}; describe(Foo, () => {});`,
+      'block shadow': `function Foo() {} { const Foo = function Bar() {}; describe(Foo, () => {}); } describe(Foo, () => {});`,
+      'object method': `const o = { m() {} }; describe(o.m, () => {});`,
+      'nested title': `class Foo {} describe(Foo, () => { test(Foo, () => {}); });`,
+      'class static block': `class Foo { static { describe(Foo, () => {}); } }`,
+      'deferred class reference': `const go = () => describe(Foo, () => {}); class Foo {} go();`,
+      'inferred expression names': `let Foo; Foo = function() {}; test(Foo, () => {}); Foo = class {}; test(Foo, () => {});`,
+      'alias before reassignment': `let Foo = function A() {}; const Alias = Foo; Foo = function B() {}; test(Alias, () => {}); test(Foo, () => {});`,
+      'var in block': `{ var Foo = function Bar() {}; } test(Foo, () => {});`,
+      'assignment scope': `let Foo = function Outer() {}; { let Foo = function Inner() {}; Foo = function Changed() {}; test(Foo, () => {}); } test(Foo, () => {}); { Foo = function Updated() {}; } test(Foo, () => {});`,
+    };
+
+    for (const [label, code] of Object.entries(cases)) {
+      const runtime: string[] = [];
+      const register = (title: string | { name: string }) => {
+        runtime.push(
+          typeof title === 'string' ? title : title.name || '<anonymous>',
+        );
+      };
+      new Function('describe', 'test', code)(
+        (title: string | { name: string }, body: () => void) => {
+          register(title);
+          body();
+        },
+        register,
+      );
+
+      const names: string[] = [];
+      parseTestFile(code, {
+        onTest: (_range, name) => {
+          names.push(name);
+        },
+      });
+      expect(runtime.length).toBeGreaterThan(0);
+      expect({ label, names }).toEqual({ label, names: runtime });
+    }
+  });
+
+  it('should keep unknown bindings from falling back to outer names', () => {
+    const names: string[] = [];
+    parseTestFile(
+      `function Foo() {}
+       { let Foo; test(Foo, () => {}); }
+       { const { value: Foo } = source; test(Foo, () => {}); }
+       const run = (Foo) => test(Foo, () => {});
+       try {} catch (Foo) { test(Foo, () => {}); }
+       test(Foo, () => {});`,
+      {
+        onTest: (_range, name) => {
+          names.push(name);
+        },
+      },
+    );
+    expect(names).toEqual([
+      'unnamed test',
+      'unnamed test',
+      'unnamed test',
+      'unnamed test',
+      'Foo',
+    ]);
+  });
 });
