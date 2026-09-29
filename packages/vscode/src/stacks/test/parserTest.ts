@@ -65,8 +65,219 @@ export const parseTestFile = (
       .join('');
   };
 
+  // Test item names must match runtime `name || '<anonymous>'`. Record bindings
+  // in walk order so later calls see assignments without a separate scope pass.
+  type Scope = { isFunction: boolean; names: Map<string, string | null> };
+  const scopes: Scope[] = [{ isFunction: true, names: new Map() }];
+  const functionTypes = new Set([
+    'FunctionDeclaration',
+    'FunctionExpression',
+    'ArrowFunctionExpression',
+  ]);
+  const blockTypes = new Set([
+    'BlockStatement',
+    'StaticBlock',
+    'ClassDeclaration',
+    'ClassExpression',
+    'ForStatement',
+    'ForInStatement',
+    'ForOfStatement',
+    'SwitchStatement',
+    'CatchClause',
+  ]);
+
+  const scopeOf = (name: string) =>
+    scopes.findLast((scope) => scope.names.has(name))?.names;
+
+  const getFunctionName = (
+    node: Node | undefined,
+    inferred?: string,
+  ): string | null => {
+    if (
+      node?.type === 'FunctionExpression' ||
+      node?.type === 'ClassExpression'
+    ) {
+      return isNode(node.id) && node.id.type === 'Identifier'
+        ? node.id.name
+        : (inferred ?? '<anonymous>');
+    }
+    if (node?.type === 'ArrowFunctionExpression') {
+      return inferred ?? '<anonymous>';
+    }
+    if (node?.type === 'Identifier') {
+      const names = scopeOf(node.name);
+      // Unbound identifiers (including default imports) use a best-effort name;
+      // known unknown values must not fall back through a shadowing binding.
+      return names ? (names.get(node.name) ?? null) : node.name;
+    }
+    if (
+      node?.type === 'MemberExpression' &&
+      !node.computed &&
+      node.property.type === 'Identifier'
+    ) {
+      return node.property.name;
+    }
+    return null;
+  };
+
+  const bind = (pattern: Node, name: string | null, isVar = false): void => {
+    if (pattern.type === 'Identifier') {
+      const scope = isVar
+        ? scopes.findLast((candidate) => candidate.isFunction)
+        : scopes.at(-1);
+      scope?.names.set(pattern.name, name);
+    } else if (pattern.type === 'RestElement') {
+      if (isNode(pattern.argument)) {
+        bind(pattern.argument, null, isVar);
+      }
+    } else if (pattern.type === 'AssignmentPattern') {
+      if (isNode(pattern.left)) {
+        bind(pattern.left, null, isVar);
+      }
+    } else if (pattern.type === 'ArrayPattern') {
+      for (const element of pattern.elements) {
+        if (isNode(element)) {
+          bind(element, null, isVar);
+        }
+      }
+    } else if (pattern.type === 'ObjectPattern') {
+      for (const property of pattern.properties) {
+        if (!isNode(property)) {
+          continue;
+        }
+        const value =
+          property.type === 'RestElement' ? property.argument : property.value;
+        if (isNode(value)) {
+          bind(value, null, isVar);
+        }
+      }
+    }
+  };
+
+  const collectBindings = (node: Node): void => {
+    if (node.type === 'VariableDeclaration') {
+      for (const declaration of node.declarations) {
+        if (!isNode(declaration) || !isNode(declaration.id)) {
+          continue;
+        }
+        const init = isNode(declaration.init) ? declaration.init : undefined;
+        if (
+          node.kind === 'var' &&
+          !init &&
+          declaration.id.type === 'Identifier' &&
+          scopes
+            .findLast((scope) => scope.isFunction)
+            ?.names.has(declaration.id.name)
+        ) {
+          continue;
+        }
+        const name =
+          init && declaration.id.type === 'Identifier'
+            ? getFunctionName(init, declaration.id.name)
+            : null;
+        bind(declaration.id, name, node.kind === 'var');
+      }
+    } else if (
+      node.type === 'AssignmentExpression' &&
+      node.operator === '=' &&
+      node.left.type === 'Identifier'
+    ) {
+      // Keep deferred writes to outer bindings in a function-local overlay.
+      for (let index = scopes.length - 1; index >= 0; index--) {
+        const scope = scopes[index];
+        if (
+          scope.names.has(node.left.name) ||
+          (scope.isFunction && scopeOf(node.left.name))
+        ) {
+          scope.names.set(
+            node.left.name,
+            getFunctionName(node.right, node.left.name),
+          );
+          break;
+        }
+        if (scope.isFunction) {
+          break;
+        }
+      }
+    } else if (
+      node.type === 'ImportDeclaration' &&
+      node.importKind !== 'type' &&
+      Array.isArray(node.specifiers)
+    ) {
+      for (const specifier of node.specifiers) {
+        if (!isNode(specifier) || !isNode(specifier.local)) {
+          continue;
+        }
+        if (specifier.type === 'ImportNamespaceSpecifier') {
+          bind(specifier.local, null);
+        } else if (
+          specifier.type === 'ImportSpecifier' &&
+          specifier.importKind !== 'type' &&
+          isNode(specifier.imported) &&
+          specifier.imported.type === 'Identifier'
+        ) {
+          bind(specifier.local, specifier.imported.name);
+        }
+      }
+    } else if (
+      (node.type === 'FunctionDeclaration' ||
+        node.type === 'ClassDeclaration') &&
+      isNode(node.id) &&
+      node.id.type === 'Identifier'
+    ) {
+      bind(node.id, node.id.name);
+    }
+  };
+
   const walkNode = (node: Node): void => {
+    collectBindings(node);
+    const isFunction = functionTypes.has(node.type);
+    const opensScope = isFunction || blockTypes.has(node.type);
+    if (opensScope) {
+      scopes.push({ isFunction, names: new Map() });
+      if (
+        (node.type === 'FunctionExpression' ||
+          node.type === 'ClassExpression') &&
+        isNode(node.id) &&
+        node.id.type === 'Identifier'
+      ) {
+        bind(node.id, node.id.name);
+      }
+      const params =
+        node.type === 'CatchClause'
+          ? [node.param]
+          : isFunction && 'params' in node && Array.isArray(node.params)
+            ? node.params
+            : [];
+      for (const param of params) {
+        if (isNode(param)) {
+          bind(param, null);
+        }
+      }
+    }
+
+    // Hoisted declarations shadow outer names even before their walk position.
+    const statements =
+      node.type === 'Program' ||
+      node.type === 'BlockStatement' ||
+      node.type === 'StaticBlock'
+        ? node.body
+        : node.type === 'SwitchStatement'
+          ? node.cases.flatMap((branch) => branch.consequent)
+          : [];
+    for (const statement of statements) {
+      const declaration =
+        statement.type === 'ExportNamedDeclaration' ||
+        statement.type === 'ExportDefaultDeclaration'
+          ? statement.declaration
+          : statement;
+      if (declaration?.type === 'FunctionDeclaration') {
+        collectBindings(declaration);
+      }
+    }
+
     let exit: (() => void) | void | undefined;
+    let functionTitleNode: Node | undefined;
 
     if (node.type === 'CallExpression') {
       let functionName: string | undefined;
@@ -86,9 +297,20 @@ export const parseTestFile = (
         functionName === 'describe' ||
         functionName === 'suite'
       ) {
+        const title = node.arguments[0];
+        if (
+          isNode(title) &&
+          (title.type === 'FunctionExpression' ||
+            title.type === 'ClassExpression' ||
+            title.type === 'ArrowFunctionExpression')
+        ) {
+          functionTitleNode = title;
+        }
         exit = events.onTest(
           offsetToRange(node.start, node.end),
-          getStringLiteralValue(node.arguments[0]) || 'unnamed test',
+          getStringLiteralValue(node.arguments[0]) ||
+            getFunctionName(node.arguments[0]) ||
+            'unnamed test',
           functionName,
         );
       }
@@ -97,7 +319,7 @@ export const parseTestFile = (
     for (const value of Object.values(node)) {
       if (Array.isArray(value)) {
         for (const child of value) {
-          if (isNode(child)) {
+          if (isNode(child) && child !== functionTitleNode) {
             walkNode(child);
           }
         }
@@ -107,6 +329,9 @@ export const parseTestFile = (
     }
 
     exit?.();
+    if (opensScope) {
+      scopes.pop();
+    }
   };
 
   walkNode(result.program);

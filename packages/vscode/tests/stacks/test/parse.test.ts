@@ -133,7 +133,7 @@ describe('parseTestFile', () => {
     expect(tests.map((t) => t.type)).toEqual(['test', 'suite']);
   });
 
-  it('should mark non-literal or missing names as "unnamed test"', () => {
+  it('should label anonymous function names and mark other dynamic names as "unnamed test"', () => {
     const code = `
       const title = getTitle();
       function getTitle() { return 'x'; }
@@ -155,8 +155,126 @@ describe('parseTestFile', () => {
       },
     });
 
-    expect(tests.length).toBe(5);
-    expect(tests.every((t) => t.name === 'unnamed test')).toBe(true);
+    expect(tests.map((test) => test.name).sort()).toEqual([
+      '<anonymous>',
+      '<anonymous>',
+      'unnamed test',
+      'unnamed test',
+      'unnamed test',
+    ]);
+  });
+
+  it('should use function and class names from expressions and identifiers', () => {
+    const code = `
+      function Component() {}
+      const ArrowComponent = () => {};
+      class Widget {}
+      const NamedWidget = class InternalWidget {};
+      test(Component, () => {});
+      it(ArrowComponent, () => {});
+      describe(Widget, () => {});
+      suite(NamedWidget, () => {});
+      test(function DirectFunction() {}, () => {});
+      describe(class DirectClass {}, () => {});
+    `;
+
+    const tests: { name: string; type: string }[] = [];
+    parseTestFile(code, {
+      onTest: (
+        _range: Range,
+        name: string,
+        testType: 'test' | 'it' | 'describe' | 'suite',
+      ) => {
+        tests.push({ name, type: testType });
+      },
+    });
+
+    tests.sort((a, b) => a.name.localeCompare(b.name));
+
+    expect(tests.map((test) => test.name)).toEqual([
+      'ArrowComponent',
+      'Component',
+      'DirectClass',
+      'DirectFunction',
+      'InternalWidget',
+      'Widget',
+    ]);
+  });
+
+  it('should resolve function names in the nearest lexical scope', () => {
+    const code = `
+      function Component() {}
+      test(Component, () => {});
+      {
+        const Component = function InnerComponent() {};
+        test(Component, () => {});
+      }
+      test(Component, () => {});
+    `;
+
+    const names: string[] = [];
+    parseTestFile(code, {
+      onTest: (_range, name) => {
+        names.push(name);
+      },
+    });
+
+    expect(names.sort()).toEqual(['Component', 'Component', 'InnerComponent']);
+  });
+
+  it('should use imported names for named function bindings', () => {
+    const code = `
+      import { Component, Original as Local } from './component';
+      test(Component, () => {});
+      it(Local, () => {});
+    `;
+
+    const names: string[] = [];
+    parseTestFile(code, {
+      onTest: (_range, name) => {
+        names.push(name);
+      },
+    });
+
+    expect(names.sort()).toEqual(['Component', 'Original']);
+  });
+
+  it('should resolve identifier aliases at each call site', () => {
+    const code = `
+      function Component() {}
+      const Alias = Component;
+      var Name = function First() {};
+      test(Alias, () => {});
+      test(Name, () => {});
+      var Name = function Second() {};
+      test(Name, () => {});
+    `;
+
+    const names: string[] = [];
+    parseTestFile(code, {
+      onTest: (_range, name) => {
+        names.push(name);
+      },
+    });
+
+    expect(names).toEqual(['Component', 'First', 'Second']);
+  });
+
+  it('should not collect tests inside a function-valued title', () => {
+    const code = `
+      test(function Title() {
+        test('phantom', () => {});
+      }, () => {});
+    `;
+
+    const names: string[] = [];
+    parseTestFile(code, {
+      onTest: (_range, name) => {
+        names.push(name);
+      },
+    });
+
+    expect(names).toEqual(['Title']);
   });
 
   it('should handle complex template literals with multiple expressions', () => {
@@ -412,5 +530,132 @@ describe('outer', () => {
         onTest: () => undefined,
       }),
     ).toThrow(SyntaxError);
+  });
+
+  it('should infer default import and namespace member titles', () => {
+    const names: string[] = [];
+    parseTestFile(
+      `import Foo from './foo';
+       import * as mod from './foo';
+       describe(Foo, () => {});
+       test(mod.Bar, () => {});
+       test(mod, () => {});`,
+      {
+        onTest: (_range, name) => {
+          names.push(name);
+        },
+      },
+    );
+    expect(names).toEqual(['Foo', 'Bar', 'unnamed test']);
+  });
+
+  it('should match runtime function titles across declarations and assignments', () => {
+    const cases: Record<string, string> = {
+      'function declaration': `function Foo() {} describe(Foo, () => {});`,
+      'hoisted function': `describe(Foo, () => {}); function Foo() {}`,
+      'class declaration': `class Foo {} describe(Foo, () => {});`,
+      'const arrow': `const foo = () => {}; describe(foo, () => {});`,
+      'named expression': `const a = function b() {}; describe(a, () => {});`,
+      'alias chain': `function Foo() {} const A = Foo; const B = A; describe(B, () => {});`,
+      'inline arrow': `describe(() => {}, () => {});`,
+      'inline named function': `describe(function Foo() {}, () => {});`,
+      'inline anonymous class': `describe(class {}, () => {});`,
+      'let assigned later': `let foo; foo = () => {}; describe(foo, () => {});`,
+      'var reassigned': `var Foo = function A() {}; test(Foo, () => {}); Foo = function B() {}; describe(Foo, () => {});`,
+      'block shadow': `function Foo() {} { const Foo = function Bar() {}; describe(Foo, () => {}); } describe(Foo, () => {});`,
+      'object method': `const o = { m() {} }; describe(o.m, () => {});`,
+      'nested title': `class Foo {} describe(Foo, () => { test(Foo, () => {}); });`,
+      'class static block': `class Foo { static { describe(Foo, () => {}); } }`,
+      'deferred class reference': `const go = () => describe(Foo, () => {}); class Foo {} go();`,
+      'inferred expression names': `let Foo; Foo = function() {}; test(Foo, () => {}); Foo = class {}; test(Foo, () => {});`,
+      'alias before reassignment': `let Foo = function A() {}; const Alias = Foo; Foo = function B() {}; test(Alias, () => {}); test(Foo, () => {});`,
+      'var in block': `{ var Foo = function Bar() {}; } test(Foo, () => {});`,
+      'assignment scope': `let Foo = function Outer() {}; { let Foo = function Inner() {}; Foo = function Changed() {}; test(Foo, () => {}); } test(Foo, () => {}); { Foo = function Updated() {}; } test(Foo, () => {});`,
+      'deferred callback assignment': `let Title = function Before() {}; test('mutator', () => { Title = function After() {}; }); test(Title, () => {});`,
+      'bare var redeclaration': `var Title = function Real() {}; test(Title, () => {}); var Title; test(Title, () => {});`,
+      'function expression self binding': `let Inner; const setup = function Inner() { test(Inner, () => {}); }; setup();`,
+      'class expression self binding': `let Named; const C = class Named { static { test(Named, () => {}); } };`,
+      'function local assignment': `function setup() { let Title = function Before() {}; { Title = function After() {}; } test(Title, () => {}); } setup();`,
+      'deferred describe assignment': `let T = function Before() {}; describe('g', () => { T = function After() {}; }); test(T, () => {});`,
+      'separate static blocks': `function Title() {} class C { static { let Title = function Inner() {}; test(Title, () => {}); } static { test(Title, () => {}); } }`,
+      'hoisted local function': `const F = function Outer() {}; function setup() { test(F, () => {}); function F() {} } setup();`,
+      'hoisted static block function': `const F = function Outer() {}; class C { static { test(F, () => {}); function F() {} } }`,
+      'hoisted switch case function': `const F = function Outer() {}; switch (1) { case 1: test(F, () => {}); function F() {} }`,
+      'nested deferred suites': `describe('outer', () => { describe('inner', () => { test('leaf', () => {}); }); });`,
+      'callback-local assignment overlay': `let T = function Before() {}; describe('g', () => { T = function After() {}; test(T, () => {}); }); test(T, () => {});`,
+      'hoisting across switch cases': `const F = function Outer() {}; switch (1) { case 1: test(F, () => {}); break; case 2: function F() {} }`,
+    };
+
+    for (const [label, code] of Object.entries(cases)) {
+      const runtime: string[] = [];
+      let suite: string[] = [];
+      const pending: (() => void)[] = [];
+      const register = (title: string | { name: string }) => {
+        const name =
+          typeof title === 'string' ? title : title.name || '<anonymous>';
+        runtime.push([...suite, name].join(' > '));
+        return name;
+      };
+      new Function('describe', 'test', code)(
+        (title: string | { name: string }, body: () => void) => {
+          const name = register(title);
+          const parent = suite;
+          pending.push(() => {
+            suite = [...parent, name];
+            body();
+            suite = parent;
+          });
+        },
+        register,
+      );
+      // Rstest defers suite bodies until the current level has registered.
+      for (const body of pending) {
+        body();
+      }
+
+      const names: string[] = [];
+      const parents: string[] = [];
+      parseTestFile(code, {
+        onTest: (_range, name, type) => {
+          names.push([...parents, name].join(' > '));
+          if (type === 'describe' || type === 'suite') {
+            parents.push(name);
+            return () => {
+              parents.pop();
+            };
+          }
+        },
+      });
+      expect(runtime.length).toBeGreaterThan(0);
+      // Discovery is depth-first; deferred collection differs in order, not ownership.
+      expect({ label, names: names.sort() }).toEqual({
+        label,
+        names: runtime.sort(),
+      });
+    }
+  });
+
+  it('should keep unknown bindings from falling back to outer names', () => {
+    const names: string[] = [];
+    parseTestFile(
+      `function Foo() {}
+       { let Foo; test(Foo, () => {}); }
+       { const { value: Foo } = source; test(Foo, () => {}); }
+       const run = (Foo) => test(Foo, () => {});
+       try {} catch (Foo) { test(Foo, () => {}); }
+       test(Foo, () => {});`,
+      {
+        onTest: (_range, name) => {
+          names.push(name);
+        },
+      },
+    );
+    expect(names).toEqual([
+      'unnamed test',
+      'unnamed test',
+      'unnamed test',
+      'unnamed test',
+      'Foo',
+    ]);
   });
 });
