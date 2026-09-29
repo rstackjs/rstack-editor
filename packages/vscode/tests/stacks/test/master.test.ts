@@ -1321,6 +1321,9 @@ describe('Rstest public API', () => {
         configuration = config;
         debugEvents.emit('start', { configuration });
         socket = net.connect(config.env[DEBUG_PIPE_ENV]);
+        socket.on('error', (error) => {
+          expect(error).toMatchObject({ code: 'ECONNRESET' });
+        });
         socket.write(`${config.env[DEBUG_PIPE_TOKEN_ENV]}\n`);
         return true;
       };
@@ -1356,17 +1359,29 @@ describe('Rstest public API', () => {
           expect(secret).toBeTruthy();
           expect(secret).not.toBe(configuration.rstestDebugId);
           const bad = net.connect(endpoint);
+          bad.on('error', (error) => {
+            expect(error).toMatchObject({ code: 'ECONNRESET' });
+          });
           sockets.push(bad);
           bad.on('data', (data) => received.push(data));
-          const closed = once(bad, 'close');
+          // events.once rejects on error, but the master may reset rejected peers.
+          const closed = new Promise<void>((resolve) =>
+            bad.once('close', () => resolve()),
+          );
           if (kind === 'wrong token') bad.write(`wrong\n${secret}\n`);
           else bad.end();
           await closed;
           const idle = net.connect(endpoint);
+          idle.on('error', (error) => {
+            expect(error).toMatchObject({ code: 'ECONNRESET' });
+          });
           sockets.push(idle);
           idle.on('data', (data) => received.push(data));
           await once(idle, 'connect');
           const good = net.connect(endpoint);
+          good.on('error', (error) => {
+            expect(error).toMatchObject({ code: 'ECONNRESET' });
+          });
           sockets.push(good);
           good.write(`${secret}\n`);
           return true;
@@ -1379,7 +1394,9 @@ describe('Rstest public API', () => {
           expect(JSON.parse(data.toString())).toMatchObject({
             m: 'closeWatcher',
           });
-          const idleClosed = once(sockets[1], 'close');
+          const idleClosed = new Promise<void>((resolve) =>
+            sockets[1].once('close', () => resolve()),
+          );
           await api.dispose();
           await idleClosed;
           await response;
@@ -1402,6 +1419,9 @@ describe('Rstest public API', () => {
           expect(path.dirname(path.dirname(endpoint))).toBe('/tmp');
           expect(fs.statSync(path.dirname(endpoint)).mode & 0o777).toBe(0o700);
           socket = net.connect(endpoint);
+          socket.on('error', (error) => {
+            expect(error).toMatchObject({ code: 'ECONNRESET' });
+          });
           socket.write(`${configuration.env[DEBUG_PIPE_TOKEN_ENV]}\n`);
           return true;
         };
@@ -1456,6 +1476,9 @@ describe('Rstest public API', () => {
         debugEvents.emit('start', { configuration });
         endpoint = configuration.env[DEBUG_PIPE_ENV];
         socket = net.connect(endpoint);
+        socket.on('error', (error) => {
+          expect(error).toMatchObject({ code: 'ECONNRESET' });
+        });
         socket.write(`${configuration.env[DEBUG_PIPE_TOKEN_ENV]}\n`);
         return true;
       };
