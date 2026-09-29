@@ -76,6 +76,7 @@ export const parseTestFile = (
   ]);
   const blockTypes = new Set([
     'BlockStatement',
+    'StaticBlock',
     'ClassDeclaration',
     'ClassExpression',
     'ForStatement',
@@ -249,6 +250,26 @@ export const parseTestFile = (
         if (isNode(param)) {
           bind(param, null);
         }
+      }
+    }
+
+    // Hoisted declarations shadow outer names even before their walk position.
+    const statements =
+      node.type === 'Program' ||
+      node.type === 'BlockStatement' ||
+      node.type === 'StaticBlock'
+        ? node.body
+        : node.type === 'SwitchCase'
+          ? node.consequent
+          : [];
+    for (const statement of statements) {
+      const declaration =
+        statement.type === 'ExportNamedDeclaration' ||
+        statement.type === 'ExportDefaultDeclaration'
+          ? statement.declaration
+          : statement;
+      if (declaration?.type === 'FunctionDeclaration') {
+        collectBindings(declaration);
       }
     }
 

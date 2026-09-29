@@ -576,10 +576,17 @@ describe('outer', () => {
       'function expression self binding': `let Inner; const setup = function Inner() { test(Inner, () => {}); }; setup();`,
       'class expression self binding': `let Named; const C = class Named { static { test(Named, () => {}); } };`,
       'function local assignment': `function setup() { let Title = function Before() {}; { Title = function After() {}; } test(Title, () => {}); } setup();`,
+      'deferred describe assignment': `let T = function Before() {}; describe('g', () => { T = function After() {}; }); test(T, () => {});`,
+      'separate static blocks': `function Title() {} class C { static { let Title = function Inner() {}; test(Title, () => {}); } static { test(Title, () => {}); } }`,
+      'hoisted local function': `const F = function Outer() {}; function setup() { test(F, () => {}); function F() {} } setup();`,
+      'hoisted static block function': `const F = function Outer() {}; class C { static { test(F, () => {}); function F() {} } }`,
+      'hoisted switch case function': `const F = function Outer() {}; switch (1) { case 1: test(F, () => {}); function F() {} }`,
+      'nested deferred suites': `describe('outer', () => { describe('inner', () => { test('leaf', () => {}); }); });`,
     };
 
     for (const [label, code] of Object.entries(cases)) {
       const runtime: string[] = [];
+      const pending: (() => void)[] = [];
       const register = (title: string | { name: string }) => {
         runtime.push(
           typeof title === 'string' ? title : title.name || '<anonymous>',
@@ -588,10 +595,14 @@ describe('outer', () => {
       new Function('describe', 'test', code)(
         (title: string | { name: string }, body: () => void) => {
           register(title);
-          body();
+          pending.push(body);
         },
         register,
       );
+      // Rstest defers suite bodies until the current level has registered.
+      for (const body of pending) {
+        body();
+      }
 
       const names: string[] = [];
       parseTestFile(code, {
