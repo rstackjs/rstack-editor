@@ -160,6 +160,16 @@ export const parseTestFile = (
           continue;
         }
         const init = isNode(declaration.init) ? declaration.init : undefined;
+        if (
+          node.kind === 'var' &&
+          !init &&
+          declaration.id.type === 'Identifier' &&
+          scopes
+            .findLast((scope) => scope.isFunction)
+            ?.names.has(declaration.id.name)
+        ) {
+          continue;
+        }
         const name =
           init && declaration.id.type === 'Identifier'
             ? getFunctionName(init, declaration.id.name)
@@ -171,10 +181,20 @@ export const parseTestFile = (
       node.operator === '=' &&
       node.left.type === 'Identifier'
     ) {
-      scopeOf(node.left.name)?.set(
-        node.left.name,
-        getFunctionName(node.right, node.left.name),
-      );
+      // Walking a deferred body must not mutate its enclosing function's names.
+      for (let index = scopes.length - 1; index >= 0; index--) {
+        const scope = scopes[index];
+        if (scope.names.has(node.left.name)) {
+          scope.names.set(
+            node.left.name,
+            getFunctionName(node.right, node.left.name),
+          );
+          break;
+        }
+        if (scope.isFunction) {
+          break;
+        }
+      }
     } else if (
       node.type === 'ImportDeclaration' &&
       node.importKind !== 'type' &&
@@ -211,6 +231,14 @@ export const parseTestFile = (
     const opensScope = isFunction || blockTypes.has(node.type);
     if (opensScope) {
       scopes.push({ isFunction, names: new Map() });
+      if (
+        (node.type === 'FunctionExpression' ||
+          node.type === 'ClassExpression') &&
+        isNode(node.id) &&
+        node.id.type === 'Identifier'
+      ) {
+        bind(node.id, node.id.name);
+      }
       const params =
         node.type === 'CatchClause'
           ? [node.param]

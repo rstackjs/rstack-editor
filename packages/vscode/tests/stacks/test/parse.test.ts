@@ -571,6 +571,11 @@ describe('outer', () => {
       'alias before reassignment': `let Foo = function A() {}; const Alias = Foo; Foo = function B() {}; test(Alias, () => {}); test(Foo, () => {});`,
       'var in block': `{ var Foo = function Bar() {}; } test(Foo, () => {});`,
       'assignment scope': `let Foo = function Outer() {}; { let Foo = function Inner() {}; Foo = function Changed() {}; test(Foo, () => {}); } test(Foo, () => {}); { Foo = function Updated() {}; } test(Foo, () => {});`,
+      'deferred callback assignment': `let Title = function Before() {}; test('mutator', () => { Title = function After() {}; }); test(Title, () => {});`,
+      'bare var redeclaration': `var Title = function Real() {}; test(Title, () => {}); var Title; test(Title, () => {});`,
+      'function expression self binding': `let Inner; const setup = function Inner() { test(Inner, () => {}); }; setup();`,
+      'class expression self binding': `let Named; const C = class Named { static { test(Named, () => {}); } };`,
+      'function local assignment': `function setup() { let Title = function Before() {}; { Title = function After() {}; } test(Title, () => {}); } setup();`,
     };
 
     for (const [label, code] of Object.entries(cases)) {
