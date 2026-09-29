@@ -102,6 +102,27 @@ describe('missingDependencyCauseOf', () => {
 });
 
 describe('classifyMissingDependencyMessage', () => {
+  it('classifies a prefixed first line without keeping wrappers or the stack', () => {
+    expect(
+      classifyMissingDependencyMessage(
+        "worker init failed: failed to import config file /project/config.mjs: Cannot find package 'missing' imported from /project/plugin.mjs\nRequire stack:\n- worker",
+      ),
+    ).toBe("Cannot find package 'missing' imported from /project/plugin.mjs");
+    expect(
+      classifyMissingDependencyMessage(
+        "Config failed\nworker init failed: Cannot find package 'missing'",
+      ),
+    ).toBeUndefined();
+  });
+
+  it('keeps prefixed relative imports as real errors', () => {
+    expect(
+      classifyMissingDependencyMessage(
+        "worker init failed: Cannot find module './missing.js'",
+      ),
+    ).toBeUndefined();
+  });
+
   it('classifies loader messages without requiring an Error code', () => {
     expect(
       classifyMissingDependencyMessage(

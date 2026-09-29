@@ -66,15 +66,6 @@ const libs: LibConfig[] = [
                 from: yukuBindingPath,
                 to: `@yuku-parser/binding-${yukuBindingSuffix}/yuku-parser.node`,
               },
-              {
-                // The VSIX must carry a LICENSE (`.vscodeignore` keeps it), and
-                // the workspace root LICENSE is the single source of truth. The
-                // copy lands next to package.json — not in dist/ — because vsce
-                // packages from the package directory; it is gitignored.
-                from: path.join(rootDir, '..', '..', 'LICENSE'),
-                to: path.join(rootDir, 'LICENSE'),
-                toType: 'file',
-              },
             ],
           }),
         ],
@@ -125,7 +116,7 @@ libs.push({
  * `src/` bind in the dev host; the release build (`build`, used by CI and the
  * Release workflow) minifies and emits no source maps.
  */
-export default defineConfig(({ envMode }) => {
+export default defineConfig(async ({ envMode }) => {
   const devBuild = envMode === 'dev';
   const output: LibConfig['output'] = {
     target: 'node',
@@ -133,5 +124,19 @@ export default defineConfig(({ envMode }) => {
     sourceMap: devBuild,
     minify: !devBuild,
   };
-  return { lib: libs.map((lib) => ({ ...lib, output })) };
+  const generateLicenses =
+    !devBuild &&
+    process.argv.includes('build') &&
+    !process.argv.includes('--watch');
+  return {
+    lib: libs.map((lib) => ({ ...lib, output })),
+    plugins: generateLicenses
+      ? [
+          (await import('./licensePlugin.mts')).licensePlugin(
+            rootDir,
+            `@yuku-parser/binding-${yukuBindingSuffix}`,
+          ),
+        ]
+      : [],
+  };
 });

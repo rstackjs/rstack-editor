@@ -256,10 +256,14 @@ export async function runLintWorker(
     protocolVersion: installation.protocolVersion,
     configPath: options.configPath,
     takeConfigStatus: () => {
-      const failure = configDependencyFailure;
-      const message = configError;
+      let failure = configDependencyFailure;
+      let message = configError;
       configDependencyFailure = undefined;
       configError = undefined;
+      // Plugin status persists across refreshes without a new prepare.
+      const plugin = pluginLintPool.configDependencyStatus;
+      if (plugin.kind === 'error') message ??= plugin.message;
+      else if (plugin.kind === 'missing') failure ??= plugin.failure;
       if (message !== undefined) return { kind: 'error', message };
       if (failure !== undefined) return { kind: 'missing', failure };
       return { kind: 'ok' };

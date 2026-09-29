@@ -1,10 +1,10 @@
-// Ported from web-infra-dev/rslint (deviation: setup waits go through
-// waitForDiagnosticsWithRuleIds -- see fixall-helpers.ts for why).
+// Ported from web-infra-dev/rslint (typed setup waits from 72cd2b1f).
 // `packages/vscode-extension/__tests__/suite/fixall.test.ts` (origin/main).
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import {
   waitForDiagnostics,
+  waitForTypeAssertionDiagnostics,
   waitForDiagnosticsWithRuleIds,
   waitForDiagnosticsToChange,
   waitForDiagnosticsCount,
@@ -130,10 +130,7 @@ suite('rslint fixAll - code actions', function () {
     const fixableContent =
       "const frVal: string = 'hello';\nconst frRes = (frVal as string).toUpperCase();\n";
     await withTmpFile(fixableContent, async (doc) => {
-      const initialDiags = await waitForDiagnosticsWithRuleIds(
-        doc,
-        'no-unnecessary-type-assertion',
-      );
+      const initialDiags = await waitForTypeAssertionDiagnostics(doc);
       assert.ok(initialDiags.length > 0, 'Should have initial diagnostics');
 
       const fixableDiags = initialDiags.filter((d) =>
@@ -172,6 +169,8 @@ suite('rslint fixAll - code actions', function () {
       '',
     ].join('\n');
     await withTmpFile(mixedContent, async (doc) => {
+      // Deviation from upstream's waitForTypeAssertionDiagnostics: also await
+      // the non-fixable typed rule, keeping assertions independent of batching.
       const initialDiags = await waitForDiagnosticsWithRuleIds(
         doc,
         'no-unnecessary-type-assertion',
@@ -258,10 +257,7 @@ suite('rslint fixAll - code actions', function () {
     const fixableContent =
       "const sfVal: string = 'x';\nconst sfRes = (sfVal as string).trim();\n";
     await withTmpFile(fixableContent, async (doc) => {
-      const initialDiags = await waitForDiagnosticsWithRuleIds(
-        doc,
-        'no-unnecessary-type-assertion',
-      );
+      const initialDiags = await waitForTypeAssertionDiagnostics(doc);
       const fixableCount = initialDiags.filter((d) =>
         diagnosticRuleIdIncludes(d, 'no-unnecessary-type-assertion'),
       ).length;

@@ -4,6 +4,6 @@
 !dist/**/*.js
 !dist/**/*.node
 !icon.png
-!LICENSE
+!LICENSE.md
 !README.md
 !package.json

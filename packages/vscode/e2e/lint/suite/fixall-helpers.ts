@@ -33,6 +33,8 @@ export const waitForDiagnostics = waitForRslintDiagnostics;
  * first non-empty publish may carry only non-type-aware rules on platforms
  * with slow file watchers (macOS). Waiting for the expected diagnostics keeps
  * the terminal assertion identical without depending on publish batching.
+ * Our diagnostic enrichment moves rule ids to diagnostic.code; match that
+ * instead of upstream's message prefix.
  */
 export function waitForDiagnosticsWithRuleIds(
   doc: vscode.TextDocument,
@@ -48,6 +50,15 @@ export function waitForDiagnosticsWithRuleIds(
 }
 export const waitForDiagnosticsCount = waitForRslintDiagnosticsCount;
 export const waitForDiagnosticsToChange = waitForRslintDiagnosticsToChange;
+
+export function waitForTypeAssertionDiagnostics(
+  document: vscode.TextDocument,
+): Promise<vscode.Diagnostic[]> {
+  return waitForDiagnosticsWithRuleIds(
+    document,
+    'no-unnecessary-type-assertion',
+  );
+}
 
 export function getFixturesDir(): string {
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];

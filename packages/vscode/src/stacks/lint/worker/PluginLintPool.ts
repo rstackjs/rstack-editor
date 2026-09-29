@@ -6,6 +6,8 @@ import type {
 } from '@rslint/core/eslint-plugin';
 import type { CancellationToken } from 'vscode-jsonrpc/node';
 import type { WorkerLogger } from './logger';
+import type { ConfigDependencyStatusNotification } from './configDependencyProtocol';
+import { classifyMissingDependencyMessage } from '../../../shared/missingDependency';
 
 type PluginHostFactory = (
   configs: ConfigDescriptor[],
@@ -27,6 +29,11 @@ export class PluginLintPool {
   private readonly shutdowns = new Set<Promise<void>>();
   private opChain: Promise<void> = Promise.resolve();
   private disposed = false;
+  private status: ConfigDependencyStatusNotification = { kind: 'ok' };
+
+  get configDependencyStatus(): ConfigDependencyStatusNotification {
+    return this.status;
+  }
 
   constructor(
     private readonly logger: WorkerLogger,
@@ -55,6 +62,8 @@ export class PluginLintPool {
         return;
       }
 
+      const previous = this.status;
+      this.status = { kind: 'ok' };
       if (
         this.activeState?.ready &&
         this.activeState.fingerprint === fingerprint
@@ -98,6 +107,28 @@ export class PluginLintPool {
         this.generations.set(generation, state);
         ready = true;
       } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        const firstLine = message.split('\n', 1)[0];
+        const descriptor =
+          descriptors.find((d) => firstLine.includes(d.configPath)) ??
+          descriptors[0];
+        const cause = classifyMissingDependencyMessage(firstLine);
+        const failure: Exclude<
+          ConfigDependencyStatusNotification,
+          { kind: 'ok' }
+        > =
+          cause === undefined
+            ? {
+                kind: 'error',
+                message: `ESLint plugins failed to load: ${firstLine}`,
+              }
+            : {
+                kind: 'missing',
+                failure: {
+                  configPath: descriptor.configPath,
+                  cause,
+                },
+              };
         const state: HostGeneration = {
           fingerprint,
           ready: false,
@@ -106,7 +137,15 @@ export class PluginLintPool {
         };
         this.liveStates.add(state);
         this.generations.set(generation, state);
-        this.logger.error('Failed to initialize ESLint-plugin host', error);
+        this.status = failure;
+        // The editor emits the shared one-line missing-dependency warning.
+        // Real errors retain their full detail here, once per failure episode.
+        if (
+          failure.kind === 'error' &&
+          !(previous.kind === 'error' && previous.message === failure.message)
+        ) {
+          this.logger.error('Failed to initialize ESLint-plugin host', error);
+        }
       }
     });
     return ready;
