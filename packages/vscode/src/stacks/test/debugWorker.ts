@@ -18,7 +18,7 @@ import { logger } from './logger';
 /** Own the launch session and its local RPC socket as one lifetime. */
 export function createDebugWorker(
   reporter: TestRunReporter,
-  onClose: () => void,
+  onClose: (reason?: Error) => void,
 ) {
   const id = randomUUID();
   const secret = randomUUID();
@@ -69,7 +69,7 @@ export function createDebugWorker(
       if (directory) rmSync(directory, { recursive: true, force: true });
       stop();
       for (const disposable of subscriptions) disposable.dispose();
-      onClose();
+      onClose(reason);
     },
   });
   const fail = (error: Error) => {

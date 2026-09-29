@@ -1460,14 +1460,74 @@ describe('Rstest public API', () => {
     });
 
     it('reports a rejected launch without waiting for a connection', async () => {
+      const { reporter, reported } = createStatusRecorder();
+      status.bind(reporter);
       startDebugging = async () => false;
       await expect(
         createApi(root).createChildProcess(undefined, true),
       ).rejects.toThrow('Failed to launch Rstest debug worker');
+      expect(reported.filter((state) => state.kind === 'crashed')).toEqual([
+        {
+          kind: 'crashed',
+          detail: 'worker launch failed: Failed to launch Rstest debug worker',
+        },
+      ]);
       expect(runningWorkers.size).toBe(0);
       expect(debugEvents.listenerCount('start')).toBe(0);
       expect(debugEvents.listenerCount('end')).toBe(0);
     });
+
+    it.each(['unexpected', 'cancelled', 'disposed', 'closed'])(
+      'reports a crash only for an unexpected debug session end (%s)',
+      async (ending) => {
+        const { reporter, reported } = createStatusRecorder();
+        status.bind(reporter);
+        const { token, cancel } = createRunContext();
+        const api = createApi(root);
+        let socket: net.Socket | undefined;
+        let configuration!: vscode.DebugConfiguration;
+        startDebugging = async (config) => {
+          configuration = config;
+          debugEvents.emit('start', { configuration });
+          socket = net.connect(config.env[DEBUG_PIPE_ENV]);
+          socket.on('error', (error) => {
+            expect(error).toMatchObject({ code: 'ECONNRESET' });
+          });
+          socket.write(`${config.env[DEBUG_PIPE_TOKEN_ENV]}\n`);
+          return true;
+        };
+        try {
+          const { worker } = await api.createChildProcess(
+            undefined,
+            true,
+            undefined,
+            token,
+          );
+          expect(status.hasFailed(`test://${root}`)).toBe(false);
+          if (ending === 'cancelled') cancel();
+          if (ending === 'disposed') await api.dispose();
+          if (ending === 'closed') worker.$close();
+          debugEvents.emit('end', { configuration });
+          expect(status.hasFailed(`test://${root}`)).toBe(
+            ending === 'unexpected',
+          );
+          expect(reported.filter((state) => state.kind === 'crashed')).toEqual(
+            ending === 'unexpected'
+              ? [
+                  {
+                    kind: 'crashed',
+                    detail:
+                      'worker exited unexpectedly: Rstest debug session ended',
+                  },
+                ]
+              : [],
+          );
+        } finally {
+          socket?.destroy();
+          await api.dispose();
+        }
+      },
+    );
 
     it('stops the session on worker exit and makes repeated RPC close harmless', async () => {
       let socket!: net.Socket;

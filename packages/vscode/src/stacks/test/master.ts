@@ -799,9 +799,21 @@ export class RstestApi {
     injectForceColor(workerEnv);
     if (startDebugging) {
       const debugOutFiles = getConfigValue('debugOutFiles', this.workspace);
-      const debug = createDebugWorker(testRunReporter, () => {
+      let started = false;
+      const debug = createDebugWorker(testRunReporter, (reason) => {
         this.workers.delete(debug.worker);
         runningWorkers.delete(debug.worker);
+        if (
+          started &&
+          reason &&
+          !token?.isCancellationRequested &&
+          !this.disposed
+        ) {
+          status.crashed(
+            `worker exited unexpectedly: ${reason.message}`,
+            this.statusSource,
+          );
+        }
       });
       this.workers.add(debug.worker);
       runningWorkers.add(debug.worker);
@@ -825,6 +837,7 @@ export class RstestApi {
           testRun,
           token,
         );
+        started = true;
         status.workerSpawned(this.statusSource);
         return { worker: debug.worker, ...paths };
       } catch (error) {
