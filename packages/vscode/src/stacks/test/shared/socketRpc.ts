@@ -15,6 +15,8 @@ export const socketRpc = (
   },
   on: (fn: (data: unknown) => void) => {
     const lines = createInterface({ input: socket });
+    // readline re-emits input errors; the socket owner handles the failure.
+    lines.on('error', () => lines.close());
     lines.on('line', (line) => {
       if (socket.destroyed) return;
       if (authenticate) {
