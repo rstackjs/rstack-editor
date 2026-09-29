@@ -158,8 +158,8 @@ packages/vscode/e2e/lint/fixtures/pnpm-lock.yaml
 packages/vscode/e2e/lint/fixtures/*/pnpm-lock.yaml
 packages/vscode/e2e/rstest/fixtures/*/pnpm-lock.yaml
 
-# Build-time third-party notices, including the target-specific native binding
-packages/vscode/LICENSE.md
+# Build-time copy of the workspace root LICENSE (see rslib.config.mts)
+packages/vscode/LICENSE
 
 # Design documents are working notes, not part of the published repo
 /DESIGN*.md

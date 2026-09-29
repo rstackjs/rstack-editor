@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, type LibConfig, rspack } from '@rslib/core';
+import WebpackLicensePlugin from 'webpack-license-plugin';
 
 const require = createRequire(import.meta.url);
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
@@ -66,6 +67,15 @@ const libs: LibConfig[] = [
                 from: yukuBindingPath,
                 to: `@yuku-parser/binding-${yukuBindingSuffix}/yuku-parser.node`,
               },
+              {
+                // The VSIX must carry a LICENSE (`.vscodeignore` keeps it), and
+                // the workspace root LICENSE is the single source of truth. The
+                // copy lands next to package.json — not in dist/ — because vsce
+                // packages from the package directory; it is gitignored.
+                from: path.join(rootDir, '..', '..', 'LICENSE'),
+                to: path.join(rootDir, 'LICENSE'),
+                toType: 'file',
+              },
             ],
           }),
         ],
@@ -116,7 +126,7 @@ libs.push({
  * `src/` bind in the dev host; the release build (`build`, used by CI and the
  * Release workflow) minifies and emits no source maps.
  */
-export default defineConfig(async ({ envMode }) => {
+export default defineConfig(({ envMode }) => {
   const devBuild = envMode === 'dev';
   const output: LibConfig['output'] = {
     target: 'node',
@@ -124,19 +134,21 @@ export default defineConfig(async ({ envMode }) => {
     sourceMap: devBuild,
     minify: !devBuild,
   };
-  const generateLicenses =
-    !devBuild &&
-    process.argv.includes('build') &&
-    !process.argv.includes('--watch');
   return {
     lib: libs.map((lib) => ({ ...lib, output })),
-    plugins: generateLicenses
-      ? [
-          (await import('./licensePlugin.mts')).licensePlugin(
-            rootDir,
-            `@yuku-parser/binding-${yukuBindingSuffix}`,
-          ),
-        ]
-      : [],
+    tools: {
+      rspack: (_, { appendPlugins, environment }) => {
+        appendPlugins(
+          new WebpackLicensePlugin({
+            outputFilename: `${environment.name}.licenses.json`,
+            replenishDefaultLicenseTexts: true,
+            includePackages: () =>
+              environment.name === 'cjs0'
+                ? [path.dirname(yukuBindingPath)]
+                : [],
+          }),
+        );
+      },
+    },
   };
 });
