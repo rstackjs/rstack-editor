@@ -6,7 +6,6 @@ import type {
 } from '@rslint/core/eslint-plugin';
 import type { CancellationToken } from 'vscode-jsonrpc/node';
 import type { WorkerLogger } from './logger';
-import type { ConfigDependencyStatusNotification } from './configDependencyProtocol';
 
 type PluginHostFactory = (
   configs: ConfigDescriptor[],
@@ -28,11 +27,7 @@ export class PluginLintPool {
   private readonly shutdowns = new Set<Promise<void>>();
   private opChain: Promise<void> = Promise.resolve();
   private disposed = false;
-  private status: ConfigDependencyStatusNotification = { kind: 'ok' };
-
-  get configDependencyStatus(): ConfigDependencyStatusNotification {
-    return this.status;
-  }
+  hostFailure: string | undefined;
 
   constructor(
     private readonly logger: WorkerLogger,
@@ -61,7 +56,6 @@ export class PluginLintPool {
         return;
       }
 
-      const previous = this.status;
       if (
         this.activeState?.ready &&
         this.activeState.fingerprint === fingerprint
@@ -106,7 +100,7 @@ export class PluginLintPool {
         ready = true;
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
-        const firstLine = message.split('\n', 1)[0];
+        const cause = message.split('\n', 1)[0];
         const state: HostGeneration = {
           fingerprint,
           ready: false,
@@ -115,19 +109,10 @@ export class PluginLintPool {
         };
         this.liveStates.add(state);
         this.generations.set(generation, state);
-        this.status = {
-          kind: 'missing',
-          failure: {
-            configPath: descriptors[0].configPath,
-            cause: firstLine,
-            plugin: true,
-          },
-        };
-        if (!(
-          previous.kind === 'missing' && previous.failure.cause === firstLine
-        )) {
+        if (this.hostFailure !== cause) {
           this.logger.error('Failed to initialize ESLint-plugin host', error);
         }
+        this.hostFailure = cause;
       }
     });
     return ready;
@@ -152,12 +137,13 @@ export class PluginLintPool {
       }
       this.activeGeneration = generation;
       this.activeState = next;
-      if (next.ready) this.status = { kind: 'ok' };
       this.activeCommitRollback = {
         generation,
         previousGeneration,
         previousState: previous,
+        previousHostFailure: this.hostFailure,
       };
+      if (next.ready) this.hostFailure = undefined;
       committed = true;
     });
     return committed;
@@ -171,6 +157,7 @@ export class PluginLintPool {
         const aborted = this.activeState;
         this.activeGeneration = rollback.previousGeneration;
         this.activeState = rollback.previousState;
+        this.hostFailure = rollback.previousHostFailure;
         this.activeCommitRollback = undefined;
         if (rollback.previousGeneration) {
           this.cancelGenerationRetirement(rollback.previousGeneration);
@@ -392,4 +379,5 @@ interface ActiveCommitRollback {
   generation: string;
   previousGeneration: string | undefined;
   previousState: HostGeneration | undefined;
+  previousHostFailure: string | undefined;
 }

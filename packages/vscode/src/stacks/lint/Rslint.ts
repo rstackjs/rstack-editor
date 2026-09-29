@@ -361,8 +361,8 @@ export class Rslint implements Disposable {
   private handleConfigDependencyStatus(
     notification: ConfigDependencyStatusNotification,
   ): void {
-    if (notification.kind === 'missing' && notification.failure.plugin) {
-      const reason = `ESLint plugins failed to load: ${notification.failure.cause}`;
+    if (notification.kind === 'plugin') {
+      const reason = `ESLint plugins failed to load: ${notification.cause}`;
       this.configRefreshFailed = true;
       this.configDependencyEpisode.clear();
       if (this.configError.changed(reason)) this.logger.warn(reason);

@@ -38,14 +38,13 @@ suite('Plugin-host status and polling recovery', function () {
     );
     await vscode.window.showTextDocument(document);
     const disabled = await waitForState('disabled');
-    if (disabled.kind === 'disabled') {
-      assert.ok(disabled.reason);
-      assert.match(
-        disabled.reason,
-        /^ESLint plugins failed to load: .*fixture plugin import exploded/,
-      );
-      assert.ok(!disabled.reason.includes('\n'));
-    }
+    assert.ok(disabled.kind === 'disabled');
+    assert.ok(disabled.reason);
+    assert.match(
+      disabled.reason,
+      /^ESLint plugins failed to load: .*fixture plugin import exploded/,
+    );
+    assert.ok(!disabled.reason.includes('\n'));
     const warnings = api.getRecordedWarnings('rslint');
     assert.equal(warnings.length, 1);
     assert.match(

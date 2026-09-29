@@ -226,8 +226,7 @@ export async function runLintWorker(
     logger,
     installation.createPluginLintHost,
   );
-  let configDependencyFailure:
-    (ConfigDependencyFailure & { readonly plugin?: true }) | undefined;
+  let configDependencyFailure: ConfigDependencyFailure | undefined;
   let configError: string | undefined;
   const adapter = new LspConfigTransactionAdapter(
     installation.createConfigModuleHost(),
@@ -257,15 +256,14 @@ export async function runLintWorker(
     protocolVersion: installation.protocolVersion,
     configPath: options.configPath,
     takeConfigStatus: () => {
-      let failure = configDependencyFailure;
+      const failure = configDependencyFailure;
       const message = configError;
       configDependencyFailure = undefined;
       configError = undefined;
-      // Plugin status persists across refreshes without a new prepare.
-      const plugin = pluginLintPool.configDependencyStatus;
-      if (plugin.kind === 'missing') failure ??= plugin.failure;
       if (message !== undefined) return { kind: 'error', message };
       if (failure !== undefined) return { kind: 'missing', failure };
+      const cause = pluginLintPool.hostFailure;
+      if (cause !== undefined) return { kind: 'plugin', cause };
       return { kind: 'ok' };
     },
     observeRefresh: (reason) => fingerprinter.observeRefresh(reason),

@@ -48,6 +48,7 @@ const lintWorkerEntry = './src/stacks/lint/worker/main.ts';
 
 const libs: LibConfig[] = [
   {
+    id: 'extension',
     syntax: 'es2023',
     format: 'cjs',
     source: {
@@ -86,6 +87,7 @@ const libs: LibConfig[] = [
 
 if (hasWorkerEntry) {
   libs.push({
+    id: 'worker',
     syntax: 'es2023',
     format: 'cjs',
     source: {
@@ -104,6 +106,7 @@ if (hasWorkerEntry) {
 }
 
 libs.push({
+  id: 'lint-worker',
   syntax: 'es2023',
   format: 'cjs',
   source: {
@@ -141,9 +144,8 @@ export default defineConfig(({ envMode }) => {
         appendPlugins(
           new WebpackLicensePlugin({
             outputFilename: `${environment.name}.licenses.json`,
-            replenishDefaultLicenseTexts: true,
             includePackages: () =>
-              environment.name === 'cjs0'
+              environment.name === 'extension'
                 ? [path.dirname(yukuBindingPath)]
                 : [],
           }),
