@@ -7,7 +7,6 @@ import type {
 import type { CancellationToken } from 'vscode-jsonrpc/node';
 import type { WorkerLogger } from './logger';
 import type { ConfigDependencyStatusNotification } from './configDependencyProtocol';
-import { classifyMissingDependencyMessage } from '../../../shared/missingDependency';
 
 type PluginHostFactory = (
   configs: ConfigDescriptor[],
@@ -63,7 +62,6 @@ export class PluginLintPool {
       }
 
       const previous = this.status;
-      this.status = { kind: 'ok' };
       if (
         this.activeState?.ready &&
         this.activeState.fingerprint === fingerprint
@@ -109,26 +107,6 @@ export class PluginLintPool {
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         const firstLine = message.split('\n', 1)[0];
-        const descriptor =
-          descriptors.find((d) => firstLine.includes(d.configPath)) ??
-          descriptors[0];
-        const cause = classifyMissingDependencyMessage(firstLine);
-        const failure: Exclude<
-          ConfigDependencyStatusNotification,
-          { kind: 'ok' }
-        > =
-          cause === undefined
-            ? {
-                kind: 'error',
-                message: `ESLint plugins failed to load: ${firstLine}`,
-              }
-            : {
-                kind: 'missing',
-                failure: {
-                  configPath: descriptor.configPath,
-                  cause,
-                },
-              };
         const state: HostGeneration = {
           fingerprint,
           ready: false,
@@ -137,13 +115,17 @@ export class PluginLintPool {
         };
         this.liveStates.add(state);
         this.generations.set(generation, state);
-        this.status = failure;
-        // The editor emits the shared one-line missing-dependency warning.
-        // Real errors retain their full detail here, once per failure episode.
-        if (
-          failure.kind === 'error' &&
-          !(previous.kind === 'error' && previous.message === failure.message)
-        ) {
+        this.status = {
+          kind: 'missing',
+          failure: {
+            configPath: descriptors[0].configPath,
+            cause: firstLine,
+            plugin: true,
+          },
+        };
+        if (!(
+          previous.kind === 'missing' && previous.failure.cause === firstLine
+        )) {
           this.logger.error('Failed to initialize ESLint-plugin host', error);
         }
       }
@@ -170,6 +152,7 @@ export class PluginLintPool {
       }
       this.activeGeneration = generation;
       this.activeState = next;
+      if (next.ready) this.status = { kind: 'ok' };
       this.activeCommitRollback = {
         generation,
         previousGeneration,

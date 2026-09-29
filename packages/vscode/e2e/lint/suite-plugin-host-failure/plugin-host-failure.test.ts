@@ -12,7 +12,7 @@ import {
 suite('Plugin-host status and polling recovery', function () {
   this.timeout(120_000);
 
-  test('keeps native diagnostics during plugin failure, classifies missing imports, and recovers without restart', async () => {
+  test('disables failed plugins while native diagnostics remain and recovers without restart', async () => {
     const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     assert.ok(root);
     const api = extensionExports();
@@ -37,48 +37,27 @@ suite('Plugin-host status and polling recovery', function () {
       path.join(root, 'src/index.ts'),
     );
     await vscode.window.showTextDocument(document);
-    const crashed = await waitForState('crashed');
-    if (crashed.kind === 'crashed') {
+    const disabled = await waitForState('disabled');
+    if (disabled.kind === 'disabled') {
+      assert.ok(disabled.reason);
       assert.match(
-        crashed.detail,
+        disabled.reason,
         /^ESLint plugins failed to load: .*fixture plugin import exploded/,
       );
-      assert.ok(!crashed.detail.includes('\n'));
+      assert.ok(!disabled.reason.includes('\n'));
     }
+    const warnings = api.getRecordedWarnings('rslint');
+    assert.equal(warnings.length, 1);
+    assert.match(
+      warnings[0],
+      /^\[[^\]]+\] ESLint plugins failed to load: .*fixture plugin import exploded$/,
+    );
     await waitForRslintDiagnostics(document, (diagnostics) =>
       diagnostics.some((d) => diagnosticRuleIdIncludes(d, 'no-console')),
     );
 
     api.setDependencyPollIntervalForTest(250);
     try {
-      fs.writeFileSync(path.join(root, 'host-state.txt'), 'missing');
-      const disabled = await waitForState('disabled');
-      if (disabled.kind === 'disabled') {
-        assert.ok(disabled.reason);
-        assert.match(disabled.reason, /install the project dependencies/);
-      }
-      const deadline = Date.now() + 60_000;
-      while (
-        fs
-          .readFileSync(path.join(root, 'attempts.log'), 'utf8')
-          .split('\n')
-          .filter((line) => line === 'missing').length < 2
-      ) {
-        assert.ok(Date.now() < deadline, 'Expected a second plugin-host retry');
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      const warnings = api.getRecordedWarnings('rslint');
-      assert.equal(
-        warnings.length,
-        1,
-        'Retries must not repeat the missing-package warning',
-      );
-      assert.match(warnings[0], /rstack-e2e-absent-plugin-dependency/);
-      assert.ok(
-        !warnings[0].includes('\n'),
-        'Missing-package warning must be one line',
-      );
-
       fs.writeFileSync(path.join(root, 'host-state.txt'), 'ready');
       await waitForState('running');
       await waitForRslintDiagnostics(document, (diagnostics) =>

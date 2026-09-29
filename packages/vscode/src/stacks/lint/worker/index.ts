@@ -226,7 +226,8 @@ export async function runLintWorker(
     logger,
     installation.createPluginLintHost,
   );
-  let configDependencyFailure: ConfigDependencyFailure | undefined;
+  let configDependencyFailure:
+    (ConfigDependencyFailure & { readonly plugin?: true }) | undefined;
   let configError: string | undefined;
   const adapter = new LspConfigTransactionAdapter(
     installation.createConfigModuleHost(),
@@ -257,13 +258,12 @@ export async function runLintWorker(
     configPath: options.configPath,
     takeConfigStatus: () => {
       let failure = configDependencyFailure;
-      let message = configError;
+      const message = configError;
       configDependencyFailure = undefined;
       configError = undefined;
       // Plugin status persists across refreshes without a new prepare.
       const plugin = pluginLintPool.configDependencyStatus;
-      if (plugin.kind === 'error') message ??= plugin.message;
-      else if (plugin.kind === 'missing') failure ??= plugin.failure;
+      if (plugin.kind === 'missing') failure ??= plugin.failure;
       if (message !== undefined) return { kind: 'error', message };
       if (failure !== undefined) return { kind: 'missing', failure };
       return { kind: 'ok' };

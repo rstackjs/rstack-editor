@@ -21,10 +21,9 @@ export function classifyMissingDependencyMessage(
   message: string,
 ): string | undefined {
   const [firstLine] = message.split('\n', 1);
-  const match = /(?:^|: )(Cannot find (?:package|module) '([^']+)'[^\n]*)/.exec(
+  const specifier = /^Cannot find (?:package|module) '([^']+)'/.exec(
     firstLine,
-  );
-  const specifier = match?.[2];
+  )?.[1];
   if (
     specifier === undefined ||
     specifier.startsWith('.') ||
@@ -33,7 +32,7 @@ export function classifyMissingDependencyMessage(
   ) {
     return undefined;
   }
-  return match?.[1];
+  return firstLine;
 }
 
 /** Use for a (code, message) pair; bare messages (fmt) use the classifier directly. */

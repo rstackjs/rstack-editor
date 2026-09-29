@@ -6,9 +6,7 @@ import { isMainThread } from 'node:worker_threads';
 // refresh or restart command masking a non-retryable failed generation.
 if (!isMainThread) {
   const state = fs.readFileSync(new URL('./host-state.txt', import.meta.url), 'utf8').trim();
-  fs.appendFileSync(new URL('./attempts.log', import.meta.url), `${state}\n`);
   if (state === 'crash') throw new Error('fixture plugin import exploded');
-  if (state === 'missing') await import('rstack-e2e-absent-plugin-dependency');
 }
 
 export default {
