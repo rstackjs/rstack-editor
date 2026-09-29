@@ -3,7 +3,9 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import os from 'node:os';
+import net from 'node:net';
 import path from 'node:path';
+import type vscode from 'vscode';
 import { afterEach, beforeEach, describe, expect, it, rs } from '@rstest/core';
 import { logger } from '../../../src/stacks/test/logger';
 import {
@@ -80,7 +82,11 @@ const loggedErrors: string[] = [];
 const loggedWarnings: string[] = [];
 const createdTerminals: string[] = [];
 const settings: Record<string, unknown> = {};
-let startDebugging = async (): Promise<boolean> => true;
+let startDebugging = async (
+  _config: vscode.DebugConfiguration,
+): Promise<boolean> => true;
+const debugEvents = new EventEmitter();
+const stopDebugging = rs.fn(async (_session: vscode.DebugSession) => {});
 
 const channel = {
   debug: () => {},
@@ -100,7 +106,31 @@ logger.bind(channel as never);
 rs.mock('vscode', () => {
   const vscode = {
     TestRunProfileKind: { Run: 1, Debug: 2, Coverage: 3 },
-    debug: { startDebugging: () => startDebugging() },
+    debug: {
+      startDebugging: (
+        _workspace: unknown,
+        config: vscode.DebugConfiguration,
+      ) => startDebugging(config),
+      stopDebugging: (session: vscode.DebugSession) => stopDebugging(session),
+      onDidStartDebugSession: (fn: (session: vscode.DebugSession) => void) => {
+        debugEvents.on('start', fn);
+        return {
+          dispose: () => {
+            debugEvents.off('start', fn);
+          },
+        };
+      },
+      onDidTerminateDebugSession: (
+        fn: (session: vscode.DebugSession) => void,
+      ) => {
+        debugEvents.on('end', fn);
+        return {
+          dispose: () => {
+            debugEvents.off('end', fn);
+          },
+        };
+      },
+    },
     env: { shell: '/bin/sh' },
     FileCoverage: class {},
     Position: class {},
@@ -873,6 +903,7 @@ describe('Rstest public API', () => {
     shownMessages.length = 0;
     loggedWarnings.length = 0;
     startDebugging = async () => true;
+    stopDebugging.mockClear();
     resetUserNodeCaches();
     settings['rstack.nodeExecutable'] = process.execPath;
     await configuredNodeBelowFloor(process.execPath, {
@@ -1250,39 +1281,190 @@ describe('Rstest public API', () => {
       );
     });
 
-    it('closes a spawned worker when debugger attachment rejects', async () => {
+    it('cleans up without spawning when debug launch rejects', async () => {
       startDebugging = async () => {
-        throw new Error('Debugger attachment failed.');
+        throw new Error('Debugger launch failed.');
       };
       const api = createApi(root);
       await expect(api.createChildProcess(undefined, true)).rejects.toThrow(
-        'Debugger attachment failed.',
+        'Debugger launch failed.',
       );
-      expect(spawnedProcesses[0].killSignals).toEqual(['SIGTERM']);
+      expect(spawnedProcesses).toHaveLength(0);
       expect((api as any).workers.size).toBe(0);
       expect(runningWorkers.size).toBe(0);
     });
 
-    it('closes a worker when disposal starts during debugger attachment', async () => {
+    it('settles disposal during launch and stops a late session', async () => {
       const attachment = Promise.withResolvers<boolean>();
       const started = Promise.withResolvers<void>();
-      startDebugging = () => {
+      let configuration!: vscode.DebugConfiguration;
+      startDebugging = (config) => {
+        configuration = config;
         started.resolve();
         return attachment.promise;
       };
       const api = createApi(root);
       const starting = api.createChildProcess(undefined, true);
-      await started.promise;
-      // dispose() sets this flag synchronously before closing its current worker
-      // snapshot; isolate the post-attach guard from the close RPC exercised by
-      // the disposal tests above.
-      (api as any).disposed = true;
-      attachment.resolve(true);
-      await expect(starting).rejects.toThrow(
-        'worker spawn aborted: this master was disposed while the debugger was attaching',
+      const rejected = expect(starting).rejects.toThrow(
+        'Rstest debug worker stopped',
       );
-      expect(spawnedProcesses[0].killSignals).toEqual(['SIGTERM']);
+      await started.promise;
+      await api.dispose();
+      await rejected;
+      const session = { configuration };
+      debugEvents.emit('start', session);
+      expect(stopDebugging).toHaveBeenCalledWith(session);
+      attachment.resolve(true);
       expect(runningWorkers.size).toBe(0);
+    });
+
+    it('maps launch settings and closes pending RPCs when the session stops', async () => {
+      settings.nodeExecArgs = ['--enable-source-maps'];
+      settings.nodeEnv = {
+        NODE_ENV: 'custom',
+        SHARED: 'node',
+        RSTEST: 'false',
+      };
+      settings.debugNodeEnv = { SHARED: 'debug', DEBUG_ONLY: 'yes' };
+      settings.debugExclude = ['**/vendor/**'];
+      settings.debugOutFiles = ['**/compiled/**/*.js'];
+      let configuration!: vscode.DebugConfiguration;
+      let socket!: net.Socket;
+      const api = createApi(root);
+      startDebugging = async (config) => {
+        configuration = config;
+        debugEvents.emit('start', { configuration });
+        socket = net.connect(config.env.RSTACK_RSTEST_DEBUG_PIPE);
+        return true;
+      };
+      try {
+        const { worker } = await api.createChildProcess(undefined, true);
+        expect(configuration).toMatchObject({
+          type: 'node',
+          request: 'launch',
+          runtimeExecutable: process.execPath,
+          runtimeArgs: ['--enable-source-maps'],
+          cwd: root,
+          env: {
+            NODE_ENV: 'custom',
+            SHARED: 'debug',
+            DEBUG_ONLY: 'yes',
+            RSTEST: 'true',
+          },
+          skipFiles: ['**/vendor/**'],
+          outFiles: ['**/compiled/**/*.js'],
+          autoAttachChildProcesses: true,
+        });
+        expect(configuration.program).toMatch(/worker\.js$/);
+        expect(configuration).not.toHaveProperty('port');
+        expect(configuration).not.toHaveProperty('processId');
+        expect(spawnedProcesses).toHaveLength(0);
+        const pending = expect(worker.closeWatcher()).rejects.toThrow(
+          'Rstest debug session ended',
+        );
+        debugEvents.emit('end', { configuration });
+        await pending;
+        expect(runningWorkers.size).toBe(0);
+      } finally {
+        socket?.destroy();
+        await api.dispose();
+      }
+    });
+
+    it('cancels before the debug worker connects and omits empty outFiles', async () => {
+      const { token, cancel } = createRunContext();
+      const started = Promise.withResolvers<void>();
+      startDebugging = async (config) => {
+        expect(config).not.toHaveProperty('outFiles');
+        debugEvents.emit('start', { configuration: config });
+        started.resolve();
+        return true;
+      };
+      const api = createApi(root);
+      const starting = api.createChildProcess(
+        undefined,
+        true,
+        undefined,
+        token,
+      );
+      const rejected = expect(starting).rejects.toThrow(
+        'Rstest debug run cancelled',
+      );
+      await started.promise;
+      cancel();
+      await rejected;
+      expect(stopDebugging).toHaveBeenCalledTimes(1);
+      expect(runningWorkers.size).toBe(0);
+    });
+
+    it('reports a rejected launch without waiting for a connection', async () => {
+      startDebugging = async () => false;
+      await expect(
+        createApi(root).createChildProcess(undefined, true),
+      ).rejects.toThrow('Failed to launch Rstest debug worker');
+      expect(runningWorkers.size).toBe(0);
+      expect(debugEvents.listenerCount('start')).toBe(0);
+      expect(debugEvents.listenerCount('end')).toBe(0);
+    });
+
+    it('does not launch an already-cancelled test run', async () => {
+      const { token, cancel } = createRunContext();
+      cancel();
+      const launch = rs.fn(async () => true);
+      startDebugging = launch;
+      await expect(
+        createApi(root).createChildProcess(undefined, true, undefined, token),
+      ).rejects.toThrow('Rstest debug run cancelled');
+      expect(launch).not.toHaveBeenCalled();
+      expect(runningWorkers.size).toBe(0);
+    });
+
+    it('times out a launch whose worker never connects', async () => {
+      rs.useFakeTimers();
+      const started = Promise.withResolvers<void>();
+      startDebugging = async (configuration) => {
+        debugEvents.emit('start', { configuration });
+        started.resolve();
+        return true;
+      };
+      const starting = createApi(root).createChildProcess(undefined, true);
+      const rejected = expect(starting).rejects.toThrow(
+        'Timed out starting Rstest debug worker',
+      );
+      await started.promise;
+      await rs.advanceTimersByTimeAsync(30_000);
+      await rejected;
+      expect(stopDebugging).toHaveBeenCalledTimes(1);
+      expect(runningWorkers.size).toBe(0);
+    });
+
+    it('stops the session on worker exit and makes repeated RPC close harmless', async () => {
+      let socket!: net.Socket;
+      let endpoint!: string;
+      startDebugging = async (configuration) => {
+        debugEvents.emit('start', { configuration });
+        endpoint = configuration.env.RSTACK_RSTEST_DEBUG_PIPE;
+        socket = net.connect(endpoint);
+        return true;
+      };
+      const { worker } = await createApi(root).createChildProcess(
+        undefined,
+        true,
+      );
+      const pending = expect(worker.closeWatcher()).rejects.toThrow(
+        'Rstest debug worker disconnected',
+      );
+      socket.destroy();
+      await pending;
+      worker.$close();
+      worker.$close();
+      expect(stopDebugging).toHaveBeenCalledTimes(1);
+      expect(runningWorkers.size).toBe(0);
+      if (process.platform !== 'win32') {
+        await expect
+          .poll(() => fs.existsSync(path.dirname(endpoint)))
+          .toBe(false);
+      }
     });
   });
 });

@@ -68,6 +68,7 @@ class Rstest implements vscode.Disposable {
   private errorStore = new TestErrorStore();
   private detection: DetectionSnapshot;
   private runProfile!: vscode.TestRunProfile;
+  private debugProfile!: vscode.TestRunProfile;
   private coverageProfile!: vscode.TestRunProfile;
   private disposed = false;
 
@@ -100,6 +101,7 @@ class Rstest implements vscode.Disposable {
       hasNotInstalledState: () => status.hasNotInstalled(),
       testController: this.ctrl,
       runProfile: this.runProfile,
+      debugProfile: this.debugProfile,
       startTestRun: this.startTestRun,
       getResolvedRstestPath: (sourceUri: string) => {
         for (const workspace of this.workspaces.values()) {
@@ -159,7 +161,7 @@ class Rstest implements vscode.Disposable {
 
     this.registerCommands();
 
-    this.ctrl.createRunProfile(
+    this.debugProfile = this.ctrl.createRunProfile(
       'Debug Tests',
       vscode.TestRunProfileKind.Debug,
       this.startTestRun,

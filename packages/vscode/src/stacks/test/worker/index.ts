@@ -1,4 +1,5 @@
 import { pathToFileURL } from 'node:url';
+import { connect } from 'node:net';
 import { createBirpc } from 'birpc';
 import { missingDependencyCauseOf } from '../../../shared/missingDependency';
 import { SUPPORT_MATRIX } from '../../../shared/versionCheck';
@@ -6,6 +7,7 @@ import type { TestRunReporter } from '../testRunReporter';
 import type { NormalizedConfigResult, WorkerInitOptions } from '../types';
 import { retractForceColorIfDisabled } from '../shared/colorEnv';
 import { rpcErrorCodec } from '../shared/rpc';
+import { socketRpc } from '../shared/socketRpc';
 import { logger } from './logger';
 import { CoverageReporter, ProgressLogger, ProgressReporter } from './reporter';
 
@@ -206,9 +208,18 @@ export class Worker {
 }
 
 const worker = new Worker();
+// Consume before loading project code so pool children cannot inherit the
+// master's RPC endpoint. js-debug's own environment is left untouched.
+const debugEndpoint = process.env.RSTACK_RSTEST_DEBUG_PIPE;
+delete process.env.RSTACK_RSTEST_DEBUG_PIPE;
+const debugSocket = debugEndpoint ? connect(debugEndpoint) : undefined;
 export const masterApi = createBirpc<TestRunReporter, Worker>(worker, {
-  post: (data) => process.send?.(data),
-  on: (fn) => process.on('message', fn),
+  ...(debugSocket
+    ? socketRpc(debugSocket)
+    : {
+        post: (data: unknown) => process.send?.(data),
+        on: (fn: (data: unknown) => void) => process.on('message', fn),
+      }),
   bind: 'functions',
   ...rpcErrorCodec,
 });
@@ -227,6 +238,8 @@ if (process.argv[1] === __filename) {
       .finally(() => process.exit());
   };
   process.once('disconnect', shutdown);
+  debugSocket?.once('close', shutdown);
+  debugSocket?.once('error', shutdown);
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
 }

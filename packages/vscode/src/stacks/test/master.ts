@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process';
 import { statSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import net from 'node:net';
 import path, { dirname } from 'node:path';
 import { type BirpcReturn, createBirpc } from 'birpc';
 import regexpEscape from 'core-js-pure/actual/regexp/escape';
@@ -19,6 +18,7 @@ import {
   getConfiguredNodeExecutable,
 } from '../../shared/nodeExecutableSetting';
 import { CONFIG_SECTION, getConfigValue } from './config';
+import { createDebugWorker } from './debugWorker';
 import { MessageLatch } from '../../shared/messageLatch';
 import {
   formatNotInstalledLog,
@@ -65,9 +65,16 @@ export const runningWorkers = new Set<WorkerRpc>();
 export const WATCHER_CLOSE_TIMEOUT_MS = 30_000;
 const forceKilledWorkers = new WeakSet<WorkerRpc>();
 const workerClosePromises = new WeakMap<WorkerRpc, Promise<void>>();
+const debugWorkers = new WeakSet<WorkerRpc>();
 
 export const closeWorkerGracefully = (worker: WorkerRpc): Promise<void> => {
   if (worker.$closed) return Promise.resolve();
+  // A paused debuggee cannot answer closeWatcher. js-debug owns and terminates
+  // the entire process tree, including paused pool children.
+  if (debugWorkers.has(worker)) {
+    worker.$close();
+    return Promise.resolve();
+  }
   const pendingClose = workerClosePromises.get(worker);
   if (pendingClose) return pendingClose;
   const closePromise = (async () => {
@@ -148,27 +155,8 @@ export const warmWorkerNodePreflight = (
   }
 };
 
-// Default host for a fixed debug port. The spawn (`--inspect-wait`), the port
-// preflight, and the attach config must all use the same host: on a dual-stack
-// machine `localhost` can resolve to `::1` while the worker listens on IPv4, so
-// the debugger would attach to the wrong endpoint. Prefer an explicit IPv4
-// literal over `localhost` so both ends agree.
-const DEFAULT_DEBUG_HOST = '127.0.0.1';
-
 // The specifier used when `rstestPackagePath` is unset.
 const CORE_PACKAGE_JSON = '@rstest/core/package.json';
-
-// Probe whether a fixed inspector port can be bound. `--inspect-wait=host:port`
-// does not fall back when the port is taken: Node reports address-in-use and
-// runs the worker without the inspector, and attaching by that port could hit an
-// unrelated process. Preflight so we fail with a clear message instead.
-const isPortAvailable = (port: number, host?: string): Promise<boolean> =>
-  new Promise((resolve) => {
-    const server = net.createServer();
-    server.once('error', () => resolve(false));
-    server.once('listening', () => server.close(() => resolve(true)));
-    server.listen(port, host ?? DEFAULT_DEBUG_HOST);
-  });
 
 export class RstestApi {
   private workers = new Set<WorkerRpc>();
@@ -618,8 +606,13 @@ export class RstestApi {
       testRunReporter,
       kind === vscode.TestRunProfileKind.Debug,
       run,
+      token,
     );
-    token.onCancellationRequested(() => {
+    if (token.isCancellationRequested) {
+      await closeWorkerGracefully(worker);
+      return;
+    }
+    const cancellation = token.onCancellationRequested(() => {
       void closeWorkerGracefully(worker).finally(onFinish);
     });
 
@@ -651,7 +644,10 @@ export class RstestApi {
         onFinish();
       })
       .finally(() => {
-        if (!continuous) worker.$close();
+        if (!continuous) {
+          cancellation.dispose();
+          worker.$close();
+        }
       });
 
     await promise;
@@ -742,6 +738,7 @@ export class RstestApi {
     testRunReporter = new TestRunReporter(),
     startDebugging?: boolean,
     testRun?: vscode.TestRun,
+    token?: vscode.CancellationToken,
   ) {
     // Cheap fast-fail; the load-bearing check is the one after the Node
     // preflight below, which covers a dispose landing mid-await. This one
@@ -769,26 +766,6 @@ export class RstestApi {
     const paths = this.resolveRstestPaths();
     if (!paths) {
       throw new ReportedRstestResolutionError();
-    }
-    const debuggerPort = getConfigValue('debuggerPort', this.workspace);
-    const debuggerAddress = getConfigValue('debuggerAddress', this.workspace);
-    if (
-      startDebugging &&
-      debuggerPort &&
-      !(await isPortAvailable(debuggerPort, debuggerAddress))
-    ) {
-      const at = `${debuggerAddress ?? DEFAULT_DEBUG_HOST}:${debuggerPort}`;
-      const message = `Rstest debug port ${at} is already in use. Set a free "${CONFIG_SECTION}.debuggerPort" or free the port.`;
-      vscode.window.showErrorMessage(message);
-      throw new Error(message);
-    }
-    const execArgv: string[] = [];
-    if (startDebugging) {
-      execArgv.push(
-        debuggerPort
-          ? `--inspect-wait=${debuggerAddress ?? DEFAULT_DEBUG_HOST}:${debuggerPort}`
-          : '--inspect-wait',
-      );
     }
     const workerPath = path.resolve(__dirname, 'worker.js');
     const { nodeExecutable, nodeExecArgs } =
@@ -824,18 +801,54 @@ export class RstestApi {
     // the worker retracts it when the config disables color (adaptation #9,
     // shared/colorEnv.ts).
     injectForceColor(workerEnv);
-    const rstestProcess = spawn(
-      nodeExecutable,
-      [...nodeExecArgs, ...execArgv, workerPath],
-      {
-        cwd: this.cwd,
-        stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
-        // Default JSON serialization: `advanced` uses the V8 serializer, whose
-        // format follows the V8 version, and Electron's V8 can be newer than
-        // the user's Node can read.
-        env: workerEnv,
-      },
-    );
+    if (startDebugging) {
+      const debugOutFiles = getConfigValue('debugOutFiles', this.workspace);
+      const debug = createDebugWorker(testRunReporter, () => {
+        this.workers.delete(debug.worker);
+        runningWorkers.delete(debug.worker);
+      });
+      this.workers.add(debug.worker);
+      runningWorkers.add(debug.worker);
+      debugWorkers.add(debug.worker);
+      try {
+        await debug.start(
+          this.workspace,
+          {
+            type: 'node',
+            name: 'Rstest Debug',
+            request: 'launch',
+            runtimeExecutable: nodeExecutable,
+            runtimeArgs: nodeExecArgs,
+            program: workerPath,
+            cwd: this.cwd,
+            env: workerEnv,
+            autoAttachChildProcesses: true,
+            skipFiles: getConfigValue('debugExclude', this.workspace),
+            ...(debugOutFiles.length ? { outFiles: debugOutFiles } : {}),
+          },
+          testRun,
+          token,
+        );
+        status.workerSpawned(this.statusSource);
+        return { worker: debug.worker, ...paths };
+      } catch (error) {
+        if (!token?.isCancellationRequested && !this.disposed) {
+          status.crashed(
+            `worker launch failed: ${toErrorMessage(error)}`,
+            this.statusSource,
+          );
+        }
+        throw error;
+      }
+    }
+    const rstestProcess = spawn(nodeExecutable, [...nodeExecArgs, workerPath], {
+      cwd: this.cwd,
+      stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+      // Default JSON serialization: `advanced` uses the V8 serializer, whose
+      // format follows the V8 version, and Electron's V8 can be newer than
+      // the user's Node can read.
+      env: workerEnv,
+    });
 
     rstestProcess.stdout?.on('data', (d) => {
       const content = d.toString();
@@ -940,45 +953,6 @@ export class RstestApi {
       // or not.
       worker.$close();
     });
-
-    // Attach the debugger only after the error/exit handlers are wired, so a
-    // spawn failure (e.g. a misconfigured `nodeExecutable`) during this await is
-    // handled instead of throwing uncaught in the extension host.
-    if (startDebugging) {
-      const debugOutFiles = getConfigValue('debugOutFiles', this.workspace);
-      try {
-        const startedDebugging = await vscode.debug.startDebugging(
-          this.workspace,
-          {
-            type: 'node',
-            name: 'Rstest Debug',
-            request: 'attach',
-            skipFiles: getConfigValue('debugExclude', this.workspace),
-            ...(debugOutFiles.length ? { outFiles: debugOutFiles } : {}),
-            ...(debuggerPort
-              ? {
-                  port: debuggerPort,
-                  address: debuggerAddress ?? DEFAULT_DEBUG_HOST,
-                }
-              : { processId: rstestProcess.pid }),
-          },
-          { testRun },
-        );
-        if (this.disposed) {
-          throw new Error(
-            'worker spawn aborted: this master was disposed while the debugger was attaching',
-          );
-        }
-        if (!startedDebugging) {
-          throw new Error(
-            `Failed to attach debugger to test worker process (PID: ${rstestProcess.pid})`,
-          );
-        }
-      } catch (error) {
-        if (!worker.$closed) worker.$close();
-        throw error;
-      }
-    }
 
     return { worker, ...paths };
   }

@@ -274,18 +274,6 @@
             "scope": "resource",
             "markdownDescription": "When source maps are enabled, glob patterns locating the generated JavaScript files (maps to the debug session's `outFiles`)."
           },
-          "rstack.rstest.debuggerPort": {
-            "order": 11,
-            "type": "number",
-            "scope": "resource",
-            "description": "Port the debugger attaches to. Defaults to Node's inspector behavior (9229, or a free port if taken)."
-          },
-          "rstack.rstest.debuggerAddress": {
-            "order": 12,
-            "type": "string",
-            "scope": "resource",
-            "description": "TCP/IP address the debugger attaches to. Defaults to localhost."
-          },
           "rstack.rstest.terminalShellPath": {
             "order": 13,
             "type": "string",

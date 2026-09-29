@@ -4,7 +4,6 @@ import {
   fallback,
   type InferOutput,
   literal,
-  number,
   object,
   optional,
   parse,
@@ -30,8 +29,6 @@ const configSchema = object({
   nodeExecArgs: fallback(array(string()), []),
   nodeEnv: fallback(optional(record(string(), string())), undefined),
   debugNodeEnv: fallback(optional(record(string(), string())), undefined),
-  debuggerPort: fallback(optional(number()), undefined),
-  debuggerAddress: fallback(optional(string()), undefined),
   debugExclude: fallback(array(string()), ['<node_internals>/**']),
   debugOutFiles: fallback(array(string()), []),
   configFileGlobPattern: fallback(array(string()), [

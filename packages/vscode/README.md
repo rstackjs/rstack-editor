@@ -90,8 +90,6 @@ All settings live under the unified `rstack.*` namespace. There are no `rslint.*
 | `rstack.rstest.debugNodeEnv` | `null` | Extra env when debugging tests. |
 | `rstack.rstest.debugExclude` | `["<node_internals>/**"]` | Debug `skipFiles`. |
 | `rstack.rstest.debugOutFiles` | `[]` | Debug `outFiles`. |
-| `rstack.rstest.debuggerPort` | — | Debugger port. |
-| `rstack.rstest.debuggerAddress` | — | Debugger address. |
 | `rstack.rstest.terminalShellPath` | — | Shell used by **Run in Terminal**. |
 | `rstack.rstest.terminalShellArgs` | `[]` | Shell args for **Run in Terminal**. |
 | `rstack.fmt.enable` | `true` | Enable/disable the formatter integration. |
