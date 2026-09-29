@@ -1,7 +1,7 @@
 # Independent fixture install; the root serves the nested native project too.
 minimumReleaseAgeExclude:
   - rstack
-  - '@rslint/core'
+  - '@rslint/*'
   - '@rstest/core'
   - '@rsbuild/core'
   - '@rslib/core'

@@ -14,7 +14,7 @@ allowBuilds:
 # Each E2E fixture's pnpm-workspace.yaml repeats this list; keep them in step.
 minimumReleaseAgeExclude:
   - rstack
-  - '@rslint/core'
+  - '@rslint/*'
   - '@rstest/core'
   - '@rsbuild/core'
   - '@rslib/core'
