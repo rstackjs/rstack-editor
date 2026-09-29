@@ -1340,6 +1340,7 @@ describe('Rstest public API', () => {
             DEBUG_ONLY: 'yes',
             RSTEST: 'true',
           },
+          pauseForSourceMap: true,
           skipFiles: ['**/vendor/**'],
           outFiles: ['**/compiled/**/*.js'],
         });

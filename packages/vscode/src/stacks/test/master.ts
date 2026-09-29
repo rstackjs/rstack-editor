@@ -826,6 +826,8 @@ export class RstestApi {
             cwd: this.cwd,
             env: workerEnv,
             autoAttachChildProcesses: true,
+            // In-memory test bundles can execute before TS breakpoints bind with js-debug's Node default (#79).
+            pauseForSourceMap: true,
             skipFiles: getConfigValue('debugExclude', this.workspace),
             ...(debugOutFiles.length ? { outFiles: debugOutFiles } : {}),
           },
