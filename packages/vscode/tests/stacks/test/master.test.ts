@@ -283,29 +283,34 @@ describe('RstestApi package-resolution anchor', () => {
     });
   });
 
-  it('lets rstestPackagePath override the bridge anchor', () => {
-    writeCoreInstall(storeEntry);
-    const configured = writeCoreInstall(path.join(root, 'configured'));
-    settings.rstestPackagePath = path.join(
-      configured.packageDir,
-      'package.json',
-    );
+  it.each(['directory', 'relative', 'workspaceFolder'])(
+    'lets corePath override the bridge anchor (%s)',
+    (form) => {
+      writeCoreInstall(storeEntry);
+      const configured = writeCoreInstall(path.join(root, 'configured'));
+      settings.corePath =
+        form === 'relative'
+          ? path.relative(cwd, configured.packageDir)
+          : form === 'workspaceFolder'
+            ? '${workspaceFolder}/' + path.relative(cwd, configured.packageDir)
+            : configured.packageDir;
 
-    expect(resolveRstestPaths(createApi(cwd, rstackDir))).toEqual({
-      paths: {
-        apiPath: path.join(configured.packageDir, 'api.js'),
-        rstestPath: configured.entry,
-      },
-      bin: configured.bin,
-    });
-  });
+      expect(resolveRstestPaths(createApi(cwd, rstackDir))).toEqual({
+        paths: {
+          apiPath: path.join(configured.packageDir, 'api.js'),
+          rstestPath: configured.entry,
+        },
+        bin: configured.bin,
+      });
+    },
+  );
 
   it('resolves the configured core API outside node_modules by self-reference', () => {
     const installed = writeCoreInstall(root);
     const packageDir = path.join(root, 'vendor', 'rstest-core');
     fs.mkdirSync(path.dirname(packageDir), { recursive: true });
     fs.renameSync(installed.packageDir, packageDir);
-    settings.rstestPackagePath = path.join(packageDir, 'package.json');
+    settings.corePath = path.join(packageDir, 'package.json');
 
     expect(resolveRstestPaths(createApi(cwd))).toEqual({
       paths: {
@@ -391,7 +396,7 @@ describe('RstestApi with a missing @rstest/core', () => {
     const logged = loggedWarnings.join('\n');
     expect(logged).toContain('@rstest/core is not installed');
     expect(logged).toContain(`searched from ${noCoreDir}`);
-    expect(logged).toContain('rstestPackagePath');
+    expect(logged).toContain('corePath');
     expect(logged).not.toContain('Require stack');
     expect(reported).toEqual([
       {
@@ -455,21 +460,22 @@ describe('RstestApi with an unusable @rstest/core', () => {
   });
 });
 
-// A configured `rstestPackagePath` that does not resolve is not the
+// A configured `corePath` that does not resolve is not the
 // "dependencies are not installed yet" state — the user picked that path and
 // has to fix it, so silence would strand them.
-describe('RstestApi with an unresolvable rstestPackagePath', () => {
+describe('RstestApi with an unresolvable corePath', () => {
   const configured = `${noCoreDir}/vendor/core/package.json`;
 
   beforeEach(() => {
     shownMessages.length = 0;
-    settings.rstestPackagePath = configured;
+    settings.corePath = configured;
   });
 
-  it('should notify while discovering projects', async () => {
+  it('should notify while discovering projects with an invalid directory', async () => {
+    settings.corePath = path.dirname(configured);
     await expect(createApi().getNormalizedConfig()).rejects.toThrow();
     expect(shownMessages).toHaveLength(1);
-    expect(shownMessages[0]).toContain('rstack.rstest.rstestPackagePath');
+    expect(shownMessages[0]).toContain('rstack.rstest.corePath');
     expect(shownMessages[0]).toContain(configured);
   });
 
@@ -486,13 +492,10 @@ describe('RstestApi with an unresolvable rstestPackagePath', () => {
       expect(resolve).toThrow();
       expect(shownMessages).toHaveLength(1);
 
-      settings.rstestPackagePath = path.join(
-        installed.packageDir,
-        'package.json',
-      );
+      settings.corePath = path.join(installed.packageDir, 'package.json');
       expect(resolve().rstestPath).toBe(installed.entry);
 
-      settings.rstestPackagePath = configured;
+      settings.corePath = configured;
       expect(resolve).toThrow();
       expect(shownMessages).toHaveLength(2);
     } finally {
@@ -506,7 +509,7 @@ describe('RstestApi with an unresolvable rstestPackagePath', () => {
     );
     const installed = writeCoreInstall(root);
     const metadata = path.join(installed.packageDir, 'package.json');
-    settings.rstestPackagePath = metadata;
+    settings.corePath = metadata;
     loggedErrors.length = 0;
     const original = nodeRequire.resolve;
     let broken = true;
@@ -539,7 +542,7 @@ describe('RstestApi with an unresolvable rstestPackagePath', () => {
   it('should notify for a terminal run', () => {
     createApi().runInTerminal({});
     expect(shownMessages).toHaveLength(1);
-    expect(shownMessages[0]).toContain('rstack.rstest.rstestPackagePath');
+    expect(shownMessages[0]).toContain('rstack.rstest.corePath');
     expect(createdTerminals).toEqual([]);
   });
 });

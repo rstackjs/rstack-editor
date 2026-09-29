@@ -257,17 +257,22 @@ suite('local core resolver', () => {
     );
     const document = await createSource('src/index.ts');
 
-    const resolved = await new CoreResolver().resolve(
-      document,
-      temporaryWorkspaceFolder(),
-      { mode: 'native', corePath: 'vendor/rslint-core' },
-    );
+    for (const corePath of [
+      'vendor/rslint-core',
+      'vendor/rslint-core/package.json',
+    ]) {
+      const resolved = await new CoreResolver().resolve(
+        document,
+        temporaryWorkspaceFolder(),
+        { mode: 'native', corePath },
+      );
 
-    await assertSamePhysicalPath(
-      resolved.installation.packageDirectory,
-      packageDirectory,
-    );
-    assert.strictEqual(resolved.installation.version, '3.0.0');
+      await assertSamePhysicalPath(
+        resolved.installation.packageDirectory,
+        packageDirectory,
+      );
+      assert.strictEqual(resolved.installation.version, '3.0.0');
+    }
   });
 
   test('rejects a core package below the supported version floor', async () => {
