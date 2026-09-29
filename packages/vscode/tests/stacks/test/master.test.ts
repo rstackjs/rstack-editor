@@ -1,9 +1,11 @@
-import { EventEmitter } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import os from 'node:os';
+import net from 'node:net';
 import path from 'node:path';
+import type vscode from 'vscode';
 import { afterEach, beforeEach, describe, expect, it, rs } from '@rstest/core';
 import { logger } from '../../../src/stacks/test/logger';
 import {
@@ -18,6 +20,10 @@ import {
   resetUserNodeCaches,
 } from '../../../src/shared/nodeResolution';
 import { status } from '../../../src/stacks/test/status';
+import {
+  DEBUG_PIPE_ENV,
+  DEBUG_PIPE_TOKEN_ENV,
+} from '../../../src/stacks/test/shared/socketRpc';
 import type { TestRunReporter } from '../../../src/stacks/test/testRunReporter';
 import type { WorkerInitOptions } from '../../../src/stacks/test/types';
 import { Worker } from '../../../src/stacks/test/worker';
@@ -80,7 +86,11 @@ const loggedErrors: string[] = [];
 const loggedWarnings: string[] = [];
 const createdTerminals: string[] = [];
 const settings: Record<string, unknown> = {};
-let startDebugging = async (): Promise<boolean> => true;
+let startDebugging = async (
+  _config: vscode.DebugConfiguration,
+): Promise<boolean> => true;
+const debugEvents = new EventEmitter();
+const stopDebugging = rs.fn(async (_session: vscode.DebugSession) => {});
 
 const channel = {
   debug: () => {},
@@ -100,7 +110,31 @@ logger.bind(channel as never);
 rs.mock('vscode', () => {
   const vscode = {
     TestRunProfileKind: { Run: 1, Debug: 2, Coverage: 3 },
-    debug: { startDebugging: () => startDebugging() },
+    debug: {
+      startDebugging: (
+        _workspace: unknown,
+        config: vscode.DebugConfiguration,
+      ) => startDebugging(config),
+      stopDebugging: (session: vscode.DebugSession) => stopDebugging(session),
+      onDidStartDebugSession: (fn: (session: vscode.DebugSession) => void) => {
+        debugEvents.on('start', fn);
+        return {
+          dispose: () => {
+            debugEvents.off('start', fn);
+          },
+        };
+      },
+      onDidTerminateDebugSession: (
+        fn: (session: vscode.DebugSession) => void,
+      ) => {
+        debugEvents.on('end', fn);
+        return {
+          dispose: () => {
+            debugEvents.off('end', fn);
+          },
+        };
+      },
+    },
     env: { shell: '/bin/sh' },
     FileCoverage: class {},
     Position: class {},
@@ -873,6 +907,7 @@ describe('Rstest public API', () => {
     shownMessages.length = 0;
     loggedWarnings.length = 0;
     startDebugging = async () => true;
+    stopDebugging.mockClear();
     resetUserNodeCaches();
     settings['rstack.nodeExecutable'] = process.execPath;
     await configuredNodeBelowFloor(process.execPath, {
@@ -1250,20 +1285,7 @@ describe('Rstest public API', () => {
       );
     });
 
-    it('closes a spawned worker when debugger attachment rejects', async () => {
-      startDebugging = async () => {
-        throw new Error('Debugger attachment failed.');
-      };
-      const api = createApi(root);
-      await expect(api.createChildProcess(undefined, true)).rejects.toThrow(
-        'Debugger attachment failed.',
-      );
-      expect(spawnedProcesses[0].killSignals).toEqual(['SIGTERM']);
-      expect((api as any).workers.size).toBe(0);
-      expect(runningWorkers.size).toBe(0);
-    });
-
-    it('closes a worker when disposal starts during debugger attachment', async () => {
+    it('settles disposal while debug launch is still pending', async () => {
       const attachment = Promise.withResolvers<boolean>();
       const started = Promise.withResolvers<void>();
       startDebugging = () => {
@@ -1272,17 +1294,270 @@ describe('Rstest public API', () => {
       };
       const api = createApi(root);
       const starting = api.createChildProcess(undefined, true);
-      await started.promise;
-      // dispose() sets this flag synchronously before closing its current worker
-      // snapshot; isolate the post-attach guard from the close RPC exercised by
-      // the disposal tests above.
-      (api as any).disposed = true;
-      attachment.resolve(true);
-      await expect(starting).rejects.toThrow(
-        'worker spawn aborted: this master was disposed while the debugger was attaching',
+      const rejected = expect(starting).rejects.toThrow(
+        'Rstest debug worker stopped',
       );
-      expect(spawnedProcesses[0].killSignals).toEqual(['SIGTERM']);
+      await started.promise;
+      await api.dispose();
+      await rejected;
+      attachment.resolve(true);
       expect(runningWorkers.size).toBe(0);
+    });
+
+    it('preserves user settings in the debug launch configuration', async () => {
+      settings.nodeExecArgs = ['--enable-source-maps'];
+      settings.nodeEnv = {
+        NODE_ENV: 'custom',
+        SHARED: 'node',
+        RSTEST: 'false',
+      };
+      settings.debugNodeEnv = { SHARED: 'debug', DEBUG_ONLY: 'yes' };
+      settings.debugExclude = ['**/vendor/**'];
+      settings.debugOutFiles = ['**/compiled/**/*.js'];
+      let configuration!: vscode.DebugConfiguration;
+      let socket!: net.Socket;
+      const api = createApi(root);
+      startDebugging = async (config) => {
+        configuration = config;
+        debugEvents.emit('start', { configuration });
+        socket = net.connect(config.env[DEBUG_PIPE_ENV]);
+        socket.on('error', (error) => {
+          expect(error).toMatchObject({ code: 'ECONNRESET' });
+        });
+        socket.write(`${config.env[DEBUG_PIPE_TOKEN_ENV]}\n`);
+        return true;
+      };
+      try {
+        await api.createChildProcess(undefined, true);
+        expect(configuration).toMatchObject({
+          runtimeArgs: ['--enable-source-maps'],
+          env: {
+            NODE_ENV: 'custom',
+            SHARED: 'debug',
+            DEBUG_ONLY: 'yes',
+            RSTEST: 'true',
+          },
+          skipFiles: ['**/vendor/**'],
+          outFiles: ['**/compiled/**/*.js'],
+        });
+      } finally {
+        socket?.destroy();
+        await api.dispose();
+      }
+    });
+
+    it.each(['wrong token', 'no token'])(
+      'accepts the worker after a connection with %s',
+      async (kind) => {
+        const sockets: net.Socket[] = [];
+        const received: Buffer[] = [];
+        const api = createApi(root);
+        startDebugging = async (configuration) => {
+          debugEvents.emit('start', { configuration });
+          const endpoint = configuration.env[DEBUG_PIPE_ENV];
+          const secret = configuration.env[DEBUG_PIPE_TOKEN_ENV];
+          expect(secret).toBeTruthy();
+          expect(secret).not.toBe(configuration.rstestDebugId);
+          const bad = net.connect(endpoint);
+          bad.on('error', (error) => {
+            expect(error).toMatchObject({ code: 'ECONNRESET' });
+          });
+          sockets.push(bad);
+          bad.on('data', (data) => received.push(data));
+          // events.once rejects on error, but the master may reset rejected peers.
+          const closed = new Promise<void>((resolve) =>
+            bad.once('close', () => resolve()),
+          );
+          if (kind === 'wrong token') bad.write(`wrong\n${secret}\n`);
+          else bad.end();
+          await closed;
+          const idle = net.connect(endpoint);
+          idle.on('error', (error) => {
+            expect(error).toMatchObject({ code: 'ECONNRESET' });
+          });
+          sockets.push(idle);
+          idle.on('data', (data) => received.push(data));
+          await once(idle, 'connect');
+          const good = net.connect(endpoint);
+          good.on('error', (error) => {
+            expect(error).toMatchObject({ code: 'ECONNRESET' });
+          });
+          sockets.push(good);
+          good.write(`${secret}\n`);
+          return true;
+        };
+        try {
+          const { worker } = await api.createChildProcess(undefined, true);
+          const message = once(sockets[2], 'data');
+          const response = expect(worker.closeWatcher()).rejects.toThrow();
+          const [data] = await message;
+          expect(JSON.parse(data.toString())).toMatchObject({
+            m: 'closeWatcher',
+          });
+          const idleClosed = new Promise<void>((resolve) =>
+            sockets[1].once('close', () => resolve()),
+          );
+          await api.dispose();
+          await idleClosed;
+          await response;
+          expect(received).toEqual([]);
+        } finally {
+          for (const socket of sockets) socket.destroy();
+          await api.dispose();
+        }
+      },
+    );
+
+    it.skipIf(process.platform === 'win32')(
+      'uses a private /tmp socket when TMPDIR is too long in bytes',
+      async () => {
+        rs.spyOn(os, 'tmpdir').mockReturnValue(`/tmp/${'é'.repeat(50)}`);
+        const api = createApi(root);
+        let socket: net.Socket | undefined;
+        startDebugging = async (configuration) => {
+          const endpoint = configuration.env[DEBUG_PIPE_ENV];
+          expect(path.dirname(path.dirname(endpoint))).toBe('/tmp');
+          expect(fs.statSync(path.dirname(endpoint)).mode & 0o777).toBe(0o700);
+          socket = net.connect(endpoint);
+          socket.on('error', (error) => {
+            expect(error).toMatchObject({ code: 'ECONNRESET' });
+          });
+          socket.write(`${configuration.env[DEBUG_PIPE_TOKEN_ENV]}\n`);
+          return true;
+        };
+        try {
+          await api.createChildProcess(undefined, true);
+        } finally {
+          socket?.destroy();
+          await api.dispose();
+        }
+      },
+    );
+
+    it('cancels before the debug worker connects', async () => {
+      const { token, cancel } = createRunContext();
+      const started = Promise.withResolvers<void>();
+      startDebugging = async (config) => {
+        debugEvents.emit('start', { configuration: config });
+        started.resolve();
+        return true;
+      };
+      const api = createApi(root);
+      const starting = api.createChildProcess(
+        undefined,
+        true,
+        undefined,
+        token,
+      );
+      const rejected = expect(starting).rejects.toThrow(
+        'Rstest debug run cancelled',
+      );
+      await started.promise;
+      cancel();
+      await rejected;
+      expect(stopDebugging).toHaveBeenCalledTimes(1);
+      expect(runningWorkers.size).toBe(0);
+    });
+
+    it('reports a rejected launch without waiting for a connection', async () => {
+      const { reporter, reported } = createStatusRecorder();
+      status.bind(reporter);
+      startDebugging = async () => false;
+      await expect(
+        createApi(root).createChildProcess(undefined, true),
+      ).rejects.toThrow('Failed to launch Rstest debug worker');
+      expect(reported.filter((state) => state.kind === 'crashed')).toEqual([
+        {
+          kind: 'crashed',
+          detail: 'worker launch failed: Failed to launch Rstest debug worker',
+        },
+      ]);
+      expect(runningWorkers.size).toBe(0);
+      expect(debugEvents.listenerCount('start')).toBe(0);
+      expect(debugEvents.listenerCount('end')).toBe(0);
+    });
+
+    it.each(['unexpected', 'cancelled', 'disposed', 'closed'])(
+      'reports a crash only for an unexpected debug session end (%s)',
+      async (ending) => {
+        const { reporter, reported } = createStatusRecorder();
+        status.bind(reporter);
+        const { token, cancel } = createRunContext();
+        const api = createApi(root);
+        let socket: net.Socket | undefined;
+        let configuration!: vscode.DebugConfiguration;
+        startDebugging = async (config) => {
+          configuration = config;
+          debugEvents.emit('start', { configuration });
+          socket = net.connect(config.env[DEBUG_PIPE_ENV]);
+          socket.on('error', (error) => {
+            expect(error).toMatchObject({ code: 'ECONNRESET' });
+          });
+          socket.write(`${config.env[DEBUG_PIPE_TOKEN_ENV]}\n`);
+          return true;
+        };
+        try {
+          const { worker } = await api.createChildProcess(
+            undefined,
+            true,
+            undefined,
+            token,
+          );
+          expect(status.hasFailed(`test://${root}`)).toBe(false);
+          if (ending === 'cancelled') cancel();
+          if (ending === 'disposed') await api.dispose();
+          if (ending === 'closed') worker.$close();
+          debugEvents.emit('end', { configuration });
+          expect(status.hasFailed(`test://${root}`)).toBe(
+            ending === 'unexpected',
+          );
+          expect(reported.filter((state) => state.kind === 'crashed')).toEqual(
+            ending === 'unexpected'
+              ? [
+                  {
+                    kind: 'crashed',
+                    detail:
+                      'worker exited unexpectedly: Rstest debug session ended',
+                  },
+                ]
+              : [],
+          );
+        } finally {
+          socket?.destroy();
+          await api.dispose();
+        }
+      },
+    );
+
+    it('stops the session on worker exit and makes repeated RPC close harmless', async () => {
+      let socket!: net.Socket;
+      let endpoint!: string;
+      startDebugging = async (configuration) => {
+        debugEvents.emit('start', { configuration });
+        endpoint = configuration.env[DEBUG_PIPE_ENV];
+        socket = net.connect(endpoint);
+        socket.on('error', (error) => {
+          expect(error).toMatchObject({ code: 'ECONNRESET' });
+        });
+        socket.write(`${configuration.env[DEBUG_PIPE_TOKEN_ENV]}\n`);
+        return true;
+      };
+      const { worker } = await createApi(root).createChildProcess(
+        undefined,
+        true,
+      );
+      const pending = expect(worker.closeWatcher()).rejects.toThrow();
+      socket.destroy();
+      await pending;
+      worker.$close();
+      worker.$close();
+      expect(stopDebugging).toHaveBeenCalled();
+      expect(runningWorkers.size).toBe(0);
+      if (process.platform !== 'win32') {
+        await expect
+          .poll(() => fs.existsSync(path.dirname(endpoint)))
+          .toBe(false);
+      }
     });
   });
 });
