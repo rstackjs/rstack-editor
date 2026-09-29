@@ -3,6 +3,7 @@
 **
 !dist/**/*.js
 !dist/**/*.node
+!dist/*.licenses.json
 !icon.png
 !LICENSE
 !README.md

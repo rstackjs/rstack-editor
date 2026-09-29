@@ -27,6 +27,7 @@ export class PluginLintPool {
   private readonly shutdowns = new Set<Promise<void>>();
   private opChain: Promise<void> = Promise.resolve();
   private disposed = false;
+  hostFailure: string | undefined;
 
   constructor(
     private readonly logger: WorkerLogger,
@@ -98,6 +99,8 @@ export class PluginLintPool {
         this.generations.set(generation, state);
         ready = true;
       } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        const cause = message.split('\n', 1)[0];
         const state: HostGeneration = {
           fingerprint,
           ready: false,
@@ -106,7 +109,10 @@ export class PluginLintPool {
         };
         this.liveStates.add(state);
         this.generations.set(generation, state);
-        this.logger.error('Failed to initialize ESLint-plugin host', error);
+        if (this.hostFailure !== cause) {
+          this.logger.error('Failed to initialize ESLint-plugin host', error);
+        }
+        this.hostFailure = cause;
       }
     });
     return ready;
@@ -135,7 +141,9 @@ export class PluginLintPool {
         generation,
         previousGeneration,
         previousState: previous,
+        previousHostFailure: this.hostFailure,
       };
+      if (next.ready) this.hostFailure = undefined;
       committed = true;
     });
     return committed;
@@ -149,6 +157,7 @@ export class PluginLintPool {
         const aborted = this.activeState;
         this.activeGeneration = rollback.previousGeneration;
         this.activeState = rollback.previousState;
+        this.hostFailure = rollback.previousHostFailure;
         this.activeCommitRollback = undefined;
         if (rollback.previousGeneration) {
           this.cancelGenerationRetirement(rollback.previousGeneration);
@@ -370,4 +379,5 @@ interface ActiveCommitRollback {
   generation: string;
   previousGeneration: string | undefined;
   previousState: HostGeneration | undefined;
+  previousHostFailure: string | undefined;
 }

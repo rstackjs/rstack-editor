@@ -262,6 +262,8 @@ export async function runLintWorker(
       configError = undefined;
       if (message !== undefined) return { kind: 'error', message };
       if (failure !== undefined) return { kind: 'missing', failure };
+      const cause = pluginLintPool.hostFailure;
+      if (cause !== undefined) return { kind: 'plugin', cause };
       return { kind: 'ok' };
     },
     observeRefresh: (reason) => fingerprinter.observeRefresh(reason),

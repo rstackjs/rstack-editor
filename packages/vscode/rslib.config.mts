@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, type LibConfig, rspack } from '@rslib/core';
+import WebpackLicensePlugin from 'webpack-license-plugin';
 
 const require = createRequire(import.meta.url);
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
@@ -47,6 +48,7 @@ const lintWorkerEntry = './src/stacks/lint/worker/main.ts';
 
 const libs: LibConfig[] = [
   {
+    id: 'extension',
     syntax: 'es2023',
     format: 'cjs',
     source: {
@@ -85,6 +87,7 @@ const libs: LibConfig[] = [
 
 if (hasWorkerEntry) {
   libs.push({
+    id: 'worker',
     syntax: 'es2023',
     format: 'cjs',
     source: {
@@ -103,6 +106,7 @@ if (hasWorkerEntry) {
 }
 
 libs.push({
+  id: 'lint-worker',
   syntax: 'es2023',
   format: 'cjs',
   source: {
@@ -133,5 +137,20 @@ export default defineConfig(({ envMode }) => {
     sourceMap: devBuild,
     minify: !devBuild,
   };
-  return { lib: libs.map((lib) => ({ ...lib, output })) };
+  return {
+    lib: libs.map((lib) => ({ ...lib, output })),
+    tools: {
+      rspack: (_, { appendPlugins, environment }) => {
+        appendPlugins(
+          new WebpackLicensePlugin({
+            outputFilename: `${environment.name}.licenses.json`,
+            includePackages: () =>
+              environment.name === 'extension'
+                ? [path.dirname(yukuBindingPath)]
+                : [],
+          }),
+        );
+      },
+    },
+  };
 });

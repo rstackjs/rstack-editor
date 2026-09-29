@@ -7,6 +7,7 @@ export const CONFIG_DEPENDENCY_STATUS_NOTIFICATION =
 export type ConfigDependencyStatusNotification =
   | { readonly kind: 'ok' }
   | { readonly kind: 'missing'; readonly failure: ConfigDependencyFailure }
+  | { readonly kind: 'plugin'; readonly cause: string }
   | { readonly kind: 'error'; readonly message: string };
 
 /** Shared with the editor's startup retry; this module stays vscode-free. */

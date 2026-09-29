@@ -289,6 +289,11 @@ async function main(): Promise<void> {
       tests: suiteDir('suite-eslint-plugins'),
     },
     {
+      name: 'Plugin-host failure tests',
+      workspace: fixture('plugin-host-failure'),
+      tests: suiteDir('suite-plugin-host-failure'),
+    },
+    {
       name: 'unicode-bom tests',
       workspace: fixture('unicode-bom'),
       tests: suiteDir('suite-unicode-bom'),

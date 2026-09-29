@@ -26,13 +26,10 @@ export const waitForDiagnostics = waitForRslintDiagnostics;
  * Wait until the rslint diagnostics for `doc` include every given rule-id
  * fragment.
  *
- * Deviation from the upstream suites, which assert on the first non-empty
- * publish: since @rslint/core 0.8.1 (web-infra-dev/rslint#1790), a file
- * created after its project was loaded is served by a type-info-less fallback
- * Program until a watcher event admits it into the configured project, so the
- * first non-empty publish may carry only non-type-aware rules on platforms
- * with slow file watchers (macOS). Waiting for the expected diagnostics keeps
- * the terminal assertion identical without depending on publish batching.
+ * Upstream also waits for the typed rule (72cd2b1f), since the first publish
+ * may contain only non-type-aware rules. Our only deviation is matching
+ * diagnostic.code, where our enrichment puts rule ids, instead of upstream's
+ * message prefix.
  */
 export function waitForDiagnosticsWithRuleIds(
   doc: vscode.TextDocument,
@@ -48,6 +45,15 @@ export function waitForDiagnosticsWithRuleIds(
 }
 export const waitForDiagnosticsCount = waitForRslintDiagnosticsCount;
 export const waitForDiagnosticsToChange = waitForRslintDiagnosticsToChange;
+
+export function waitForTypeAssertionDiagnostics(
+  document: vscode.TextDocument,
+): Promise<vscode.Diagnostic[]> {
+  return waitForDiagnosticsWithRuleIds(
+    document,
+    'no-unnecessary-type-assertion',
+  );
+}
 
 export function getFixturesDir(): string {
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];

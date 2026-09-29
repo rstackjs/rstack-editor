@@ -1,10 +1,9 @@
-// Ported from web-infra-dev/rslint (deviation: setup waits go through
-// waitForDiagnosticsWithRuleIds -- see fixall-helpers.ts for why).
+// Ported from web-infra-dev/rslint (typed setup waits from 72cd2b1f).
 // `packages/vscode-extension/__tests__/suite/fixall-error.test.ts` (origin/main).
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import {
-  waitForDiagnosticsWithRuleIds,
+  waitForTypeAssertionDiagnostics,
   waitForContentChange,
   diagnosticRuleIdIncludes,
   findFixAllAction,
@@ -59,10 +58,7 @@ suite('rslint fixAll - error flows', function () {
         editor,
         "const pVal: string = 'x';\nconst pRes = (pVal as string).trim();\n",
       );
-      const probeDiags = await waitForDiagnosticsWithRuleIds(
-        doc,
-        'no-unnecessary-type-assertion',
-      );
+      const probeDiags = await waitForTypeAssertionDiagnostics(doc);
       assert.ok(
         probeDiags.some((d) =>
           diagnosticRuleIdIncludes(d, 'no-unnecessary-type-assertion'),
