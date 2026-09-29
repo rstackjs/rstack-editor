@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@rstest/core": "0.12.1",
+    "@rstest/core": "0.12.2",
     "rstack": "0.8.0"
   }
 }
