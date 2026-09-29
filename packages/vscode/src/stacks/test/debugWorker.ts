@@ -1,17 +1,15 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmdirSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { createBirpc } from 'birpc';
 import vscode from 'vscode';
 import { rpcErrorCodec } from './shared/rpc';
-import { socketRpc } from './shared/socketRpc';
+import { DEBUG_PIPE_ENV, socketRpc } from './shared/socketRpc';
 import type { TestRunReporter } from './testRunReporter';
 import type { Worker } from './worker';
 import { logger } from './logger';
-
-export const DEBUG_PIPE_ENV = 'RSTACK_RSTEST_DEBUG_PIPE';
 
 /** Own the launch session and its local RPC socket as one lifetime. */
 export function createDebugWorker(
@@ -28,16 +26,14 @@ export function createDebugWorker(
     : `\\\\.\\pipe\\rstest-${id}`;
   const server = net.createServer();
   let socket: net.Socket | undefined;
+  let rpc: ReturnType<typeof socketRpc> | undefined;
   let receive: ((data: unknown) => void) | undefined;
   let session: vscode.DebugSession | undefined;
   const ready = Promise.withResolvers<void>();
-  const closed = Promise.withResolvers<never>();
   // Closing before start() must not produce an unhandled rejection.
   void ready.promise.catch(() => {});
-  void closed.promise.catch(() => {});
   const subscriptions: vscode.Disposable[] = [];
-  let timer: NodeJS.Timeout | undefined;
-  let cleanedUp = false;
+  let reason: Error | undefined;
   const stop = () => {
     if (session) {
       void vscode.debug.stopDebugging(session).then(undefined, (error) => {
@@ -46,7 +42,7 @@ export function createDebugWorker(
     }
   };
   const worker = createBirpc<Worker, TestRunReporter>(reporter, {
-    post: (data) => socket && socketRpc(socket).post(data),
+    post: (data) => rpc?.post(data),
     on: (fn) => {
       receive = fn;
     },
@@ -54,39 +50,32 @@ export function createDebugWorker(
     ...rpcErrorCodec,
     timeout: 600_000,
     off: () => {
-      // birpc invokes off even when $close is called more than once.
-      if (cleanedUp) return;
-      cleanedUp = true;
-      if (timer) clearTimeout(timer);
-      ready.reject(new Error('Rstest debug worker stopped before connecting'));
-      closed.reject(new Error('Rstest debug worker stopped'));
+      ready.reject(reason ?? new Error('Rstest debug worker stopped'));
       socket?.destroy();
-      server.close(() => {
-        if (directory) rmdirSync(directory);
-      });
+      server.close();
+      if (directory) rmSync(directory, { recursive: true, force: true });
       stop();
       for (const disposable of subscriptions) disposable.dispose();
       onClose();
     },
   });
   const fail = (error: Error) => {
-    ready.reject(error);
-    closed.reject(error);
+    reason ??= error;
     if (!worker.$closed) worker.$close(error);
   };
   server.on('error', fail);
   server.on('connection', (connection) => {
-    if (socket || worker.$closed) {
+    if (socket) {
       connection.destroy();
       return;
     }
     socket = connection;
-    socketRpc(socket).on((data) => receive?.(data));
+    rpc = socketRpc(connection);
+    rpc.on((data) => receive?.(data));
     socket.on('error', fail);
     socket.on('close', () =>
       fail(new Error('Rstest debug worker disconnected')),
     );
-    if (timer) clearTimeout(timer);
     ready.resolve();
   });
 
@@ -99,13 +88,11 @@ export function createDebugWorker(
       token?: vscode.CancellationToken,
     ) {
       const matches = (candidate: vscode.DebugSession) =>
-        candidate.configuration.rstestDebugId === id &&
-        !candidate.parentSession;
+        candidate.configuration.rstestDebugId === id;
       subscriptions.push(
         vscode.debug.onDidStartDebugSession((candidate) => {
           if (!matches(candidate)) return;
           session = candidate;
-          if (worker.$closed) stop();
         }),
         vscode.debug.onDidTerminateDebugSession((candidate) => {
           if (matches(candidate)) fail(new Error('Rstest debug session ended'));
@@ -118,46 +105,24 @@ export function createDebugWorker(
           ),
         );
       try {
-        if (worker.$closed || token?.isCancellationRequested) {
+        if (token?.isCancellationRequested) {
           throw new Error('Rstest debug run cancelled');
         }
-        await Promise.race([
-          new Promise<void>((resolve) => server.listen(endpoint, resolve)),
-          closed.promise,
-        ]);
-        if (worker.$closed) throw new Error('Rstest debug run cancelled');
-        timer = setTimeout(
-          () => fail(new Error('Timed out starting Rstest debug worker')),
-          30_000,
-        );
-        // Keep the start listener alive until the launch request settles: a
-        // cancelled launch can still publish its session afterwards.
-        const lateStart = vscode.debug.onDidStartDebugSession((candidate) => {
-          if (matches(candidate) && worker.$closed) {
-            void vscode.debug.stopDebugging(candidate);
-          }
+        server.listen(endpoint);
+        const launch = Promise.resolve(
+          vscode.debug.startDebugging(
+            workspace,
+            {
+              ...configuration,
+              rstestDebugId: id,
+              env: { ...configuration.env, [DEBUG_PIPE_ENV]: endpoint },
+            },
+            { testRun },
+          ),
+        ).then((started) => {
+          if (!started) throw new Error('Failed to launch Rstest debug worker');
         });
-        const launch = Promise.resolve()
-          .then(() =>
-            vscode.debug.startDebugging(
-              workspace,
-              {
-                ...configuration,
-                rstestDebugId: id,
-                env: { ...configuration.env, [DEBUG_PIPE_ENV]: endpoint },
-              },
-              { testRun },
-            ),
-          )
-          .then((started) => {
-            if (!started)
-              throw new Error('Failed to launch Rstest debug worker');
-          })
-          .finally(() => lateStart.dispose());
-        await Promise.race([
-          Promise.all([launch, ready.promise]),
-          closed.promise,
-        ]);
+        await Promise.all([launch, ready.promise]);
         if (worker.$closed)
           throw new Error('Rstest debug worker stopped during launch');
       } catch (error) {

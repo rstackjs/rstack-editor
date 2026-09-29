@@ -608,10 +608,6 @@ export class RstestApi {
       run,
       token,
     );
-    if (token.isCancellationRequested) {
-      await closeWorkerGracefully(worker);
-      return;
-    }
     const cancellation = token.onCancellationRequested(() => {
       void closeWorkerGracefully(worker).finally(onFinish);
     });
