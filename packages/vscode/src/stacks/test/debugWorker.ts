@@ -6,7 +6,11 @@ import path from 'node:path';
 import { createBirpc } from 'birpc';
 import vscode from 'vscode';
 import { rpcErrorCodec } from './shared/rpc';
-import { DEBUG_PIPE_ENV, socketRpc } from './shared/socketRpc';
+import {
+  DEBUG_PIPE_ENV,
+  DEBUG_PIPE_TOKEN_ENV,
+  socketRpc,
+} from './shared/socketRpc';
 import type { TestRunReporter } from './testRunReporter';
 import type { Worker } from './worker';
 import { logger } from './logger';
@@ -17,14 +21,22 @@ export function createDebugWorker(
   onClose: () => void,
 ) {
   const id = randomUUID();
+  const secret = randomUUID();
+  const prefix = path.join(os.tmpdir(), 'rstest-');
   const directory =
     process.platform === 'win32'
       ? undefined
-      : mkdtempSync(path.join(os.tmpdir(), 'rstest-'));
+      : mkdtempSync(
+          Buffer.byteLength(`${prefix}XXXXXX/rpc`) >=
+            (process.platform === 'darwin' ? 104 : 108)
+            ? '/tmp/rstest-'
+            : prefix,
+        );
   const endpoint = directory
     ? path.join(directory, 'rpc')
     : `\\\\.\\pipe\\rstest-${id}`;
   const server = net.createServer();
+  const pending = new Set<net.Socket>();
   let socket: net.Socket | undefined;
   let rpc: ReturnType<typeof socketRpc> | undefined;
   let receive: ((data: unknown) => void) | undefined;
@@ -52,6 +64,7 @@ export function createDebugWorker(
     off: () => {
       ready.reject(reason ?? new Error('Rstest debug worker stopped'));
       socket?.destroy();
+      for (const connection of pending) connection.destroy();
       server.close();
       if (directory) rmSync(directory, { recursive: true, force: true });
       stop();
@@ -69,14 +82,25 @@ export function createDebugWorker(
       connection.destroy();
       return;
     }
-    socket = connection;
-    rpc = socketRpc(connection);
-    rpc.on((data) => receive?.(data));
-    socket.on('error', fail);
-    socket.on('close', () =>
-      fail(new Error('Rstest debug worker disconnected')),
-    );
-    ready.resolve();
+    pending.add(connection);
+    const transport = socketRpc(connection, (token) => {
+      if (token !== secret || socket) return false;
+      pending.delete(connection);
+      socket = connection;
+      rpc = transport;
+      ready.resolve();
+      return true;
+    });
+    transport.on((data) => receive?.(data));
+    connection.on('error', (error) => {
+      if (connection === socket) fail(error);
+      else connection.destroy();
+    });
+    connection.on('close', () => {
+      pending.delete(connection);
+      if (connection === socket)
+        fail(new Error('Rstest debug worker disconnected'));
+    });
   });
 
   return {
@@ -115,7 +139,11 @@ export function createDebugWorker(
             {
               ...configuration,
               rstestDebugId: id,
-              env: { ...configuration.env, [DEBUG_PIPE_ENV]: endpoint },
+              env: {
+                ...configuration.env,
+                [DEBUG_PIPE_ENV]: endpoint,
+                [DEBUG_PIPE_TOKEN_ENV]: secret,
+              },
             },
             { testRun },
           ),

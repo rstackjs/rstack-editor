@@ -1,4 +1,4 @@
-import { EventEmitter } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
@@ -20,7 +20,10 @@ import {
   resetUserNodeCaches,
 } from '../../../src/shared/nodeResolution';
 import { status } from '../../../src/stacks/test/status';
-import { DEBUG_PIPE_ENV } from '../../../src/stacks/test/shared/socketRpc';
+import {
+  DEBUG_PIPE_ENV,
+  DEBUG_PIPE_TOKEN_ENV,
+} from '../../../src/stacks/test/shared/socketRpc';
 import type { TestRunReporter } from '../../../src/stacks/test/testRunReporter';
 import type { WorkerInitOptions } from '../../../src/stacks/test/types';
 import { Worker } from '../../../src/stacks/test/worker';
@@ -1318,6 +1321,7 @@ describe('Rstest public API', () => {
         configuration = config;
         debugEvents.emit('start', { configuration });
         socket = net.connect(config.env[DEBUG_PIPE_ENV]);
+        socket.write(`${config.env[DEBUG_PIPE_TOKEN_ENV]}\n`);
         return true;
       };
       try {
@@ -1338,6 +1342,77 @@ describe('Rstest public API', () => {
         await api.dispose();
       }
     });
+
+    it.each(['wrong token', 'no token'])(
+      'accepts the worker after a connection with %s',
+      async (kind) => {
+        const sockets: net.Socket[] = [];
+        const received: Buffer[] = [];
+        const api = createApi(root);
+        startDebugging = async (configuration) => {
+          debugEvents.emit('start', { configuration });
+          const endpoint = configuration.env[DEBUG_PIPE_ENV];
+          const secret = configuration.env[DEBUG_PIPE_TOKEN_ENV];
+          expect(secret).toBeTruthy();
+          expect(secret).not.toBe(configuration.rstestDebugId);
+          const bad = net.connect(endpoint);
+          sockets.push(bad);
+          bad.on('data', (data) => received.push(data));
+          const closed = once(bad, 'close');
+          if (kind === 'wrong token') bad.write(`wrong\n${secret}\n`);
+          else bad.end();
+          await closed;
+          const idle = net.connect(endpoint);
+          sockets.push(idle);
+          idle.on('data', (data) => received.push(data));
+          await once(idle, 'connect');
+          const good = net.connect(endpoint);
+          sockets.push(good);
+          good.write(`${secret}\n`);
+          return true;
+        };
+        try {
+          const { worker } = await api.createChildProcess(undefined, true);
+          const message = once(sockets[2], 'data');
+          const response = expect(worker.closeWatcher()).rejects.toThrow();
+          const [data] = await message;
+          expect(JSON.parse(data.toString())).toMatchObject({
+            m: 'closeWatcher',
+          });
+          const idleClosed = once(sockets[1], 'close');
+          await api.dispose();
+          await idleClosed;
+          await response;
+          expect(received).toEqual([]);
+        } finally {
+          for (const socket of sockets) socket.destroy();
+          await api.dispose();
+        }
+      },
+    );
+
+    it.skipIf(process.platform === 'win32')(
+      'uses a private /tmp socket when TMPDIR is too long in bytes',
+      async () => {
+        rs.spyOn(os, 'tmpdir').mockReturnValue(`/tmp/${'é'.repeat(50)}`);
+        const api = createApi(root);
+        let socket: net.Socket | undefined;
+        startDebugging = async (configuration) => {
+          const endpoint = configuration.env[DEBUG_PIPE_ENV];
+          expect(path.dirname(path.dirname(endpoint))).toBe('/tmp');
+          expect(fs.statSync(path.dirname(endpoint)).mode & 0o777).toBe(0o700);
+          socket = net.connect(endpoint);
+          socket.write(`${configuration.env[DEBUG_PIPE_TOKEN_ENV]}\n`);
+          return true;
+        };
+        try {
+          await api.createChildProcess(undefined, true);
+        } finally {
+          socket?.destroy();
+          await api.dispose();
+        }
+      },
+    );
 
     it('cancels before the debug worker connects', async () => {
       const { token, cancel } = createRunContext();
@@ -1381,6 +1456,7 @@ describe('Rstest public API', () => {
         debugEvents.emit('start', { configuration });
         endpoint = configuration.env[DEBUG_PIPE_ENV];
         socket = net.connect(endpoint);
+        socket.write(`${configuration.env[DEBUG_PIPE_TOKEN_ENV]}\n`);
         return true;
       };
       const { worker } = await createApi(root).createChildProcess(

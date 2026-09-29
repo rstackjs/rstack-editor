@@ -7,7 +7,11 @@ import type { TestRunReporter } from '../testRunReporter';
 import type { NormalizedConfigResult, WorkerInitOptions } from '../types';
 import { retractForceColorIfDisabled } from '../shared/colorEnv';
 import { rpcErrorCodec } from '../shared/rpc';
-import { DEBUG_PIPE_ENV, socketRpc } from '../shared/socketRpc';
+import {
+  DEBUG_PIPE_ENV,
+  DEBUG_PIPE_TOKEN_ENV,
+  socketRpc,
+} from '../shared/socketRpc';
 import { logger } from './logger';
 import { CoverageReporter, ProgressLogger, ProgressReporter } from './reporter';
 
@@ -211,8 +215,11 @@ const worker = new Worker();
 // Consume before loading project code so pool children cannot inherit the
 // master's RPC endpoint. js-debug's own environment is left untouched.
 const debugEndpoint = process.env[DEBUG_PIPE_ENV];
+const debugToken = process.env[DEBUG_PIPE_TOKEN_ENV];
 delete process.env[DEBUG_PIPE_ENV];
+delete process.env[DEBUG_PIPE_TOKEN_ENV];
 const debugSocket = debugEndpoint ? connect(debugEndpoint) : undefined;
+debugSocket?.write(`${debugToken}\n`);
 export const masterApi = createBirpc<TestRunReporter, Worker>(worker, {
   ...(debugSocket
     ? socketRpc(debugSocket)
