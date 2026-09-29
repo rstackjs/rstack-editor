@@ -182,10 +182,13 @@ export const parseTestFile = (
       node.operator === '=' &&
       node.left.type === 'Identifier'
     ) {
-      // Walking a deferred body must not mutate its enclosing function's names.
+      // Keep deferred writes to outer bindings in a function-local overlay.
       for (let index = scopes.length - 1; index >= 0; index--) {
         const scope = scopes[index];
-        if (scope.names.has(node.left.name)) {
+        if (
+          scope.names.has(node.left.name) ||
+          (scope.isFunction && scopeOf(node.left.name))
+        ) {
           scope.names.set(
             node.left.name,
             getFunctionName(node.right, node.left.name),
@@ -259,8 +262,8 @@ export const parseTestFile = (
       node.type === 'BlockStatement' ||
       node.type === 'StaticBlock'
         ? node.body
-        : node.type === 'SwitchCase'
-          ? node.consequent
+        : node.type === 'SwitchStatement'
+          ? node.cases.flatMap((branch) => branch.consequent)
           : [];
     for (const statement of statements) {
       const declaration =

@@ -582,20 +582,29 @@ describe('outer', () => {
       'hoisted static block function': `const F = function Outer() {}; class C { static { test(F, () => {}); function F() {} } }`,
       'hoisted switch case function': `const F = function Outer() {}; switch (1) { case 1: test(F, () => {}); function F() {} }`,
       'nested deferred suites': `describe('outer', () => { describe('inner', () => { test('leaf', () => {}); }); });`,
+      'callback-local assignment overlay': `let T = function Before() {}; describe('g', () => { T = function After() {}; test(T, () => {}); }); test(T, () => {});`,
+      'hoisting across switch cases': `const F = function Outer() {}; switch (1) { case 1: test(F, () => {}); break; case 2: function F() {} }`,
     };
 
     for (const [label, code] of Object.entries(cases)) {
       const runtime: string[] = [];
+      let suite: string[] = [];
       const pending: (() => void)[] = [];
       const register = (title: string | { name: string }) => {
-        runtime.push(
-          typeof title === 'string' ? title : title.name || '<anonymous>',
-        );
+        const name =
+          typeof title === 'string' ? title : title.name || '<anonymous>';
+        runtime.push([...suite, name].join(' > '));
+        return name;
       };
       new Function('describe', 'test', code)(
         (title: string | { name: string }, body: () => void) => {
-          register(title);
-          pending.push(body);
+          const name = register(title);
+          const parent = suite;
+          pending.push(() => {
+            suite = [...parent, name];
+            body();
+            suite = parent;
+          });
         },
         register,
       );
@@ -605,13 +614,24 @@ describe('outer', () => {
       }
 
       const names: string[] = [];
+      const parents: string[] = [];
       parseTestFile(code, {
-        onTest: (_range, name) => {
-          names.push(name);
+        onTest: (_range, name, type) => {
+          names.push([...parents, name].join(' > '));
+          if (type === 'describe' || type === 'suite') {
+            parents.push(name);
+            return () => {
+              parents.pop();
+            };
+          }
         },
       });
       expect(runtime.length).toBeGreaterThan(0);
-      expect({ label, names }).toEqual({ label, names: runtime });
+      // Discovery is depth-first; deferred collection differs in order, not ownership.
+      expect({ label, names: names.sort() }).toEqual({
+        label,
+        names: runtime.sort(),
+      });
     }
   });
 
