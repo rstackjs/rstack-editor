@@ -49,11 +49,9 @@ jobs:
           - runner: ubuntu-latest
             vsce-target: alpine-x64
             arch: x64
-            libc: musl
           - runner: ubuntu-22.04
             vsce-target: alpine-arm64
             arch: arm64
-            libc: musl
           - runner: macos-15
             vsce-target: darwin-x64
             arch: x64
@@ -71,8 +69,7 @@ jobs:
         shell: bash
     env:
       # rslib.config.mts keys the staged `@yuku-parser/binding-*` napi payload
-      # off this variable (it maps `linux-*` to the `-gnu` binding and
-      # `alpine-*` to the `linux-*-musl` one).
+      # off this variable (`linux-*` → `-gnu`, `alpine-*` → `linux-*-musl`).
       VSCE_TARGET: ${{ matrix.vsce-target }}
     steps:
       - name: Checkout
@@ -91,22 +88,13 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       # `supportedArchitectures` must be set BEFORE `pnpm install` so pnpm also
-      # fetches the cross-target optional `@yuku-parser/binding-*` package. The
-      # Linux runners' current libc is glibc, matching the `-gnu` bindings the
-      # linux-* VSIX targets need; the alpine-* legs set `matrix.libc: musl` to
-      # also fetch the `-musl` bindings, while the other legs keep libc unset.
+      # fetches the cross-target optional `@yuku-parser/binding-*` package.
+      # musl is always listed so the alpine-* legs get Yuku's `-musl` binding;
+      # on the glibc Linux legs that is a few extra optional downloads, and the
+      # macOS/Windows legs are unaffected because pnpm still filters by os.
       - name: Install Dependencies
-        env:
-          ARCH: ${{ matrix.arch }}
-          LIBC: ${{ matrix.libc }}
         run: |
-          if [ -n "$LIBC" ]; then
-            supported="{\"cpu\":[\"current\",\"$ARCH\"],\"libc\":[\"current\",\"$LIBC\"]}"
-          else
-            supported="{\"cpu\":[\"current\",\"$ARCH\"]}"
-          fi
-          echo "supportedArchitectures: $supported"
-          pnpm config set --location=project --json supportedArchitectures "$supported"
+          pnpm config set --location=project --json supportedArchitectures '{"cpu":["current","${{ matrix.arch }}"],"libc":["current","musl"]}'
           pnpm install
 
       - name: Build

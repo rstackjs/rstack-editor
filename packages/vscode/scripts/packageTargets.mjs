@@ -31,13 +31,7 @@ const TARGETS = [
 const args = process.argv.slice(2);
 const requested = args.filter((arg) => !arg.startsWith('-'));
 const all = args.includes('--all');
-// Same host detection as `hostVsceTarget()` in rslib.config.mts: musl Linux
-// reports no `glibcVersionRuntime` and maps to the alpine-* target.
-const hostTarget =
-  process.platform === 'linux' &&
-  !process.report.getReport().header?.glibcVersionRuntime
-    ? `alpine-${process.arch}`
-    : `${process.platform}-${process.arch}`;
+const hostTarget = `${process.platform}-${process.arch}`;
 
 const targets = all ? TARGETS : requested.length > 0 ? requested : [hostTarget];
 
