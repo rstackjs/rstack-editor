@@ -12,17 +12,45 @@ const rootDir = path.dirname(fileURLToPath(import.meta.url));
 // collection loads the `yuku-parser` napi binding. Everything else in this
 // extension is platform neutral (the Rslint Go binary and its napi parser are
 // resolved from the project at runtime and never ship in the VSIX).
-const vsceTarget =
-  process.env.VSCE_TARGET ?? `${process.platform}-${process.arch}`;
-// The Linux VSIX targets use glibc, whose Yuku bindings have a `-gnu` suffix.
-const yukuBindingSuffix = vsceTarget.startsWith('linux-')
-  ? `${vsceTarget}-gnu`
-  : vsceTarget;
+const vsceTarget = process.env.VSCE_TARGET ?? hostVsceTarget();
+const yukuBindingSuffix = yukuBindingSuffixFor(vsceTarget);
 const yukuRequire = createRequire(require.resolve('yuku-parser'));
 // Yuku computes this package name at runtime, so Rspack cannot discover it.
 const yukuBindingPath = yukuRequire.resolve(
   `@yuku-parser/binding-${yukuBindingSuffix}`,
 );
+
+/**
+ * The VSIX target of the machine running the build, used when `VSCE_TARGET`
+ * is unset (local builds and E2E). On musl `process.platform` is still
+ * `linux`; Node's diagnostic report carries `header.glibcVersionRuntime` only
+ * when the running libc exports `gnu_get_libc_version`, so its absence on
+ * Linux means musl (Alpine). A glibc compatibility layer can defeat this —
+ * set `VSCE_TARGET` explicitly there.
+ */
+function hostVsceTarget(): string {
+  const { platform, arch } = process;
+  if (platform !== 'linux') return `${platform}-${arch}`;
+  const report = process.report.getReport() as {
+    header?: { glibcVersionRuntime?: string };
+  };
+  return report.header?.glibcVersionRuntime
+    ? `linux-${arch}`
+    : `alpine-${arch}`;
+}
+
+/**
+ * Maps a VSIX target to the suffix of its `@yuku-parser/binding-*` package,
+ * which is also the directory Yuku's loader looks up at runtime
+ * (`binding-${platform}-${arch}${libc}`): `linux-*` targets are glibc
+ * (`-gnu`), `alpine-*` targets are musl Linux (`linux-*-musl`).
+ */
+function yukuBindingSuffixFor(target: string): string {
+  const [platform, arch] = target.split('-');
+  if (platform === 'linux') return `linux-${arch}-gnu`;
+  if (platform === 'alpine') return `linux-${arch}-musl`;
+  return target;
+}
 
 /**
  * Packages that are always resolved from the user's project at runtime, never
