@@ -56,4 +56,9 @@
       minimumReleaseAge: null,
     },
   ],
+  // `engines.vscode` is the minimum host the extension supports and only moves
+  // when the extension needs a newer API; `@types/vscode` must stay at that
+  // same version (vsce rejects a newer one). Neither is a dependency to roll
+  // forward, so Renovate leaves both alone.
+  ignoreDeps: ['vscode', '@types/vscode'],
 }
