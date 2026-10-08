@@ -12,12 +12,15 @@ const rootDir = path.dirname(fileURLToPath(import.meta.url));
 // collection loads the `yuku-parser` napi binding. Everything else in this
 // extension is platform neutral (the Rslint Go binary and its napi parser are
 // resolved from the project at runtime and never ship in the VSIX).
+// On musl Linux (Alpine), set `VSCE_TARGET=alpine-<arch>` explicitly.
 const vsceTarget =
   process.env.VSCE_TARGET ?? `${process.platform}-${process.arch}`;
-// The Linux VSIX targets use glibc, whose Yuku bindings have a `-gnu` suffix.
-const yukuBindingSuffix = vsceTarget.startsWith('linux-')
-  ? `${vsceTarget}-gnu`
-  : vsceTarget;
+// Yuku's loader resolves `binding-${platform}-${arch}${libc}`; the Linux VSIX
+// targets differ only by libc: `linux-*` is glibc, `alpine-*` is musl.
+const LINUX_LIBC: Record<string, string> = { linux: 'gnu', alpine: 'musl' };
+const [targetOs, targetArch] = vsceTarget.split('-');
+const libc = LINUX_LIBC[targetOs];
+const yukuBindingSuffix = libc ? `linux-${targetArch}-${libc}` : vsceTarget;
 const yukuRequire = createRequire(require.resolve('yuku-parser'));
 // Yuku computes this package name at runtime, so Rspack cannot discover it.
 const yukuBindingPath = yukuRequire.resolve(

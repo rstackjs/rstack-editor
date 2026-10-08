@@ -10,11 +10,16 @@
 //   pnpm config set --location=project --json supportedArchitectures \
 //     '{"cpu":["current","arm64"]}' && pnpm install
 //
+// The alpine-* targets need the musl bindings, so also add
+// `"libc":["current","musl"]` (and, off Linux, `"os":["current","linux"]`).
+//
 // CI does exactly that, one runner per target.
 import { spawnSync } from 'node:child_process';
 import process from 'node:process';
 
 const TARGETS = [
+  'alpine-arm64',
+  'alpine-x64',
   'darwin-arm64',
   'darwin-x64',
   'linux-arm64',

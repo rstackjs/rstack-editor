@@ -46,6 +46,12 @@ jobs:
           - runner: ubuntu-22.04
             vsce-target: linux-arm64
             arch: arm64
+          - runner: ubuntu-latest
+            vsce-target: alpine-x64
+            arch: x64
+          - runner: ubuntu-22.04
+            vsce-target: alpine-arm64
+            arch: arm64
           - runner: macos-15
             vsce-target: darwin-x64
             arch: x64
@@ -63,7 +69,7 @@ jobs:
         shell: bash
     env:
       # rslib.config.mts keys the staged `@yuku-parser/binding-*` napi payload
-      # off this variable (Linux targets get a `-gnu` suffix appended there).
+      # off this variable (`linux-*` → `-gnu`, `alpine-*` → `linux-*-musl`).
       VSCE_TARGET: ${{ matrix.vsce-target }}
     steps:
       - name: Checkout
@@ -82,12 +88,13 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       # `supportedArchitectures` must be set BEFORE `pnpm install` so pnpm also
-      # fetches the cross-target optional `@yuku-parser/binding-*` package (the
-      # Linux runners' current libc is glibc, matching the `-gnu` bindings the
-      # linux-* VSIX targets need).
+      # fetches the cross-target optional `@yuku-parser/binding-*` package.
+      # musl is always listed so the alpine-* legs get Yuku's `-musl` binding;
+      # on the glibc Linux legs that is a few extra optional downloads, and the
+      # macOS/Windows legs are unaffected because pnpm still filters by os.
       - name: Install Dependencies
         run: |
-          pnpm config set --location=project --json supportedArchitectures '{"cpu":["current","${{ matrix.arch }}"]}'
+          pnpm config set --location=project --json supportedArchitectures '{"cpu":["current","${{ matrix.arch }}"],"libc":["current","musl"]}'
           pnpm install
 
       - name: Build
