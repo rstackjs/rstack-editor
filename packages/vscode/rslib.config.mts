@@ -15,14 +15,12 @@ const rootDir = path.dirname(fileURLToPath(import.meta.url));
 // On musl Linux (Alpine), set `VSCE_TARGET=alpine-<arch>` explicitly.
 const vsceTarget =
   process.env.VSCE_TARGET ?? `${process.platform}-${process.arch}`;
-// Must equal the directory Yuku's loader resolves at runtime
-// (`binding-${platform}-${arch}${libc}`): linux-* targets are glibc (-gnu),
-// alpine-* targets are musl Linux (linux-*-musl).
-const yukuBindingSuffix = vsceTarget.startsWith('linux-')
-  ? `${vsceTarget}-gnu`
-  : vsceTarget.startsWith('alpine-')
-    ? `${vsceTarget.replace('alpine-', 'linux-')}-musl`
-    : vsceTarget;
+// Yuku's loader resolves `binding-${platform}-${arch}${libc}`; the Linux VSIX
+// targets differ only by libc: `linux-*` is glibc, `alpine-*` is musl.
+const LINUX_LIBC: Record<string, string> = { linux: 'gnu', alpine: 'musl' };
+const [targetOs, targetArch] = vsceTarget.split('-');
+const libc = LINUX_LIBC[targetOs];
+const yukuBindingSuffix = libc ? `linux-${targetArch}-${libc}` : vsceTarget;
 const yukuRequire = createRequire(require.resolve('yuku-parser'));
 // Yuku computes this package name at runtime, so Rspack cannot discover it.
 const yukuBindingPath = yukuRequire.resolve(
