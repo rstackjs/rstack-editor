@@ -291,8 +291,6 @@ export interface RslintOptions {
    * pass paths, because the host never loads project code (ADR 0003).
    */
   readonly installation: CoreInstallation;
-  /** Detection's `ancestorConfigPath` for this folder, if any. */
-  readonly ancestorConfigPath?: string;
   readonly outputChannel: OutputChannel;
   readonly lspOutputChannel: OutputChannel;
   readonly router: WorkspaceDocumentRouter;
@@ -310,7 +308,6 @@ export class Rslint implements Disposable {
   private readonly reportStatus: RslintStatusSink;
   private bridgeConfigPath: string | undefined;
   private readonly installation: CoreInstallation;
-  private readonly ancestorConfigPath: string | undefined;
   private readonly lspOutputChannel: OutputChannel;
   private readonly outputChannel: OutputChannel;
   private readonly onClosed: (() => void) | undefined;
@@ -338,7 +335,6 @@ export class Rslint implements Disposable {
     this.router = options.router;
     this.reportStatus = options.reportStatus;
     this.installation = options.installation;
-    this.ancestorConfigPath = options.ancestorConfigPath;
     this.logger = options.logger;
     this.lspOutputChannel = options.lspOutputChannel;
     this.outputChannel = options.outputChannel;
@@ -652,10 +648,11 @@ export class Rslint implements Disposable {
       CONFIG_REFRESH_WATCH_GLOB,
       ...(mode === 'bridged' ? [RSTACK_CONFIG_REFRESH_WATCH_GLOB] : []),
     ].map((pattern) => new RelativePattern(this.workspaceFolder, pattern));
-    if (mode === 'native' && this.ancestorConfigPath !== undefined) {
-      // Go watches the same directories (`ancestorJSConfigFileWatchers`), but
-      // registers them only once initialized, which loses edits made right
-      // after startup.
+    if (mode === 'native') {
+      // Go's discovery can pick a config above the folder, even for part of a
+      // folder with nested configs. It watches the same directories
+      // (`ancestorJSConfigFileWatchers`), but registers them only once
+      // initialized, which loses edits made right after startup.
       for (const directory of ancestorDirectories(
         this.workspaceFolder.uri.fsPath,
       )) {

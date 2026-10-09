@@ -259,9 +259,6 @@ class RslintController implements StackController {
       rootKey: resolved.key,
       workspaceFolder,
       installation,
-      ancestorConfigPath:
-        this.#snapshot?.forFolder(workspaceFolder)?.stacks.rslint
-          .ancestorConfigPath,
       outputChannel: context.output,
       // The extension is capped at four output channels, so the LSP trace
       // shares the stack's channel instead of opening a fifth.
