@@ -163,6 +163,8 @@ async function runIsolatedSuite(
     });
   } catch (error) {
     testError = error;
+  }
+  if (suite.name.startsWith('Ancestor')) {
     // DEBUG(macos-ci): temporary dump, removed before merge.
     const dump = (file: string): void => {
       console.log(`----- DEBUG ${file} -----`);
