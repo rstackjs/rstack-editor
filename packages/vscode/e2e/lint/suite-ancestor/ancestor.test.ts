@@ -66,10 +66,9 @@ suite('rslint config above the workspace folder', function () {
     await waitForDiagnostics(document, hasNoDebugger);
   });
 
-  // The live runtime keeps its key, and the extension sends no configRefresh
-  // for ancestors: the Go server's own ancestor watchers
-  // (`ancestorJSConfigFileWatchers`, registered through the worker) re-run
-  // its discovery.
+  // The live runtime keeps its key; the extension's ancestor watchers send
+  // configRefresh, as do the Go server's own (`ancestorJSConfigFileWatchers`,
+  // registered through the worker) once they are live.
   test('applies a nearer config created above the folder while linting', async () => {
     const document = await openIndex();
     await waitForDiagnostics(document, hasNoDebugger);
