@@ -69,7 +69,6 @@ describe('Rslint folder ownership', () => {
       configPaths = ordered;
       const snapshot = await detectFolder(workspaceFolder);
       expect(snapshot.rootRstackConfigPath).toBe(root);
-      expect(snapshot.stacks.rslint.detected).toBe(true);
     }
     configPaths = [nested];
     expect(

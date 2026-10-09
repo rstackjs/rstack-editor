@@ -308,14 +308,14 @@ class RslintController implements StackController {
     const folder = vscode.workspace.getWorkspaceFolder(document.uri);
     const entry = folder ? this.#snapshot?.forFolder(folder) : undefined;
     if (!entry) return undefined;
+    const { configFiles, ancestorConfigPath } = entry.stacks.rslint;
     return decideDocumentMode({
       documentPath: document.uri.fsPath,
-      folderRoot: entry.folder.uri.fsPath,
-      nativeConfigPaths: entry.stacks.rslint.configFiles.map(
-        (uri) => uri.fsPath,
-      ),
+      nativeConfigPaths: [
+        ...configFiles.map((uri) => uri.fsPath),
+        ...(ancestorConfigPath === undefined ? [] : [ancestorConfigPath]),
+      ],
       rootRstackConfigPath: entry.rootRstackConfigPath,
-      ancestorConfigPath: entry.stacks.rslint.ancestorConfigPath,
     });
   }
 

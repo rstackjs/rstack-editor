@@ -94,12 +94,12 @@ export function findAncestorRslintConfig(
 
 export interface DocumentModeSignals {
   readonly documentPath: string;
-  readonly folderRoot: string;
-  /** Every `rslint.config.*` inside the workspace folder. */
+  /**
+   * Every `rslint.config.*` inside the workspace folder, plus the nearest one
+   * above it (`findAncestorRslintConfig`) when detection found one.
+   */
   readonly nativeConfigPaths: readonly string[];
   readonly rootRstackConfigPath?: string;
-  /** The nearest `rslint.config.*` above the folder (`findAncestorRslintConfig`). */
-  readonly ancestorConfigPath?: string;
   /** Selects the path flavour; only tests pass it. */
   readonly platform?: NodeJS.Platform;
 }
@@ -107,42 +107,36 @@ export interface DocumentModeSignals {
 /**
  * Lint ownership for one document (ADR 0006). The supported config protocols
  * lock the config choice per process, not per folder, so each document picks
- * its own and runtimes of both modes can share a folder. Only configs on the
- * document's ancestor chain count, nearest first: an `rslint.config.*` between
- * the document and the folder root, then a root `rstack.config.*`, then an
- * `rslint.config.*` above the folder. A document with none of them is not
- * served, as the `rslint` CLI does not lint files outside every config.
+ * its own and runtimes of both modes can share a folder. Each config owns its
+ * directory's subtree and the nearest one on the document's ancestor chain
+ * wins; in one directory an `rslint.config.*` beats the `rstack.config.*`. A
+ * document with none is not served, as the `rslint` CLI does not lint files
+ * outside every config.
  */
 export function decideDocumentMode({
   documentPath,
-  folderRoot,
   nativeConfigPaths,
   rootRstackConfigPath,
-  ancestorConfigPath,
   platform = process.platform,
 }: DocumentModeSignals): RslintMode | undefined {
   const paths = platform === 'win32' ? path.win32 : path.posix;
   // `CoreResolver.normalizeIdentity`'s rule: Windows paths compare case-blind.
-  const normalize = (filePath: string): string => {
-    const normalized = paths.normalize(filePath);
-    return platform === 'win32' ? normalized.toLowerCase() : normalized;
+  const directoryOf = (filePath: string): string => {
+    const directory = paths.normalize(paths.dirname(filePath));
+    return platform === 'win32' ? directory.toLowerCase() : directory;
   };
-  const nativeDirectories = new Set(
-    nativeConfigPaths.map((configPath) => normalize(paths.dirname(configPath))),
-  );
-  const root = normalize(folderRoot);
-  // Callers pass the document's own workspace folder, so the walk meets the
-  // root; the filesystem-root stop only bounds the loop.
-  let directory = normalize(paths.dirname(documentPath));
-  for (;;) {
+  const nativeDirectories = new Set(nativeConfigPaths.map(directoryOf));
+  const bridgedDirectory =
+    rootRstackConfigPath === undefined
+      ? undefined
+      : directoryOf(rootRstackConfigPath);
+  for (let directory = directoryOf(documentPath); ;) {
     if (nativeDirectories.has(directory)) return 'native';
+    if (directory === bridgedDirectory) return 'bridged';
     const parent = paths.dirname(directory);
-    if (directory === root || parent === directory) break;
+    if (parent === directory) return undefined;
     directory = parent;
   }
-  if (rootRstackConfigPath !== undefined) return 'bridged';
-  if (ancestorConfigPath !== undefined) return 'native';
-  return undefined;
 }
 
 interface PackageLocation {

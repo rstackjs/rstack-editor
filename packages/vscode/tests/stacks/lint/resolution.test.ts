@@ -187,7 +187,6 @@ describe('findAncestorRslintConfig', () => {
 });
 
 describe('decideDocumentMode', () => {
-  const folderRoot = '/workspace';
   const rootRstackConfigPath = '/workspace/rstack.config.ts';
   const legacyConfig = '/workspace/packages/legacy/rslint.config.ts';
   const ancestorConfigPath = '/rslint.config.mjs';
@@ -229,27 +228,24 @@ describe('decideDocumentMode', () => {
     {
       name: 'a config above the folder owns an otherwise ungoverned document',
       documentPath: '/workspace/src/index.ts',
-      nativeConfigPaths: [legacyConfig],
-      ancestorConfigPath,
+      nativeConfigPaths: [legacyConfig, ancestorConfigPath],
       expected: 'native',
     },
     {
       name: 'a root Rstack config precedes a config above the folder',
       documentPath: '/workspace/src/index.ts',
-      nativeConfigPaths: [],
+      nativeConfigPaths: [ancestorConfigPath],
       rootRstackConfigPath,
-      ancestorConfigPath,
       expected: 'bridged',
     },
   ])('$name', ({ name: _name, expected, ...signals }) => {
-    expect(
-      decideDocumentMode({ folderRoot, platform: 'linux', ...signals }),
-    ).toBe(expected);
+    expect(decideDocumentMode({ platform: 'linux', ...signals })).toBe(
+      expected,
+    );
   });
 
   it('compares Windows paths case-insensitively', () => {
     const signals = {
-      folderRoot: 'C:\\Work\\Repo',
       nativeConfigPaths: ['c:\\work\\repo\\packages\\Legacy\\rslint.config.ts'],
       rootRstackConfigPath: 'C:\\Work\\Repo\\rstack.config.ts',
       platform: 'win32' as const,

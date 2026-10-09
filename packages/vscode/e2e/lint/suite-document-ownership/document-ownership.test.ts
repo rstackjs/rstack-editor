@@ -36,9 +36,6 @@ function getRuntimeStates(): ReadonlyMap<string, StackState> {
   return exports.getRuntimeStates();
 }
 
-/** The bridged runtime's key carries rstack's shim path (`runtimeKey`). */
-const isBridgedKey = (key: string): boolean => key.includes('rslintConfig.js');
-
 const hasRule = (diagnostics: readonly vscode.Diagnostic[], rule: string) =>
   diagnostics.some((diagnostic) => diagnosticRuleIdIncludes(diagnostic, rule));
 
@@ -85,7 +82,8 @@ suite('Per-document lint ownership', function () {
 
     // One folder, two runtimes: the bridge and the native config's.
     const keys = [...getRuntimeStates().keys()];
-    const bridgedKeys = keys.filter(isBridgedKey);
+    // The bridged runtime's key carries rstack's shim path (`runtimeKey`).
+    const bridgedKeys = keys.filter((key) => key.includes('rslintConfig.js'));
     assert.equal(
       bridgedKeys.length,
       1,
