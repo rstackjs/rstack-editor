@@ -39,7 +39,7 @@ import type { StackState } from '../../types';
 import type { CoreInstallation } from './CoreResolver';
 import { LanguageServerProcessOwner } from './LanguageServerProcessOwner';
 import type { Logger } from './logger';
-import type { RslintMode } from './resolution';
+import { type RslintMode, RSLINT_CONFIG_NAMES } from './resolution';
 import {
   CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
   isConfigSourceChangeDuringTransaction,
@@ -68,15 +68,8 @@ const LOCKFILE_NAMES = [
   'yarn.lock',
 ] as const;
 
-const RSLINT_CONFIG_WATCH_NAMES = [
-  'rslint.config.js',
-  'rslint.config.mjs',
-  'rslint.config.ts',
-  'rslint.config.mts',
-] as const;
-
 export const CONFIG_REFRESH_WATCH_GLOB = `**/{${[
-  ...RSLINT_CONFIG_WATCH_NAMES,
+  ...RSLINT_CONFIG_NAMES,
   ...LOCKFILE_NAMES,
 ].join(',')}}`;
 

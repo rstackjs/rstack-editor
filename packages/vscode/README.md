@@ -22,7 +22,7 @@ The extension activates on startup, then decides **per workspace folder** which 
 
 | Tool | Started when the folder contains |
 | --- | --- |
-| Rslint | `rslint.config.{js,mjs,ts,mts}` anywhere in the folder, or `rstack.config.*` at the folder root when no native config exists |
+| Rslint | `rslint.config.{js,mjs,ts,mts}` anywhere in the folder, or `rstack.config.*` at the folder root when no native config exists. A folder with neither uses the nearest `rslint.config.*` above it, as `rslint` in a terminal there would, provided `@rslint/core` is installed for the folder |
 | Rstest | `rstest.config.{mjs,ts,js,cjs,mts,cts}` (configurable) or `rstack.config.*` |
 | rstack-cli | `rstack.config.*` or `node_modules/.bin/rs` |
 

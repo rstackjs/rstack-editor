@@ -84,6 +84,13 @@ export interface StackDetection {
   /** Rslint's per-folder ownership choice; undefined for other stacks. */
   readonly mode?: 'native' | 'bridged';
   /**
+   * Rslint only: the nearest `rslint.config.*` above a folder that has no
+   * config of its own and no root `rstack.config.*`, counted only while
+   * `@rslint/core` resolves from the folder. The Go server finds this config
+   * itself; detection records it to light the folder and log the path.
+   */
+  readonly ancestorConfigPath?: string;
+  /**
    * `rstack.config.*` files governing this folder. A folder can be detected
    * through these alone, in which case the stack has to go through the rstack
    * shim bridge.

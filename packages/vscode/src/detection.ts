@@ -6,7 +6,13 @@ import {
   type StackId,
   STACK_IDS,
 } from './types';
-import { decideRslintMode } from './stacks/lint/resolution';
+import { findPackageJsonUncached } from './shared/packageResolve';
+import {
+  ancestorDirectories,
+  decideRslintMode,
+  findAncestorRslintConfig,
+  RSLINT_CONFIG_NAMES,
+} from './stacks/lint/resolution';
 
 /**
  * `rstack.config.*` is a config source for all three tool stacks. Lint only
@@ -26,7 +32,7 @@ export const RSTACK_CONFIG_GLOB = '**/rstack.config.{ts,js,mts,mjs}';
  * JSON configs (`rslint.json` / `rslint.jsonc`) are deliberately not detection
  * signals — upstream deprecated them and ships `rslint --init` to migrate.
  */
-export const RSLINT_CONFIG_GLOB = '**/rslint.config.{js,mjs,ts,mts}';
+export const RSLINT_CONFIG_GLOB = `**/{${RSLINT_CONFIG_NAMES.join(',')}}`;
 
 export const DEFAULT_RSTEST_CONFIG_GLOBS = [
   '**/rstest.config.{mjs,ts,js,cjs,mts,cts}',
@@ -81,10 +87,7 @@ export const emptySnapshot = (): DetectionSnapshot => new Snapshot([]);
  * and the Rslint/Rstest package resolution, so it counts as a detection input.
  */
 export const DETECTION_WATCH_NAMES = [
-  'rslint.config.js',
-  'rslint.config.mjs',
-  'rslint.config.ts',
-  'rslint.config.mts',
+  ...RSLINT_CONFIG_NAMES,
   ...RSTACK_CONFIG_NAMES,
   ...LOCKFILE_NAMES,
 ] as const;
@@ -106,6 +109,17 @@ export const detectionWatchPatterns = (
 ): string[] => [
   ...new Set([`**/{${DETECTION_WATCH_NAMES.join(',')}}`, ...rstestGlobs]),
 ];
+
+/**
+ * The non-recursive pattern watched in every ancestor of a folder, so native
+ * lint's ancestor signal stays fresh. Folder-relative watchers cannot see
+ * these directories. The lockfiles are here because the signal also needs
+ * `@rslint/core` to resolve, and a monorepo installs at an ancestor.
+ */
+export const ANCESTOR_WATCH_PATTERN = `{${[
+  ...RSLINT_CONFIG_NAMES,
+  ...LOCKFILE_NAMES,
+].join(',')}}`;
 
 const readRstestGlobs = (folder: vscode.WorkspaceFolder): readonly string[] => {
   const configured = vscode.workspace
@@ -188,9 +202,22 @@ export const detectFolder = async (
   ).find((candidate) =>
     rstackConfigFiles.some((uri) => uri.toString() === candidate.toString()),
   )?.fsPath;
+  // The Go server walks up past the folder for its config; mirror that only
+  // when nothing inside the folder decides ownership, and only when a core is
+  // installed to run it, so a stray config in a home directory stays silent.
+  const ancestorConfigPath =
+    rslintConfigFiles.length === 0 && rootRstackConfigPath === undefined
+      ? findAncestorRslintConfig(folder.uri.fsPath)
+      : undefined;
+  const ancestorSignal =
+    ancestorConfigPath !== undefined &&
+    findPackageJsonUncached('@rslint/core', folder.uri.fsPath) !== undefined
+      ? ancestorConfigPath
+      : undefined;
   const rslintMode = decideRslintMode({
     nativeConfigPaths: rslintConfigFiles.map((uri) => uri.fsPath),
     rootRstackConfigPath,
+    ancestorConfigPath: ancestorSignal,
   });
 
   const stacks: Record<StackId, StackDetection> = {
@@ -199,6 +226,7 @@ export const detectFolder = async (
       configFiles: rslintConfigFiles,
       rstackConfigFiles,
       mode: rslintMode,
+      ancestorConfigPath: ancestorSignal,
     },
     rstest: {
       detected: rstestConfigFiles.length > 0 || rstackConfigFiles.length > 0,
@@ -225,7 +253,7 @@ const signatureOf = (snapshot: DetectionSnapshot): string =>
           .map((uri) => uri.toString())
           .sort()
           .join(',');
-        return `${stack}:${detection.detected ? 1 : 0}:${detection.mode ?? ''}:${detection.binPath ?? ''}:${files}`;
+        return `${stack}:${detection.detected ? 1 : 0}:${detection.mode ?? ''}:${detection.binPath ?? ''}:${detection.ancestorConfigPath ?? ''}:${files}`;
       }).join('|');
       return `${entry.folder.uri.toString()}=>${stacks}`;
     })
@@ -235,7 +263,8 @@ const signatureOf = (snapshot: DetectionSnapshot): string =>
 /**
  * Runs detection over every workspace folder and keeps it fresh without a
  * window reload: one `FileSystemWatcher` per folder and watch pattern covers
- * the config globs plus the lockfiles.
+ * the config globs plus the lockfiles, and one non-recursive watcher per
+ * ancestor directory covers native lint's ancestor signal.
  */
 export class DetectionService implements vscode.Disposable {
   #snapshot: DetectionSnapshot = emptySnapshot();
@@ -388,6 +417,23 @@ export class DetectionService implements vscode.Disposable {
           watcher.onDidCreate(onEvent),
           watcher.onDidChange(onEvent),
           watcher.onDidDelete(onEvent),
+        );
+      }
+      // An ancestor lockfile only re-runs detection: it must not notify the
+      // other stacks as a dependency change, which is the folder lockfile's job.
+      for (const directory of ancestorDirectories(folder.uri.fsPath)) {
+        const watcher = vscode.workspace.createFileSystemWatcher(
+          new vscode.RelativePattern(
+            vscode.Uri.file(directory),
+            ANCESTOR_WATCH_PATTERN,
+          ),
+        );
+        const schedule = () => this.schedule();
+        this.#watchers.push(
+          watcher,
+          watcher.onDidCreate(schedule),
+          watcher.onDidChange(schedule),
+          watcher.onDidDelete(schedule),
         );
       }
     }

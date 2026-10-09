@@ -40,18 +40,79 @@ export class RslintResolutionError extends Error {
   }
 }
 
+/** Upstream's discovery order within one directory (rslint `config_init.go`). */
+export const RSLINT_CONFIG_NAMES = [
+  'rslint.config.js',
+  'rslint.config.mjs',
+  'rslint.config.ts',
+  'rslint.config.mts',
+] as const;
+
+const hasNodeModulesSegment = (directory: string): boolean =>
+  directory.split(/[\\/]/).includes('node_modules');
+
+/**
+ * The strict ancestors of `folderPath`, nearest first, up to the filesystem
+ * root. Directories under a `node_modules` segment are skipped, as Go's
+ * `isDefaultDiscoveryExcluded` skips their config candidates.
+ */
+export function ancestorDirectories(folderPath: string): string[] {
+  const directories: string[] = [];
+  let directory = path.resolve(folderPath);
+  for (;;) {
+    const parent = path.dirname(directory);
+    if (parent === directory) return directories;
+    directory = parent;
+    if (!hasNodeModulesSegment(directory)) directories.push(directory);
+  }
+}
+
+const isFileSync = (filePath: string): boolean => {
+  try {
+    return fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * The nearest `rslint.config.*` above the workspace folder: the config the Go
+ * server's upward discovery (`findCandidateUp`) loads for a folder that has
+ * none of its own.
+ */
+export function findAncestorRslintConfig(
+  folderPath: string,
+  isFile: (filePath: string) => boolean = isFileSync,
+): string | undefined {
+  for (const directory of ancestorDirectories(folderPath)) {
+    for (const name of RSLINT_CONFIG_NAMES) {
+      const candidate = path.join(directory, name);
+      if (isFile(candidate)) return candidate;
+    }
+  }
+  return undefined;
+}
+
 export interface RslintModeSignals {
   readonly nativeConfigPaths: readonly string[];
   readonly rootRstackConfigPath?: string;
+  /** A native config above the folder, for a folder with no config of its own. */
+  readonly ancestorConfigPath?: string;
 }
 
-/** Native ownership wins; only a root Rstack config can bridge a folder. */
+/**
+ * Native ownership wins; only a root Rstack config can bridge a folder. A
+ * native config above the folder ranks below that root Rstack config, so it
+ * never turns a bridged folder native.
+ */
 export function decideRslintMode({
   nativeConfigPaths,
   rootRstackConfigPath,
+  ancestorConfigPath,
 }: RslintModeSignals): RslintMode | undefined {
   if (nativeConfigPaths.length > 0) return 'native';
   if (rootRstackConfigPath !== undefined) return 'bridged';
+  if (ancestorConfigPath !== undefined) return 'native';
   return undefined;
 }
 

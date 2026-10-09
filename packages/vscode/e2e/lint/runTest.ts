@@ -269,6 +269,14 @@ async function main(): Promise<void> {
       workspaceFolders: ['parent', 'parent/nested', 'sentinel'],
     },
     {
+      // The opened folder is a sub-package; the only config is above it.
+      name: 'Ancestor config tests',
+      workspace: fixture('ancestor'),
+      tests: suiteDir('suite-ancestor'),
+      workspaceEntry: 'packages/app',
+      workspaceFolders: ['packages/app'],
+    },
+    {
       name: 'No config tests',
       workspace: fixture('noconfig'),
       tests: suiteDir('suite-noconfig'),
