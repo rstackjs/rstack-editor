@@ -26,4 +26,4 @@ Issues live in GitHub Issues (`rstackjs/rstack-editor`), operated via the `gh` C
 
 ### Domain docs
 
-Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root, created lazily. See `docs/agents/domain.md`.
+Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root, created lazily. See `docs/agents/domain.md`.
