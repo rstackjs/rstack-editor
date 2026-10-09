@@ -6,7 +6,6 @@ import {
   type StackId,
   STACK_IDS,
 } from './types';
-import { findPackageJsonUncached } from './shared/packageResolve';
 import {
   ancestorDirectories,
   decideRslintMode,
@@ -111,12 +110,11 @@ export const detectionWatchPatterns = (
 ];
 
 /**
- * The non-recursive pattern watched in every ancestor of a folder, so native
- * lint's ancestor signal stays fresh. Folder-relative watchers cannot see
- * these directories. The lockfiles are here because the signal also needs
- * `@rslint/core` to resolve, and a monorepo installs at an ancestor.
+ * Watched non-recursively in every folder ancestor, which folder-relative
+ * watchers cannot see. The lockfiles are here because native lint's ancestor
+ * signal needs `@rslint/core`, and a monorepo installs at an ancestor.
  */
-export const ANCESTOR_WATCH_PATTERN = `{${[
+const ANCESTOR_WATCH_PATTERN = `{${[
   ...RSLINT_CONFIG_NAMES,
   ...LOCKFILE_NAMES,
 ].join(',')}}`;
@@ -202,22 +200,17 @@ export const detectFolder = async (
   ).find((candidate) =>
     rstackConfigFiles.some((uri) => uri.toString() === candidate.toString()),
   )?.fsPath;
-  // The Go server walks up past the folder for its config; mirror that only
-  // when nothing inside the folder decides ownership, and only when a core is
-  // installed to run it, so a stray config in a home directory stays silent.
+  // Like the Go server, look above the folder, but only when nothing inside
+  // it decides ownership: an ancestor never displaces a bridged folder.
   const ancestorConfigPath =
     rslintConfigFiles.length === 0 && rootRstackConfigPath === undefined
       ? findAncestorRslintConfig(folder.uri.fsPath)
       : undefined;
-  const ancestorSignal =
-    ancestorConfigPath !== undefined &&
-    findPackageJsonUncached('@rslint/core', folder.uri.fsPath) !== undefined
-      ? ancestorConfigPath
-      : undefined;
   const rslintMode = decideRslintMode({
-    nativeConfigPaths: rslintConfigFiles.map((uri) => uri.fsPath),
+    nativeConfigPaths: ancestorConfigPath
+      ? [ancestorConfigPath]
+      : rslintConfigFiles.map((uri) => uri.fsPath),
     rootRstackConfigPath,
-    ancestorConfigPath: ancestorSignal,
   });
 
   const stacks: Record<StackId, StackDetection> = {
@@ -226,7 +219,7 @@ export const detectFolder = async (
       configFiles: rslintConfigFiles,
       rstackConfigFiles,
       mode: rslintMode,
-      ancestorConfigPath: ancestorSignal,
+      ancestorConfigPath,
     },
     rstest: {
       detected: rstestConfigFiles.length > 0 || rstackConfigFiles.length > 0,
@@ -398,44 +391,48 @@ export class DetectionService implements vscode.Disposable {
       watcher.dispose();
     }
     this.#watchers = [];
+    const onFolderEvent = (uri: vscode.Uri) => {
+      if (isLockfile(uri)) {
+        this.#notifyUnchanged = true;
+      }
+      this.schedule();
+    };
+    // An ancestor lockfile only re-runs detection: it must not notify the
+    // other stacks as a dependency change, which is the folder lockfile's job.
+    const onAncestorEvent = () => this.schedule();
+    const targets: [vscode.RelativePattern, (uri: vscode.Uri) => void][] = [];
+    const ancestors = new Set<string>();
     for (const folder of vscode.workspace.workspaceFolders ?? []) {
       if (folder.uri.scheme !== 'file') {
         continue;
       }
-      const onEvent = (uri: vscode.Uri) => {
-        if (isLockfile(uri)) {
-          this.#notifyUnchanged = true;
-        }
-        this.schedule();
-      };
       for (const pattern of detectionWatchPatterns(readRstestGlobs(folder))) {
-        const watcher = vscode.workspace.createFileSystemWatcher(
+        targets.push([
           new vscode.RelativePattern(folder, pattern),
-        );
-        this.#watchers.push(
-          watcher,
-          watcher.onDidCreate(onEvent),
-          watcher.onDidChange(onEvent),
-          watcher.onDidDelete(onEvent),
-        );
+          onFolderEvent,
+        ]);
       }
-      // An ancestor lockfile only re-runs detection: it must not notify the
-      // other stacks as a dependency change, which is the folder lockfile's job.
       for (const directory of ancestorDirectories(folder.uri.fsPath)) {
-        const watcher = vscode.workspace.createFileSystemWatcher(
-          new vscode.RelativePattern(
-            vscode.Uri.file(directory),
-            ANCESTOR_WATCH_PATTERN,
-          ),
-        );
-        const schedule = () => this.schedule();
-        this.#watchers.push(
-          watcher,
-          watcher.onDidCreate(schedule),
-          watcher.onDidChange(schedule),
-          watcher.onDidDelete(schedule),
-        );
+        ancestors.add(directory);
       }
+    }
+    for (const directory of ancestors) {
+      targets.push([
+        new vscode.RelativePattern(
+          vscode.Uri.file(directory),
+          ANCESTOR_WATCH_PATTERN,
+        ),
+        onAncestorEvent,
+      ]);
+    }
+    for (const [pattern, onEvent] of targets) {
+      const watcher = vscode.workspace.createFileSystemWatcher(pattern);
+      this.#watchers.push(
+        watcher,
+        watcher.onDidCreate(onEvent),
+        watcher.onDidChange(onEvent),
+        watcher.onDidDelete(onEvent),
+      );
     }
   }
 

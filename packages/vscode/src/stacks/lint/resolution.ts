@@ -67,27 +67,26 @@ export function ancestorDirectories(folderPath: string): string[] {
   }
 }
 
-const isFileSync = (filePath: string): boolean => {
-  try {
-    return fs.statSync(filePath).isFile();
-  } catch {
-    return false;
-  }
-};
-
 /**
- * The nearest `rslint.config.*` above the workspace folder: the config the Go
- * server's upward discovery (`findCandidateUp`) loads for a folder that has
- * none of its own.
+ * The nearest `rslint.config.*` above the folder: the config the Go server's
+ * upward discovery (`findCandidateUp`) loads for a folder without one of its
+ * own. It counts only while `@rslint/core` resolves from the folder, so a stray
+ * config in a home directory does not light every folder below it.
  */
 export function findAncestorRslintConfig(
   folderPath: string,
-  isFile: (filePath: string) => boolean = isFileSync,
 ): string | undefined {
   for (const directory of ancestorDirectories(folderPath)) {
     for (const name of RSLINT_CONFIG_NAMES) {
       const candidate = path.join(directory, name);
-      if (isFile(candidate)) return candidate;
+      try {
+        if (!fs.statSync(candidate).isFile()) continue;
+      } catch {
+        continue;
+      }
+      return findPackageJsonUncached('@rslint/core', folderPath)
+        ? candidate
+        : undefined;
     }
   }
   return undefined;
@@ -96,23 +95,15 @@ export function findAncestorRslintConfig(
 export interface RslintModeSignals {
   readonly nativeConfigPaths: readonly string[];
   readonly rootRstackConfigPath?: string;
-  /** A native config above the folder, for a folder with no config of its own. */
-  readonly ancestorConfigPath?: string;
 }
 
-/**
- * Native ownership wins; only a root Rstack config can bridge a folder. A
- * native config above the folder ranks below that root Rstack config, so it
- * never turns a bridged folder native.
- */
+/** Native ownership wins; only a root Rstack config can bridge a folder. */
 export function decideRslintMode({
   nativeConfigPaths,
   rootRstackConfigPath,
-  ancestorConfigPath,
 }: RslintModeSignals): RslintMode | undefined {
   if (nativeConfigPaths.length > 0) return 'native';
   if (rootRstackConfigPath !== undefined) return 'bridged';
-  if (ancestorConfigPath !== undefined) return 'native';
   return undefined;
 }
 

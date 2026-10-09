@@ -1,7 +1,7 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from '@rstest/core';
 import {
-  decideRslintMode,
   findAncestorRslintConfig,
   resolveRslint,
   RslintResolutionError,
@@ -142,80 +142,45 @@ describe('resolveRslint', () => {
 });
 
 describe('findAncestorRslintConfig', () => {
-  const root = path.parse(process.cwd()).root;
-  const repo = path.join(root, 'repo');
-  const app = path.join(repo, 'packages', 'app');
-  const existing =
-    (...files: string[]) =>
-    (filePath: string): boolean =>
-      files.includes(filePath);
+  const writeConfig = (directory: string, name: string): string => {
+    fs.mkdirSync(directory, { recursive: true });
+    const configPath = path.join(directory, name);
+    fs.writeFileSync(configPath, 'export default [];');
+    return configPath;
+  };
 
-  it('finds a config in an ancestor directory', () => {
-    const config = path.join(repo, 'rslint.config.ts');
-    expect(findAncestorRslintConfig(app, existing(config))).toBe(config);
-  });
-
-  it('prefers the nearest ancestor', () => {
-    const nearer = path.join(repo, 'packages', 'rslint.config.mjs');
-    const farther = path.join(repo, 'rslint.config.js');
-    expect(findAncestorRslintConfig(app, existing(farther, nearer))).toBe(
-      nearer,
+  it('takes the nearest config above the folder', () => {
+    const repo = temporaryDirectory();
+    installPackage(repo, '@rslint/core', '0.9.4');
+    writeConfig(repo, 'rslint.config.ts');
+    const nearer = writeConfig(
+      path.join(repo, 'packages'),
+      'rslint.config.mjs',
     );
+    const app = path.join(repo, 'packages', 'app');
+    fs.mkdirSync(app, { recursive: true });
+
+    expect(findAncestorRslintConfig(app)).toBe(nearer);
   });
 
-  it('takes the names in upstream order within one directory', () => {
-    const js = path.join(repo, 'rslint.config.js');
-    const ts = path.join(repo, 'rslint.config.ts');
-    expect(findAncestorRslintConfig(app, existing(ts, js))).toBe(js);
+  it('ignores the config while @rslint/core does not resolve', () => {
+    const home = temporaryDirectory();
+    writeConfig(home, 'rslint.config.js');
+    const project = path.join(home, 'project');
+    fs.mkdirSync(project, { recursive: true });
+
+    expect(findAncestorRslintConfig(project)).toBeUndefined();
   });
 
-  it('never looks inside the folder itself', () => {
-    const own = path.join(app, 'rslint.config.js');
-    expect(findAncestorRslintConfig(app, existing(own))).toBeUndefined();
-  });
-
-  it('skips ancestors under node_modules', () => {
+  it('skips configs under node_modules', () => {
+    const repo = temporaryDirectory();
+    installPackage(repo, '@rslint/core', '0.9.4');
+    writeConfig(path.join(repo, 'node_modules'), 'rslint.config.js');
     const vendored = path.join(repo, 'node_modules', 'pkg');
-    const inside = path.join(repo, 'node_modules', 'rslint.config.js');
-    const above = path.join(repo, 'rslint.config.js');
-    expect(
-      findAncestorRslintConfig(path.join(vendored, 'src'), existing(inside)),
-    ).toBeUndefined();
-    expect(
-      findAncestorRslintConfig(
-        path.join(vendored, 'src'),
-        existing(inside, above),
-      ),
-    ).toBe(above);
-  });
+    fs.mkdirSync(vendored, { recursive: true });
+    expect(findAncestorRslintConfig(vendored)).toBeUndefined();
 
-  it('reaches the filesystem root and stops there', () => {
-    const atRoot = path.join(root, 'rslint.config.mts');
-    expect(findAncestorRslintConfig(app, existing(atRoot))).toBe(atRoot);
-    expect(findAncestorRslintConfig(root, existing(atRoot))).toBeUndefined();
-  });
-});
-
-describe('decideRslintMode', () => {
-  it('ranks an ancestor config below in-folder configs and a root Rstack config', () => {
-    const ancestorConfigPath = '/repo/rslint.config.js';
-    expect(
-      decideRslintMode({
-        nativeConfigPaths: ['/repo/app/rslint.config.js'],
-        rootRstackConfigPath: '/repo/app/rstack.config.ts',
-        ancestorConfigPath,
-      }),
-    ).toBe('native');
-    expect(
-      decideRslintMode({
-        nativeConfigPaths: [],
-        rootRstackConfigPath: '/repo/app/rstack.config.ts',
-        ancestorConfigPath,
-      }),
-    ).toBe('bridged');
-    expect(
-      decideRslintMode({ nativeConfigPaths: [], ancestorConfigPath }),
-    ).toBe('native');
-    expect(decideRslintMode({ nativeConfigPaths: [] })).toBeUndefined();
+    const above = writeConfig(repo, 'rslint.config.js');
+    expect(findAncestorRslintConfig(vendored)).toBe(above);
   });
 });

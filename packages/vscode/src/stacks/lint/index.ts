@@ -75,8 +75,6 @@ class RslintController implements StackController {
   // router ownership; each runtime removes itself only when it is still the
   // entry for its key, so an overlapping replacement survives the old close.
   readonly #runtimes = new Map<string, Rslint>();
-  /** Folder URI → the ancestor config last logged for it. */
-  readonly #loggedAncestorConfigs = new Map<string, string>();
   #disposed = false;
 
   async register(context: StackContext): Promise<Record<string, unknown>> {
@@ -172,16 +170,6 @@ class RslintController implements StackController {
           [...this.#folderStates.values()].flatMap((states) => [
             ...states.runtimes,
           ]),
-        ),
-      /** Folders lit by a config above them, by folder key. */
-      getAncestorConfigPaths: (): ReadonlyMap<string, string> =>
-        new Map(
-          this.detectedFolders().flatMap((entry) => {
-            const configPath = entry.stacks.rslint.ancestorConfigPath;
-            return configPath === undefined
-              ? []
-              : [[folderKeyOf(entry.folder), configPath] as const];
-          }),
         ),
     };
   }
@@ -300,26 +288,14 @@ class RslintController implements StackController {
     return runtime;
   }
 
-  /**
-   * One line per folder whose config sits above it, so a stray
-   * `rslint.config.*` in an ancestor such as the home directory can be traced.
-   */
+  /** Makes a stray `rslint.config.*` in an ancestor such as `~` traceable. */
   private logAncestorConfigs(): void {
-    const current = new Map<string, string>();
     for (const entry of this.detectedFolders()) {
       const configPath = entry.stacks.rslint.ancestorConfigPath;
       if (configPath === undefined) continue;
-      const key = folderKeyOf(entry.folder);
-      current.set(key, configPath);
-      if (this.#loggedAncestorConfigs.get(key) !== configPath) {
-        this.#logger?.info(
-          `Using ${configPath} for ${entry.folder.name}: the folder has no rslint.config.* of its own`,
-        );
-      }
-    }
-    this.#loggedAncestorConfigs.clear();
-    for (const [key, configPath] of current) {
-      this.#loggedAncestorConfigs.set(key, configPath);
+      this.#logger?.info(
+        `Using ${configPath} for ${entry.folder.name}: the folder has no rslint.config.* of its own`,
+      );
     }
   }
 
@@ -454,7 +430,6 @@ class RslintController implements StackController {
     this.#logger = undefined;
     this.#context = undefined;
     this.#snapshot = undefined;
-    this.#loggedAncestorConfigs.clear();
   }
 }
 
