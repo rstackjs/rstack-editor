@@ -55,6 +55,23 @@ suite('rslint config above the workspace folder', function () {
   test('lints with the config above the folder and follows its edits', async () => {
     const document = await openIndex();
     await waitForDiagnostics(document, hasNoDebugger);
+    // DEBUG(macos-ci): temporary probe, removed before merge.
+    const rootDir = path.resolve(path.dirname(rootConfigPath()));
+    const probeLog = path.join(rootDir, '..', 'probe.log');
+    fs.appendFileSync(
+      probeLog,
+      `folder=${folderPath()} rootDir=${rootDir} real=${fs.realpathSync(rootDir)} PWD=${process.env.PWD} cwd=${process.cwd()}\n`,
+    );
+    for (const base of [rootDir, fs.realpathSync(rootDir)]) {
+      const w = vscode.workspace.createFileSystemWatcher(
+        new vscode.RelativePattern(vscode.Uri.file(base), 'rslint.config.mjs'),
+      );
+      for (const ev of ['onDidCreate', 'onDidChange', 'onDidDelete'] as const)
+        w[ev]((u) =>
+          fs.appendFileSync(probeLog, `[base ${base}] ${ev} ${u.toString()}\n`),
+        );
+    }
+    await new Promise((r) => setTimeout(r, 1000));
 
     fs.writeFileSync(rootConfigPath(), configWithNoDebugger('off'));
     await waitForDiagnostics(
