@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from '@rstest/core';
 import {
+  decideDocumentMode,
   findAncestorRslintConfig,
   resolveRslint,
   RslintResolutionError,
@@ -17,7 +18,7 @@ import {
 afterEach(removeTemporaryDirectories);
 
 describe('resolveRslint', () => {
-  it('resolves a native folder directly from its @rslint/core installation', () => {
+  it('resolves a native runtime directly from its @rslint/core installation', () => {
     const root = temporaryDirectory();
     const coreDir = installPackage(root, '@rslint/core', '0.8.0');
 
@@ -28,7 +29,7 @@ describe('resolveRslint', () => {
     });
   });
 
-  it('follows the rstack dependency chain for a bridged folder', () => {
+  it('follows the rstack dependency chain for a bridged runtime', () => {
     const root = temporaryDirectory();
     const rstackDir = installPackage(root, 'rstack', '0.6.1');
     const coreDir = installPackage(rstackDir, '@rslint/core', '0.8.0');
@@ -100,9 +101,9 @@ describe('resolveRslint', () => {
     ).toEqual({ mode: 'native', coreDir: nestedCore, coreVersion: '0.8.1' });
   });
 
-  it('ignores the document directory for a bridged folder', () => {
-    // A bridged folder is one config choice for the whole folder, so it is
-    // always exactly one core: rstack's own.
+  it('ignores the document directory for a bridged runtime', () => {
+    // Every bridged document of a folder evaluates the one root Rstack config,
+    // so it is always exactly one core: rstack's own.
     const root = temporaryDirectory();
     const rstackDir = installPackage(root, 'rstack', '0.6.1');
     const coreDir = installPackage(rstackDir, '@rslint/core', '0.8.0');
@@ -182,5 +183,84 @@ describe('findAncestorRslintConfig', () => {
 
     const above = writeConfig(repo, 'rslint.config.js');
     expect(findAncestorRslintConfig(vendored)).toBe(above);
+  });
+});
+
+describe('decideDocumentMode', () => {
+  const rootRstackConfigPath = '/workspace/rstack.config.ts';
+  const legacyConfig = '/workspace/packages/legacy/rslint.config.ts';
+  const ancestorConfigPath = '/rslint.config.mjs';
+
+  it.each([
+    {
+      name: 'a nested native config owns the documents under it',
+      documentPath: '/workspace/packages/legacy/src/index.ts',
+      nativeConfigPaths: [legacyConfig],
+      rootRstackConfigPath,
+      expected: 'native',
+    },
+    {
+      name: 'the root Rstack config owns the documents outside it',
+      documentPath: '/workspace/src/index.ts',
+      nativeConfigPaths: [legacyConfig],
+      rootRstackConfigPath,
+      expected: 'bridged',
+    },
+    {
+      name: 'a root native config beside a root Rstack config wins everywhere',
+      documentPath: '/workspace/packages/app/src/index.ts',
+      nativeConfigPaths: ['/workspace/rslint.config.mjs', legacyConfig],
+      rootRstackConfigPath,
+      expected: 'native',
+    },
+    {
+      name: 'a sibling native config does not count',
+      documentPath: '/workspace/packages/app/src/index.ts',
+      nativeConfigPaths: [legacyConfig],
+      expected: undefined,
+    },
+    {
+      name: 'no config leaves the document unserved',
+      documentPath: '/workspace/src/index.ts',
+      nativeConfigPaths: [],
+      expected: undefined,
+    },
+    {
+      name: 'a config above the folder owns an otherwise ungoverned document',
+      documentPath: '/workspace/src/index.ts',
+      nativeConfigPaths: [legacyConfig, ancestorConfigPath],
+      expected: 'native',
+    },
+    {
+      name: 'a root Rstack config precedes a config above the folder',
+      documentPath: '/workspace/src/index.ts',
+      nativeConfigPaths: [ancestorConfigPath],
+      rootRstackConfigPath,
+      expected: 'bridged',
+    },
+  ])('$name', ({ name: _name, expected, ...signals }) => {
+    expect(decideDocumentMode({ platform: 'linux', ...signals })).toBe(
+      expected,
+    );
+  });
+
+  it('compares Windows paths case-insensitively', () => {
+    const signals = {
+      nativeConfigPaths: ['c:\\work\\repo\\packages\\Legacy\\rslint.config.ts'],
+      rootRstackConfigPath: 'C:\\Work\\Repo\\rstack.config.ts',
+      platform: 'win32' as const,
+    };
+    expect(
+      decideDocumentMode({
+        ...signals,
+        documentPath: 'C:\\WORK\\REPO\\Packages\\legacy\\src\\index.ts',
+      }),
+    ).toBe('native');
+    expect(
+      decideDocumentMode({
+        ...signals,
+        documentPath: 'c:\\work\\repo\\src\\index.ts',
+      }),
+    ).toBe('bridged');
   });
 });

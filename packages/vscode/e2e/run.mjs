@@ -45,10 +45,15 @@ const SLICES = [
   },
   {
     // The ported Rslint suites plus the Rstack lint bridge; the latter uses the
-    // shared `rstack` fixture. `RSTACK_LINT_E2E_SUITES=<name,...>` filters
+    // shared `rstack` fixture, and per-document ownership installs its own. `RSTACK_LINT_E2E_SUITES=<name,...>` filters
     // which suites run.
     name: 'lint',
-    fixtures: ['lint', 'lint-dependency-recovery', 'rstack'],
+    fixtures: [
+      'lint',
+      'lint-dependency-recovery',
+      'lint-document-ownership',
+      'rstack',
+    ],
     entry: 'tests-dist/e2e/lint/runTest.js',
     compile: true,
   },

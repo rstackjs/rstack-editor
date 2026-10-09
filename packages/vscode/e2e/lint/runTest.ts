@@ -327,6 +327,13 @@ async function main(): Promise<void> {
       tests: suiteDir('suite-bridge'),
     },
     {
+      // A root `rstack.config.ts` and a nested `rslint.config.ts` in one
+      // folder: one bridged and one native runtime side by side (ADR 0006).
+      name: 'Per-document ownership tests',
+      workspace: fixture('document-ownership'),
+      tests: suiteDir('suite-document-ownership'),
+    },
+    {
       name: 'Missing config dependency tests',
       workspace: fixture('missing-config-dependency'),
       tests: suiteDir('suite-missing-config-dependency'),

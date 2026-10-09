@@ -151,7 +151,7 @@ function createHarness(): Harness {
     },
     silentLogger,
     {
-      folderMode: () => 'bridged',
+      documentMode: () => 'bridged',
       documentIsOpen: () => state.documentOpen,
       onDocumentFailure: (failure) => failures.push(failure.error),
     },

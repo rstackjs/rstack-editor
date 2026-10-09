@@ -11,7 +11,7 @@ import { formatNotInstalledLog } from '../../shared/notInstalled';
 import { CoreResolver, type ResolvedCoreRuntime } from './CoreResolver';
 import { Logger } from './logger';
 import { Rslint } from './Rslint';
-import type { RslintMode } from './resolution';
+import { decideDocumentMode, type RslintMode } from './resolution';
 import { registerRuleDocumentationProviders } from './ruleDocumentationProviders';
 import { formatCoreSelectionFailure, RuntimeManager } from './RuntimeManager';
 import {
@@ -86,7 +86,7 @@ class RslintController implements StackController {
     this.startRuntimeManager();
     this.#subscriptions.push(
       ...registerRuleDocumentationProviders({
-        servesDocument: (document) => this.servesDocument(document),
+        servesDocument: (document) => this.documentMode(document) !== undefined,
         serverAdvertisesHover: (document) =>
           this.serverAdvertisesHover(document),
         refreshOn: context.onDidChangeDetection,
@@ -188,7 +188,7 @@ class RslintController implements StackController {
       (resolved) => this.createRuntime(router, context, logger, resolved),
       logger,
       {
-        folderMode: (folder) => this.folderMode(folder),
+        documentMode: (document) => this.documentMode(document),
         onDocumentFailure: ({
           document,
           workspaceFolder,
@@ -294,24 +294,29 @@ class RslintController implements StackController {
       const configPath = entry.stacks.rslint.ancestorConfigPath;
       if (configPath === undefined) continue;
       this.#logger?.info(
-        `Using ${configPath} for ${entry.folder.name}: the folder has no rslint.config.* of its own`,
+        `Using ${configPath} for documents in ${entry.folder.name} that no rslint.config.* inside the folder governs`,
       );
     }
   }
 
   private detectedFolders() {
-    return (this.#snapshot?.foldersFor('rslint') ?? []).filter(
-      (entry) => entry.stacks.rslint.mode !== undefined,
-    );
+    return this.#snapshot?.foldersFor('rslint') ?? [];
   }
 
-  private folderMode(folder: vscode.WorkspaceFolder): RslintMode | undefined {
-    return this.#snapshot?.forFolder(folder)?.stacks.rslint.mode;
-  }
-
-  private servesDocument(document: vscode.TextDocument): boolean {
+  /** Per-document ownership (ADR 0006): one folder can run both modes. */
+  private documentMode(document: vscode.TextDocument): RslintMode | undefined {
     const folder = vscode.workspace.getWorkspaceFolder(document.uri);
-    return folder !== undefined && this.folderMode(folder) !== undefined;
+    const entry = folder ? this.#snapshot?.forFolder(folder) : undefined;
+    if (!entry) return undefined;
+    const { configFiles, ancestorConfigPath } = entry.stacks.rslint;
+    return decideDocumentMode({
+      documentPath: document.uri.fsPath,
+      nativeConfigPaths: [
+        ...configFiles.map((uri) => uri.fsPath),
+        ...(ancestorConfigPath === undefined ? [] : [ancestorConfigPath]),
+      ],
+      rootRstackConfigPath: entry.rootRstackConfigPath,
+    });
   }
 
   private serverAdvertisesHover(document: vscode.TextDocument): boolean {

@@ -47,7 +47,7 @@ export function installPackage(
   );
 }
 
-/** rstack's published `dist/rslintConfig.js`, the bridged folder's shim. */
+/** rstack's published `dist/rslintConfig.js`, the bridged runtime's shim. */
 export function installShim(rstackDirectory: string): string {
   const shimPath = path.join(rstackDirectory, 'dist', 'rslintConfig.js');
   fs.mkdirSync(path.dirname(shimPath), { recursive: true });
