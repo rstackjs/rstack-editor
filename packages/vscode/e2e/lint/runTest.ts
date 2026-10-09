@@ -147,8 +147,6 @@ async function runIsolatedSuite(
         // Keep VS Code's CI-only extension inventory and AgentHost info logs
         // out of test output while preserving an opt-in for diagnosis.
         `--log=${process.env.VSCODE_TEST_LOG_LEVEL ?? 'warn'}`,
-        // DEBUG(macos-ci): temporary, removed before merge.
-        '--log=rstack.rstack:trace',
         '--disable-extensions',
         '--disable-updates',
         // The fixtures spawn project-local binaries, which Restricted Mode
@@ -163,28 +161,6 @@ async function runIsolatedSuite(
     });
   } catch (error) {
     testError = error;
-  }
-  if (suite.name.startsWith('Ancestor')) {
-    // DEBUG(macos-ci): temporary dump, removed before merge.
-    const dump = (file: string): void => {
-      console.log(`----- DEBUG ${file} -----`);
-      console.log(fs.readFileSync(file, 'utf8'));
-    };
-    const walk = (dir: string): string[] =>
-      fs.existsSync(dir)
-        ? fs
-            .readdirSync(dir, { withFileTypes: true })
-            .flatMap((e) =>
-              e.isDirectory()
-                ? walk(path.join(dir, e.name))
-                : [path.join(dir, e.name)],
-            )
-        : [];
-    for (const file of walk(path.join(userDataDir, 'logs'))) {
-      if (/rslint/i.test(path.basename(file))) dump(file);
-    }
-    if (fs.existsSync(path.join(profileRoot, 'probe.log')))
-      dump(path.join(profileRoot, 'probe.log'));
   }
 
   let cleanupError: unknown;
