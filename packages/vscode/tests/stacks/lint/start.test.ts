@@ -17,6 +17,7 @@ let reconciles = 0;
 rs.mock('vscode', () => {
   const api = {
     RelativePattern: class {},
+    Uri: { file: (fsPath: string) => ({ fsPath }) },
     workspace: {
       textDocuments: [],
       onDidChangeWorkspaceFolders: () => ({ dispose() {} }),

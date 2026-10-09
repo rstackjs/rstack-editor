@@ -40,6 +40,58 @@ export class RslintResolutionError extends Error {
   }
 }
 
+/** Upstream's discovery order within one directory (rslint `config_init.go`). */
+export const RSLINT_CONFIG_NAMES = [
+  'rslint.config.js',
+  'rslint.config.mjs',
+  'rslint.config.ts',
+  'rslint.config.mts',
+] as const;
+
+const hasNodeModulesSegment = (directory: string): boolean =>
+  directory.split(/[\\/]/).includes('node_modules');
+
+/**
+ * The strict ancestors of `folderPath`, nearest first, up to the filesystem
+ * root. Directories under a `node_modules` segment are skipped, as Go's
+ * `isDefaultDiscoveryExcluded` skips their config candidates.
+ */
+export function ancestorDirectories(folderPath: string): string[] {
+  const directories: string[] = [];
+  let directory = path.resolve(folderPath);
+  for (;;) {
+    const parent = path.dirname(directory);
+    if (parent === directory) return directories;
+    directory = parent;
+    if (!hasNodeModulesSegment(directory)) directories.push(directory);
+  }
+}
+
+/**
+ * The nearest `rslint.config.*` above the folder: the config the Go server's
+ * upward discovery (`findCandidateUp`) loads for a folder without one of its
+ * own. It counts only while `@rslint/core` resolves from the folder, so a stray
+ * config in a home directory does not light every folder below it.
+ */
+export function findAncestorRslintConfig(
+  folderPath: string,
+): string | undefined {
+  for (const directory of ancestorDirectories(folderPath)) {
+    for (const name of RSLINT_CONFIG_NAMES) {
+      const candidate = path.join(directory, name);
+      try {
+        if (!fs.statSync(candidate).isFile()) continue;
+      } catch {
+        continue;
+      }
+      return findPackageJsonUncached('@rslint/core', folderPath)
+        ? candidate
+        : undefined;
+    }
+  }
+  return undefined;
+}
+
 export interface RslintModeSignals {
   readonly nativeConfigPaths: readonly string[];
   readonly rootRstackConfigPath?: string;

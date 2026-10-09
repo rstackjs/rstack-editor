@@ -81,6 +81,7 @@ class RslintController implements StackController {
     this.#context = context;
     this.#snapshot = context.detection;
     this.#logger = new Logger(context.output);
+    this.logAncestorConfigs();
 
     this.startRuntimeManager();
     this.#subscriptions.push(
@@ -95,6 +96,7 @@ class RslintController implements StackController {
     this.#subscriptions.push(
       context.onDidChangeDetection((snapshot) => {
         this.#snapshot = snapshot;
+        this.logAncestorConfigs();
         this.pruneDepartedFolders();
         for (const runtime of this.#runtimes.values()) {
           runtime.setBridgeConfigPath(
@@ -284,6 +286,17 @@ class RslintController implements StackController {
     );
     this.#runtimes.set(resolved.key, runtime);
     return runtime;
+  }
+
+  /** Makes a stray `rslint.config.*` in an ancestor such as `~` traceable. */
+  private logAncestorConfigs(): void {
+    for (const entry of this.detectedFolders()) {
+      const configPath = entry.stacks.rslint.ancestorConfigPath;
+      if (configPath === undefined) continue;
+      this.#logger?.info(
+        `Using ${configPath} for ${entry.folder.name}: the folder has no rslint.config.* of its own`,
+      );
+    }
   }
 
   private detectedFolders() {

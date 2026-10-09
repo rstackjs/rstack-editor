@@ -83,6 +83,8 @@ export interface StackDetection {
   readonly configFiles: readonly vscode.Uri[];
   /** Rslint's per-folder ownership choice; undefined for other stacks. */
   readonly mode?: 'native' | 'bridged';
+  /** Rslint only: the config above the folder that made it native. */
+  readonly ancestorConfigPath?: string;
   /**
    * `rstack.config.*` files governing this folder. A folder can be detected
    * through these alone, in which case the stack has to go through the rstack

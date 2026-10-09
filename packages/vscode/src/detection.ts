@@ -6,7 +6,12 @@ import {
   type StackId,
   STACK_IDS,
 } from './types';
-import { decideRslintMode } from './stacks/lint/resolution';
+import {
+  ancestorDirectories,
+  decideRslintMode,
+  findAncestorRslintConfig,
+  RSLINT_CONFIG_NAMES,
+} from './stacks/lint/resolution';
 
 /**
  * `rstack.config.*` is a config source for all three tool stacks. Lint only
@@ -26,7 +31,7 @@ export const RSTACK_CONFIG_GLOB = '**/rstack.config.{ts,js,mts,mjs}';
  * JSON configs (`rslint.json` / `rslint.jsonc`) are deliberately not detection
  * signals — upstream deprecated them and ships `rslint --init` to migrate.
  */
-export const RSLINT_CONFIG_GLOB = '**/rslint.config.{js,mjs,ts,mts}';
+export const RSLINT_CONFIG_GLOB = `**/{${RSLINT_CONFIG_NAMES.join(',')}}`;
 
 export const DEFAULT_RSTEST_CONFIG_GLOBS = [
   '**/rstest.config.{mjs,ts,js,cjs,mts,cts}',
@@ -81,10 +86,7 @@ export const emptySnapshot = (): DetectionSnapshot => new Snapshot([]);
  * and the Rslint/Rstest package resolution, so it counts as a detection input.
  */
 export const DETECTION_WATCH_NAMES = [
-  'rslint.config.js',
-  'rslint.config.mjs',
-  'rslint.config.ts',
-  'rslint.config.mts',
+  ...RSLINT_CONFIG_NAMES,
   ...RSTACK_CONFIG_NAMES,
   ...LOCKFILE_NAMES,
 ] as const;
@@ -106,6 +108,16 @@ export const detectionWatchPatterns = (
 ): string[] => [
   ...new Set([`**/{${DETECTION_WATCH_NAMES.join(',')}}`, ...rstestGlobs]),
 ];
+
+/**
+ * Watched non-recursively in every folder ancestor, which folder-relative
+ * watchers cannot see: native lint's ancestor config, and the lockfile of a
+ * monorepo opened at a subdirectory.
+ */
+const ANCESTOR_WATCH_PATTERN = `{${[
+  ...RSLINT_CONFIG_NAMES,
+  ...LOCKFILE_NAMES,
+].join(',')}}`;
 
 const readRstestGlobs = (folder: vscode.WorkspaceFolder): readonly string[] => {
   const configured = vscode.workspace
@@ -188,8 +200,16 @@ export const detectFolder = async (
   ).find((candidate) =>
     rstackConfigFiles.some((uri) => uri.toString() === candidate.toString()),
   )?.fsPath;
+  // Like the Go server, look above the folder, but only when nothing inside
+  // it decides ownership: an ancestor never displaces a bridged folder.
+  const ancestorConfigPath =
+    rslintConfigFiles.length === 0 && rootRstackConfigPath === undefined
+      ? findAncestorRslintConfig(folder.uri.fsPath)
+      : undefined;
   const rslintMode = decideRslintMode({
-    nativeConfigPaths: rslintConfigFiles.map((uri) => uri.fsPath),
+    nativeConfigPaths: ancestorConfigPath
+      ? [ancestorConfigPath]
+      : rslintConfigFiles.map((uri) => uri.fsPath),
     rootRstackConfigPath,
   });
 
@@ -199,6 +219,7 @@ export const detectFolder = async (
       configFiles: rslintConfigFiles,
       rstackConfigFiles,
       mode: rslintMode,
+      ancestorConfigPath,
     },
     rstest: {
       detected: rstestConfigFiles.length > 0 || rstackConfigFiles.length > 0,
@@ -225,7 +246,7 @@ const signatureOf = (snapshot: DetectionSnapshot): string =>
           .map((uri) => uri.toString())
           .sort()
           .join(',');
-        return `${stack}:${detection.detected ? 1 : 0}:${detection.mode ?? ''}:${detection.binPath ?? ''}:${files}`;
+        return `${stack}:${detection.detected ? 1 : 0}:${detection.mode ?? ''}:${detection.binPath ?? ''}:${detection.ancestorConfigPath ?? ''}:${files}`;
       }).join('|');
       return `${entry.folder.uri.toString()}=>${stacks}`;
     })
@@ -235,7 +256,8 @@ const signatureOf = (snapshot: DetectionSnapshot): string =>
 /**
  * Runs detection over every workspace folder and keeps it fresh without a
  * window reload: one `FileSystemWatcher` per folder and watch pattern covers
- * the config globs plus the lockfiles.
+ * the config globs plus the lockfiles, and one non-recursive watcher per
+ * ancestor directory covers native lint's ancestor signal.
  */
 export class DetectionService implements vscode.Disposable {
   #snapshot: DetectionSnapshot = emptySnapshot();
@@ -369,27 +391,43 @@ export class DetectionService implements vscode.Disposable {
       watcher.dispose();
     }
     this.#watchers = [];
+    // A lockfile event is a dependency change wherever it is watched: a
+    // monorepo opened at a subdirectory installs at an ancestor.
+    const onEvent = (uri: vscode.Uri) => {
+      if (isLockfile(uri)) {
+        this.#notifyUnchanged = true;
+      }
+      this.schedule();
+    };
+    const patterns: vscode.RelativePattern[] = [];
+    const ancestors = new Set<string>();
     for (const folder of vscode.workspace.workspaceFolders ?? []) {
       if (folder.uri.scheme !== 'file') {
         continue;
       }
-      const onEvent = (uri: vscode.Uri) => {
-        if (isLockfile(uri)) {
-          this.#notifyUnchanged = true;
-        }
-        this.schedule();
-      };
       for (const pattern of detectionWatchPatterns(readRstestGlobs(folder))) {
-        const watcher = vscode.workspace.createFileSystemWatcher(
-          new vscode.RelativePattern(folder, pattern),
-        );
-        this.#watchers.push(
-          watcher,
-          watcher.onDidCreate(onEvent),
-          watcher.onDidChange(onEvent),
-          watcher.onDidDelete(onEvent),
-        );
+        patterns.push(new vscode.RelativePattern(folder, pattern));
       }
+      for (const directory of ancestorDirectories(folder.uri.fsPath)) {
+        ancestors.add(directory);
+      }
+    }
+    for (const directory of ancestors) {
+      patterns.push(
+        new vscode.RelativePattern(
+          vscode.Uri.file(directory),
+          ANCESTOR_WATCH_PATTERN,
+        ),
+      );
+    }
+    for (const pattern of patterns) {
+      const watcher = vscode.workspace.createFileSystemWatcher(pattern);
+      this.#watchers.push(
+        watcher,
+        watcher.onDidCreate(onEvent),
+        watcher.onDidChange(onEvent),
+        watcher.onDidDelete(onEvent),
+      );
     }
   }
 

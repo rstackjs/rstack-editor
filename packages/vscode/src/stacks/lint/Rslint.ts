@@ -39,7 +39,11 @@ import type { StackState } from '../../types';
 import type { CoreInstallation } from './CoreResolver';
 import { LanguageServerProcessOwner } from './LanguageServerProcessOwner';
 import type { Logger } from './logger';
-import type { RslintMode } from './resolution';
+import {
+  ancestorDirectories,
+  type RslintMode,
+  RSLINT_CONFIG_NAMES,
+} from './resolution';
 import {
   CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
   isConfigSourceChangeDuringTransaction,
@@ -68,15 +72,8 @@ const LOCKFILE_NAMES = [
   'yarn.lock',
 ] as const;
 
-const RSLINT_CONFIG_WATCH_NAMES = [
-  'rslint.config.js',
-  'rslint.config.mjs',
-  'rslint.config.ts',
-  'rslint.config.mts',
-] as const;
-
 export const CONFIG_REFRESH_WATCH_GLOB = `**/{${[
-  ...RSLINT_CONFIG_WATCH_NAMES,
+  ...RSLINT_CONFIG_NAMES,
   ...LOCKFILE_NAMES,
 ].join(',')}}`;
 
@@ -444,6 +441,9 @@ export class Rslint implements Disposable {
 
     const folderRoot = this.workspaceFolder.uri.fsPath;
     const { mode, packageDirectory, shimPath } = this.installation;
+    // Before the server boots: a watcher misses writes made right after it is
+    // created, and Go registers its own watchers only once it is initialized.
+    this.installConfigRefreshWatchers(mode);
 
     this.logger.info(
       `Rslint ${mode} mode: @rslint/core ${this.installation.version ?? 'unknown'} at ${packageDirectory}`,
@@ -565,7 +565,6 @@ export class Rslint implements Disposable {
         );
       });
 
-      this.installConfigRefreshWatchers(mode);
       const retried = await retryConfigRefreshOnSourceChange(
         async () => this.requestConfigRefresh('initial'),
         async () => this.requestConfigRefresh('config-change'),
@@ -648,8 +647,26 @@ export class Rslint implements Disposable {
     const patterns = [
       CONFIG_REFRESH_WATCH_GLOB,
       ...(mode === 'bridged' ? [RSTACK_CONFIG_REFRESH_WATCH_GLOB] : []),
-    ];
+    ].map((pattern) => new RelativePattern(this.workspaceFolder, pattern));
+    if (mode === 'native') {
+      // Go's discovery can pick a config above the folder, even for part of a
+      // folder with nested configs. It watches the same directories
+      // (`ancestorJSConfigFileWatchers`), but registers them only once
+      // initialized, which loses edits made right after startup.
+      for (const directory of ancestorDirectories(
+        this.workspaceFolder.uri.fsPath,
+      )) {
+        patterns.push(
+          new RelativePattern(
+            Uri.file(directory),
+            `{${RSLINT_CONFIG_NAMES.join(',')}}`,
+          ),
+        );
+      }
+    }
     const refreshConfig = (uri: Uri) => {
+      // The initial refresh reads whatever is on disk once the server runs.
+      if (!this.isRunning()) return;
       const reason = configRefreshReasonForPath(uri.fsPath);
       this.logger.debug(`${reason}: ${uri.fsPath}`);
       clearTimeout(this.configReloadTimer);
@@ -663,9 +680,7 @@ export class Rslint implements Disposable {
       }, 300);
     };
     for (const pattern of patterns) {
-      const watcher = workspace.createFileSystemWatcher(
-        new RelativePattern(this.workspaceFolder, pattern),
-      );
+      const watcher = workspace.createFileSystemWatcher(pattern);
       this.configWatchers.push(watcher);
       watcher.onDidChange(refreshConfig);
       watcher.onDidCreate(refreshConfig);

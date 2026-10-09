@@ -3,12 +3,15 @@
 // (origin/main), with the expectations rewritten for this extension's
 // detection rules:
 //
-// - Upstream treated `rslint.json` as a working fallback config: creating it
-//   produced diagnostics, and the suite walked a JSON → JS → JSON lifecycle.
-// - This extension does not support `rslint.json` at all. It is not a
-//   detection signal, so a folder with only `rslint.json` stays
-//   `not detected`, the lint stack is never registered, and zero diagnostics
-//   is the *designed* outcome — not a fallback state.
+// - Upstream's suite walked a JSON → JS → JSON lifecycle from when
+//   `rslint.json` was a working fallback config. Upstream main no longer
+//   loads legacy JSON configs, and this extension never supported them.
+//   `rslint.json` is not a detection signal, so a folder with only
+//   `rslint.json` stays `not detected`, the lint stack is never registered,
+//   and zero diagnostics is the *designed* outcome — not a fallback state.
+// - Native detection also looks above the folder (`suite-ancestor`). The
+//   sandbox's ancestors hold no `rslint.config.*`, so this suite doubles as
+//   the negative case: no config anywhere still means `not detected`.
 // - `rslint.config.*` remains a live detection signal: creating one must
 //   register the stack without a window reload, and deleting the last one
 //   must deregister it (the config-glob + lockfile detection watcher).

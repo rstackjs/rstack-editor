@@ -1,6 +1,8 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from '@rstest/core';
 import {
+  findAncestorRslintConfig,
   resolveRslint,
   RslintResolutionError,
 } from '../../../src/stacks/lint/resolution';
@@ -136,5 +138,49 @@ describe('resolveRslint', () => {
     } catch (error) {
       expect(error).toMatchObject({ code: 'missing-shim' });
     }
+  });
+});
+
+describe('findAncestorRslintConfig', () => {
+  const writeConfig = (directory: string, name: string): string => {
+    fs.mkdirSync(directory, { recursive: true });
+    const configPath = path.join(directory, name);
+    fs.writeFileSync(configPath, 'export default [];');
+    return configPath;
+  };
+
+  it('takes the nearest config above the folder', () => {
+    const repo = temporaryDirectory();
+    installPackage(repo, '@rslint/core', '0.9.4');
+    writeConfig(repo, 'rslint.config.ts');
+    const nearer = writeConfig(
+      path.join(repo, 'packages'),
+      'rslint.config.mjs',
+    );
+    const app = path.join(repo, 'packages', 'app');
+    fs.mkdirSync(app, { recursive: true });
+
+    expect(findAncestorRslintConfig(app)).toBe(nearer);
+  });
+
+  it('ignores the config while @rslint/core does not resolve', () => {
+    const home = temporaryDirectory();
+    writeConfig(home, 'rslint.config.js');
+    const project = path.join(home, 'project');
+    fs.mkdirSync(project, { recursive: true });
+
+    expect(findAncestorRslintConfig(project)).toBeUndefined();
+  });
+
+  it('skips configs under node_modules', () => {
+    const repo = temporaryDirectory();
+    installPackage(repo, '@rslint/core', '0.9.4');
+    writeConfig(path.join(repo, 'node_modules'), 'rslint.config.js');
+    const vendored = path.join(repo, 'node_modules', 'pkg');
+    fs.mkdirSync(vendored, { recursive: true });
+    expect(findAncestorRslintConfig(vendored)).toBeUndefined();
+
+    const above = writeConfig(repo, 'rslint.config.js');
+    expect(findAncestorRslintConfig(vendored)).toBe(above);
   });
 });
