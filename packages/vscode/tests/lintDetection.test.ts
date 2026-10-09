@@ -1,7 +1,6 @@
 import path from 'node:path';
 import { describe, expect, it, rs } from '@rstest/core';
 import vscode from 'vscode';
-import { decideRslintMode } from '../src/stacks/lint/resolution';
 import { detectFolder, RSTACK_CONFIG_GLOB } from '../src/detection';
 
 let configPaths: string[] = [];
@@ -70,30 +69,11 @@ describe('Rslint folder ownership', () => {
       configPaths = ordered;
       const snapshot = await detectFolder(workspaceFolder);
       expect(snapshot.rootRstackConfigPath).toBe(root);
-      expect(snapshot.stacks.rslint.mode).toBe('bridged');
+      expect(snapshot.stacks.rslint.detected).toBe(true);
     }
     configPaths = [nested];
     expect(
       (await detectFolder(workspaceFolder)).rootRstackConfigPath,
     ).toBeUndefined();
-  });
-
-  it('gives native config presence precedence anywhere in the folder', () => {
-    expect(
-      decideRslintMode({
-        nativeConfigPaths: ['/workspace/packages/app/rslint.config.ts'],
-        rootRstackConfigPath: '/workspace/rstack.config.ts',
-      }),
-    ).toBe('native');
-  });
-
-  it('bridges only a root Rstack config when no native config exists', () => {
-    expect(
-      decideRslintMode({
-        nativeConfigPaths: [],
-        rootRstackConfigPath: '/workspace/rstack.config.ts',
-      }),
-    ).toBe('bridged');
-    expect(decideRslintMode({ nativeConfigPaths: [] })).toBeUndefined();
   });
 });

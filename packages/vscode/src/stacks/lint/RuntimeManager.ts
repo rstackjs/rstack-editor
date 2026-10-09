@@ -5,9 +5,9 @@
 // diffable against it.
 //
 // Adaptations (see packages/vscode/AGENTS.md):
-// - Detection is the gate. A document whose folder detection did not light up
-//   for Rslint is never linted, so the manager asks `folderMode` for the
-//   folder's ownership choice and detaches the document when it has none.
+// - Detection is the gate. A document no detected config governs is never
+//   linted, so the manager asks `documentMode` for the document's ownership
+//   choice (ADR 0006) and detaches the document when it has none.
 // - Settings live under `rstack.rslint.*`.
 // - A failed resolution reports through the **folder status**, never a
 //   `window.showWarningMessage`: this stack owns no UI chrome (adaptation 4).
@@ -69,11 +69,11 @@ export interface DocumentResolutionFailure {
 
 export interface RuntimeManagerOptions {
   /**
-   * The folder's Rslint ownership choice, or `undefined` when detection did
-   * not light the folder up. Undefined means "never lint this document" — the
+   * The document's Rslint ownership choice, or `undefined` when no detected
+   * config governs it. Undefined means "never lint this document" — the
    * detection gate, not a failure.
    */
-  readonly folderMode: (folder: WorkspaceFolder) => RslintMode | undefined;
+  readonly documentMode: (document: TextDocument) => RslintMode | undefined;
   readonly documentIsOpen?: (document: TextDocument) => boolean;
   readonly onDocumentFailure?: (failure: DocumentResolutionFailure) => void;
   /** The document has no outstanding failure: bound, unchanged, or detached. */
@@ -227,9 +227,7 @@ export class RuntimeManager {
     document: TextDocument,
   ): Promise<DocumentCorePlan> {
     const workspaceFolder = workspace.getWorkspaceFolder(document.uri);
-    const mode = workspaceFolder
-      ? this.options.folderMode(workspaceFolder)
-      : undefined;
+    const mode = this.options.documentMode(document);
     if (
       !isSupportedWorkspaceDocument(document) ||
       !workspaceFolder ||

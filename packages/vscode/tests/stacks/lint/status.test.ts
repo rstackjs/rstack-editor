@@ -13,7 +13,7 @@ import {
 describe('Rslint status classification', () => {
   it('disables a folder whose package is not installed', () => {
     // Both not-installed shapes take the uniform disabled state (AGENTS.md):
-    // a bridged folder without rstack, a fresh clone without the core. The
+    // a bridged document without rstack, a fresh clone without the core. The
     // verdict rides on the error (`missingPackage`), set by the throw site.
     expect(
       statusForRslintStartFailure(
@@ -166,7 +166,7 @@ describe('foldRslintFolderState', () => {
     });
   });
 
-  it('lets a bridged folder that lost rstack outrank its live runtime', () => {
+  it('lets a bridged document that lost rstack outrank its live runtime', () => {
     // Inside a folder `disabled` only ever means "a package is not
     // installed" — a failure the user must see, not the shell's kill switch —
     // so, unlike the cross-folder rank, it beats a healthy runtime.

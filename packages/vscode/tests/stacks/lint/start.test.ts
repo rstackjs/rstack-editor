@@ -137,7 +137,10 @@ it('reconciles documents on every detection pass even while a config refresh is 
     name: 'project',
     uri: { fsPath: '/project', toString: () => 'file:///project' },
   };
-  const entry = { folder, stacks: { rslint: { mode: 'native' } } };
+  const entry = {
+    folder,
+    stacks: { rslint: { detected: true, configFiles: [] } },
+  };
   const snapshot = {
     forFolder: () => entry,
     foldersFor: () => [entry],
@@ -185,7 +188,7 @@ it('updates a surviving bridge runtime attribution before the next config failur
     const entry = {
       folder,
       rootRstackConfigPath: configPath,
-      stacks: { rslint: { mode: 'bridged' } },
+      stacks: { rslint: { detected: true, configFiles: [] } },
     };
     return {
       forFolder: () => entry,

@@ -8,7 +8,6 @@ import {
 } from './types';
 import {
   ancestorDirectories,
-  decideRslintMode,
   findAncestorRslintConfig,
   RSLINT_CONFIG_NAMES,
 } from './stacks/lint/resolution';
@@ -140,7 +139,8 @@ const findFiles = async (
   // the stacks rescan their own configs, so a truncated list still lights
   // them up. Rows whose URI list is consumed as-is pass `undefined`
   // (unbounded): the rstack configs are the sole input to the test stack's
-  // bridge sync, where silent truncation would drop whole projects.
+  // bridge sync, where silent truncation would drop whole projects, and the
+  // rslint configs decide each document's lint ownership.
   maxResults: number | undefined = MAX_CONFIG_FILES,
 ): Promise<vscode.Uri[]> =>
   vscode.workspace.findFiles(
@@ -187,7 +187,8 @@ export const detectFolder = async (
   const [rstackConfigFiles, rslintConfigFiles, binPath, rstestConfigFiles] =
     await Promise.all([
       findFiles(folder, RSTACK_CONFIG_GLOB, undefined),
-      findFiles(folder, RSLINT_CONFIG_GLOB),
+      // Unbounded: per-document ownership reads every native config.
+      findFiles(folder, RSLINT_CONFIG_GLOB, undefined),
       probeFmtBin(folder),
       Promise.all(rstestGlobs.map((glob) => findFiles(folder, glob))).then(
         (matches) => matches.flat(),
@@ -200,25 +201,29 @@ export const detectFolder = async (
   ).find((candidate) =>
     rstackConfigFiles.some((uri) => uri.toString() === candidate.toString()),
   )?.fsPath;
-  // Like the Go server, look above the folder, but only when nothing inside
-  // it decides ownership: an ancestor never displaces a bridged folder.
+  // Like the Go server, look above the folder for the documents no config
+  // inside it governs: none can exist under a root `rslint.config.*`, and a
+  // root `rstack.config.*` claims them first — an ancestor never displaces a
+  // bridged runtime. Ownership itself is decided per document.
+  const rootRslintConfigs = new Set(
+    RSLINT_CONFIG_NAMES.map((name) =>
+      vscode.Uri.joinPath(folder.uri, name).toString(),
+    ),
+  );
   const ancestorConfigPath =
-    rslintConfigFiles.length === 0 && rootRstackConfigPath === undefined
+    rootRstackConfigPath === undefined &&
+    !rslintConfigFiles.some((uri) => rootRslintConfigs.has(uri.toString()))
       ? findAncestorRslintConfig(folder.uri.fsPath)
       : undefined;
-  const rslintMode = decideRslintMode({
-    nativeConfigPaths: ancestorConfigPath
-      ? [ancestorConfigPath]
-      : rslintConfigFiles.map((uri) => uri.fsPath),
-    rootRstackConfigPath,
-  });
 
   const stacks: Record<StackId, StackDetection> = {
     rslint: {
-      detected: rslintMode !== undefined,
+      detected:
+        rslintConfigFiles.length > 0 ||
+        rootRstackConfigPath !== undefined ||
+        ancestorConfigPath !== undefined,
       configFiles: rslintConfigFiles,
       rstackConfigFiles,
-      mode: rslintMode,
       ancestorConfigPath,
     },
     rstest: {
@@ -246,7 +251,7 @@ const signatureOf = (snapshot: DetectionSnapshot): string =>
           .map((uri) => uri.toString())
           .sort()
           .join(',');
-        return `${stack}:${detection.detected ? 1 : 0}:${detection.mode ?? ''}:${detection.binPath ?? ''}:${detection.ancestorConfigPath ?? ''}:${files}`;
+        return `${stack}:${detection.detected ? 1 : 0}:${detection.binPath ?? ''}:${detection.ancestorConfigPath ?? ''}:${files}`;
       }).join('|');
       return `${entry.folder.uri.toString()}=>${stacks}`;
     })

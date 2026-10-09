@@ -6,10 +6,10 @@
 //
 // Adaptations from upstream (see packages/vscode/AGENTS.md, adaptation 7):
 // - `RuntimeManager`'s fifth constructor parameter is an options object. It
-//   carries upstream's `documentIsOpen` plus `folderMode`, the detection gate:
-//   a folder detection never lit up for Rslint has no mode, and its documents
-//   are never linted. The fake harness reports every folder as `native`, which
-//   is upstream's only mode.
+//   carries upstream's `documentIsOpen` plus `documentMode`, the detection
+//   gate: a document no detected config governs has no mode and is never
+//   linted. The fake harness reports every document as `native`, which is
+//   upstream's only mode.
 // - `CoreResolver.resolve` takes that mode (and `rstack.rslint.corePath`) as a
 //   third argument; the fake resolver ignores it, exactly as upstream's does.
 // - `CoreInstallation` carries paths, not module factories (the host never
@@ -232,7 +232,7 @@ suite('local-core runtime manager', () => {
       {
         // Detection is the gate; every fixture folder here is a native
         // Rslint folder, which is upstream's only mode.
-        folderMode: () => 'native',
+        documentMode: () => 'native',
         documentIsOpen: (document) => openDocuments.has(document),
       },
     );

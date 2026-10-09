@@ -81,9 +81,10 @@ export interface StackDetection {
   readonly detected: boolean;
   /** Tool-native config files (`rslint.config.*` / `rstest.config.*`). */
   readonly configFiles: readonly vscode.Uri[];
-  /** Rslint's per-folder ownership choice; undefined for other stacks. */
-  readonly mode?: 'native' | 'bridged';
-  /** Rslint only: the config above the folder that made it native. */
+  /**
+   * Rslint only: the nearest config above the folder, which lints the
+   * documents no config inside the folder governs (`decideDocumentMode`).
+   */
   readonly ancestorConfigPath?: string;
   /**
    * `rstack.config.*` files governing this folder. A folder can be detected

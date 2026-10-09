@@ -92,18 +92,56 @@ export function findAncestorRslintConfig(
   return undefined;
 }
 
-export interface RslintModeSignals {
+export interface DocumentModeSignals {
+  readonly documentPath: string;
+  readonly folderRoot: string;
+  /** Every `rslint.config.*` inside the workspace folder. */
   readonly nativeConfigPaths: readonly string[];
   readonly rootRstackConfigPath?: string;
+  /** The nearest `rslint.config.*` above the folder (`findAncestorRslintConfig`). */
+  readonly ancestorConfigPath?: string;
+  /** Selects the path flavour; only tests pass it. */
+  readonly platform?: NodeJS.Platform;
 }
 
-/** Native ownership wins; only a root Rstack config can bridge a folder. */
-export function decideRslintMode({
+/**
+ * Lint ownership for one document (ADR 0006). The supported config protocols
+ * lock the config choice per process, not per folder, so each document picks
+ * its own and runtimes of both modes can share a folder. Only configs on the
+ * document's ancestor chain count, nearest first: an `rslint.config.*` between
+ * the document and the folder root, then a root `rstack.config.*`, then an
+ * `rslint.config.*` above the folder. A document with none of them is not
+ * served, as the `rslint` CLI does not lint files outside every config.
+ */
+export function decideDocumentMode({
+  documentPath,
+  folderRoot,
   nativeConfigPaths,
   rootRstackConfigPath,
-}: RslintModeSignals): RslintMode | undefined {
-  if (nativeConfigPaths.length > 0) return 'native';
+  ancestorConfigPath,
+  platform = process.platform,
+}: DocumentModeSignals): RslintMode | undefined {
+  const paths = platform === 'win32' ? path.win32 : path.posix;
+  // `CoreResolver.normalizeIdentity`'s rule: Windows paths compare case-blind.
+  const normalize = (filePath: string): string => {
+    const normalized = paths.normalize(filePath);
+    return platform === 'win32' ? normalized.toLowerCase() : normalized;
+  };
+  const nativeDirectories = new Set(
+    nativeConfigPaths.map((configPath) => normalize(paths.dirname(configPath))),
+  );
+  const root = normalize(folderRoot);
+  // Callers pass the document's own workspace folder, so the walk meets the
+  // root; the filesystem-root stop only bounds the loop.
+  let directory = normalize(paths.dirname(documentPath));
+  for (;;) {
+    if (nativeDirectories.has(directory)) return 'native';
+    const parent = paths.dirname(directory);
+    if (directory === root || parent === directory) break;
+    directory = parent;
+  }
   if (rootRstackConfigPath !== undefined) return 'bridged';
+  if (ancestorConfigPath !== undefined) return 'native';
   return undefined;
 }
 
@@ -179,7 +217,7 @@ export interface ResolveRslintOptions {
   /**
    * Where the native walk-up starts (per-document resolution, rslint #1617);
    * defaults to the folder root. Bridged mode starts at rstack's directory
-   * instead — one config choice per folder, ADR 0003.
+   * instead, which resolves from the folder root (ADR 0003).
    */
   readonly documentDirectory?: string;
 }

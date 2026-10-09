@@ -37,14 +37,14 @@ import {
 import { RslintVersionMismatchError } from './status';
 
 /**
- * One **Rslint core** the extension is willing to run, plus the folder-level
+ * One **Rslint core** the extension is willing to run, plus the per-document
  * config choice the Lint worker needs on its command line.
  *
  * `shimPath` is part of the runtime's identity, not decoration: the supported
  * config protocols lock `configPath` for the server's lifetime (ADR 0003), so
- * a folder that flips native ↔ bridged must get a *new* runtime even when both
- * modes resolve the same physical core. Upstream has no bridged mode and keys
- * on the core alone.
+ * a document that flips native ↔ bridged must get a *new* runtime even when
+ * both modes resolve the same physical core. Upstream has no bridged mode and
+ * keys on the core alone.
  */
 export interface CoreInstallation {
   /** Stable physical identity. Never merge cores by version text alone. */

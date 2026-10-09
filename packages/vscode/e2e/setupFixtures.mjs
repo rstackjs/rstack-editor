@@ -57,6 +57,12 @@ export const FIXTURES = {
     'fixtures',
     'dependency-recovery',
   ),
+  'lint-document-ownership': path.join(
+    here,
+    'lint',
+    'fixtures',
+    'document-ownership',
+  ),
 };
 export const FIXTURE_NAMES = Object.keys(FIXTURES);
 
