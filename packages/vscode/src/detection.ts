@@ -111,8 +111,8 @@ export const detectionWatchPatterns = (
 
 /**
  * Watched non-recursively in every folder ancestor, which folder-relative
- * watchers cannot see. The lockfiles are here because native lint's ancestor
- * signal needs `@rslint/core`, and a monorepo installs at an ancestor.
+ * watchers cannot see: native lint's ancestor config, and the lockfile of a
+ * monorepo opened at a subdirectory.
  */
 const ANCESTOR_WATCH_PATTERN = `{${[
   ...RSLINT_CONFIG_NAMES,
@@ -391,41 +391,36 @@ export class DetectionService implements vscode.Disposable {
       watcher.dispose();
     }
     this.#watchers = [];
-    const onFolderEvent = (uri: vscode.Uri) => {
+    // A lockfile event is a dependency change wherever it is watched: a
+    // monorepo opened at a subdirectory installs at an ancestor.
+    const onEvent = (uri: vscode.Uri) => {
       if (isLockfile(uri)) {
         this.#notifyUnchanged = true;
       }
       this.schedule();
     };
-    // An ancestor lockfile only re-runs detection: it must not notify the
-    // other stacks as a dependency change, which is the folder lockfile's job.
-    const onAncestorEvent = () => this.schedule();
-    const targets: [vscode.RelativePattern, (uri: vscode.Uri) => void][] = [];
+    const patterns: vscode.RelativePattern[] = [];
     const ancestors = new Set<string>();
     for (const folder of vscode.workspace.workspaceFolders ?? []) {
       if (folder.uri.scheme !== 'file') {
         continue;
       }
       for (const pattern of detectionWatchPatterns(readRstestGlobs(folder))) {
-        targets.push([
-          new vscode.RelativePattern(folder, pattern),
-          onFolderEvent,
-        ]);
+        patterns.push(new vscode.RelativePattern(folder, pattern));
       }
       for (const directory of ancestorDirectories(folder.uri.fsPath)) {
         ancestors.add(directory);
       }
     }
     for (const directory of ancestors) {
-      targets.push([
+      patterns.push(
         new vscode.RelativePattern(
           vscode.Uri.file(directory),
           ANCESTOR_WATCH_PATTERN,
         ),
-        onAncestorEvent,
-      ]);
+      );
     }
-    for (const [pattern, onEvent] of targets) {
+    for (const pattern of patterns) {
       const watcher = vscode.workspace.createFileSystemWatcher(pattern);
       this.#watchers.push(
         watcher,
