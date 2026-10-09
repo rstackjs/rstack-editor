@@ -30,6 +30,8 @@ suite('rslint config above the workspace folder', function () {
     vscode.workspace.workspaceFolders![0].uri.fsPath;
   const rootConfigPath = (): string =>
     path.join(folderPath(), '..', '..', 'rslint.config.mjs');
+  const nearerConfigPath = (): string =>
+    path.join(folderPath(), '..', 'rslint.config.mjs');
 
   async function openIndex(): Promise<vscode.TextDocument> {
     const document = await vscode.workspace.openTextDocument(
@@ -45,6 +47,7 @@ suite('rslint config above the workspace folder', function () {
     );
 
   teardown(async () => {
+    fs.rmSync(nearerConfigPath(), { force: true });
     fs.writeFileSync(rootConfigPath(), configWithNoDebugger('error'));
     await waitForLintStackRegistration(true);
   });
@@ -60,6 +63,24 @@ suite('rslint config above the workspace folder', function () {
     );
 
     fs.writeFileSync(rootConfigPath(), configWithNoDebugger('error'));
+    await waitForDiagnostics(document, hasNoDebugger);
+  });
+
+  // The live runtime keeps its key, and the extension sends no configRefresh
+  // for ancestors: the Go server's own ancestor watchers
+  // (`ancestorJSConfigFileWatchers`, registered through the worker) re-run
+  // its discovery.
+  test('applies a nearer config created above the folder while linting', async () => {
+    const document = await openIndex();
+    await waitForDiagnostics(document, hasNoDebugger);
+
+    fs.writeFileSync(nearerConfigPath(), configWithNoDebugger('off'));
+    await waitForDiagnostics(
+      document,
+      (diagnostics) => !hasNoDebugger(diagnostics),
+    );
+
+    fs.rmSync(nearerConfigPath());
     await waitForDiagnostics(document, hasNoDebugger);
   });
 
