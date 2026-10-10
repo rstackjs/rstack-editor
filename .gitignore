@@ -157,6 +157,7 @@ packages/vscode/e2e/fixtures/*/pnpm-lock.yaml
 packages/vscode/e2e/lint/fixtures/pnpm-lock.yaml
 packages/vscode/e2e/lint/fixtures/*/pnpm-lock.yaml
 packages/vscode/e2e/rstest/fixtures/*/pnpm-lock.yaml
+packages/vscode/e2e/**/.toolchain/
 
 # Build-time copy of the workspace root LICENSE (see rslib.config.mts)
 packages/vscode/LICENSE
