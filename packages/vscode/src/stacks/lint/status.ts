@@ -1,4 +1,4 @@
-import type { StackState } from '../../types';
+import { type StackState, stackStateDetail } from '../../types';
 import { formatNotInstalledStatus } from '../../shared/notInstalled';
 import type { SupportedPackage } from '../../shared/versionCheck';
 import { RslintResolutionError } from './resolution';
@@ -58,21 +58,21 @@ export const attributeToCore = (
 };
 
 /**
- * An advisory wins over `detail`, which is the unconfigured bridge's
- * `no define.lint()` note: healthy with nothing to lint, so `running` plus a
- * detail like `idle`, not `disabled` — that would keep the dependency poll
- * re-evaluating an unchanged config (#93).
+ * An advisory wins over everything: a configured Node below the floor is worth
+ * fixing whatever the config says. `unconfigured` is the bridged shim's
+ * `no define.lint()` note, reported as `not-detected` with that note as the
+ * detail while the worker stays up (#93; AGENTS.md adaptation 7).
  */
-export const runningRslintStatus = (
+export const liveRslintStatus = (
   advisory?: string,
-  detail?: string,
+  unconfigured?: string,
 ): StackState => {
   if (advisory !== undefined) {
     return { kind: 'version-mismatch', detail: advisory };
   }
-  return detail === undefined
+  return unconfigured === undefined
     ? { kind: 'running' }
-    : { kind: 'running', detail };
+    : { kind: 'not-detected', detail: unconfigured };
 };
 
 /** A detected folder with no Lint runtime: `running` plus a detail, never a new kind (AGENTS.md, lint gotcha). */
@@ -85,6 +85,13 @@ const RSLINT_IDLE_DETAIL = 'idle';
  * this folder needs is not installed, so it will not lint" (`missingPackageOf`),
  * a fact worth showing over a healthy runtime or sibling folder — unlike the
  * shell's kill switch.
+ *
+ * A runtime's `not-detected` (the unconfigured bridge) ranks below `running`
+ * on purpose: a folder that also has a healthy native runtime is linting, and
+ * showing "nothing configured" for its bridged half instead would hide that.
+ * Across folders the aggregate keeps details only from folders at the worst
+ * kind, so beside a `running` sibling an unconfigured folder's reason does not
+ * reach the hover.
  */
 const STATE_RANK: Readonly<Record<StackState['kind'], number>> = {
   crashed: 5,
@@ -93,20 +100,6 @@ const STATE_RANK: Readonly<Record<StackState['kind'], number>> = {
   starting: 2,
   running: 1,
   'not-detected': 0,
-};
-
-const detailOf = (state: StackState): string | undefined => {
-  switch (state.kind) {
-    case 'crashed':
-    case 'version-mismatch':
-    case 'starting':
-    case 'running':
-      return state.detail;
-    case 'disabled':
-      return state.reason;
-    case 'not-detected':
-      return undefined;
-  }
 };
 
 const worstKind = (states: readonly StackState[]): StackState['kind'] =>
@@ -143,7 +136,9 @@ export const foldRslintFolderState = (
   const kind = worstKind(states);
   return withDetail(
     kind,
-    joinDetails(states.filter((state) => state.kind === kind).map(detailOf)),
+    joinDetails(
+      states.filter((state) => state.kind === kind).map(stackStateDetail),
+    ),
   );
 };
 
@@ -172,7 +167,7 @@ export const aggregateFolderStates = (
       statuses
         .filter((entry) => entry.state.kind === kind)
         .map((entry) => {
-          const detail = detailOf(entry.state);
+          const detail = stackStateDetail(entry.state);
           if (!detail) return multiRoot ? entry.name : undefined;
           return multiRoot ? `${entry.name}: ${detail}` : detail;
         }),
@@ -202,6 +197,6 @@ const withDetail = (
     case 'disabled':
       return { kind: 'disabled', reason: detail };
     case 'not-detected':
-      return { kind: 'not-detected' };
+      return { kind: 'not-detected', detail };
   }
 };

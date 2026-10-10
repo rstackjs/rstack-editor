@@ -51,7 +51,7 @@ import {
 } from './worker/configDependencyProtocol';
 import {
   RslintVersionMismatchError,
-  runningRslintStatus,
+  liveRslintStatus,
   statusForRslintStartFailure,
 } from './status';
 import {
@@ -322,7 +322,7 @@ export class Rslint implements Disposable {
   private readonly configDependencyEpisode = new NotInstalledEpisode();
   private configDependencyRetryPending = false;
   private configRefreshFailed = false;
-  /** Holds the status detail while the bridged shim finds no `define.lint()` (#93). */
+  /** Holds the `not-detected` detail while the bridged shim finds no `define.lint()` (#93). */
   private readonly unconfigured = new MessageLatch();
   private readonly configError = new MessageLatch();
   private startPromise: Promise<void> | undefined;
@@ -352,17 +352,18 @@ export class Rslint implements Disposable {
     this.reportStatus(state);
   }
 
-  private reportRunning(): void {
+  private reportLive(): void {
     if (this.configRefreshFailed || this.hasConfigDependencyFailure()) return;
-    this.report(runningRslintStatus(this.advisory, this.unconfigured.current));
+    this.report(liveRslintStatus(this.advisory, this.unconfigured.current));
   }
 
   private handleConfigDependencyStatus(
     notification: ConfigDependencyStatusNotification,
   ): void {
     if (notification.kind === 'unconfigured') {
-      // Healthy, nothing to lint: no poll, no warning, no crash. The bridged
-      // config watcher re-runs the shim once `define.lint()` appears.
+      // Nothing to lint: no poll, no warning, no crash. The worker stays up
+      // and the bridged config watcher re-runs the shim once `define.lint()`
+      // appears.
       this.configError.clear();
       this.configRefreshFailed = false;
       this.configDependencyEpisode.clear();
@@ -376,7 +377,7 @@ export class Rslint implements Disposable {
           `Rslint has nothing to lint: ${detail}. Add define.lint(...) to enable it.`,
         );
       }
-      this.reportRunning();
+      this.reportLive();
       return;
     }
     const wasUnconfigured = this.unconfigured.current !== undefined;
@@ -406,7 +407,7 @@ export class Rslint implements Disposable {
     if (notification.kind === 'ok') {
       const wasMissing = this.configDependencyEpisode.clear();
       if ((wasMissing || wasFailed || wasUnconfigured) && this.isRunning()) {
-        this.reportRunning();
+        this.reportLive();
       }
       return;
     }
@@ -543,7 +544,7 @@ export class Rslint implements Disposable {
           detail: 'the Rslint language server stopped',
         });
       } else if (event.newState === State.Running) {
-        this.reportRunning();
+        this.reportLive();
       }
     });
 
@@ -602,7 +603,7 @@ export class Rslint implements Disposable {
         );
       }
       this.logger.info('Rslint language client started successfully');
-      this.reportRunning();
+      this.reportLive();
     } catch (error: unknown) {
       // Keep the initialized runtime available for configRefresh retries.
       // Rethrowing this classified rejection would make RuntimeManager close
@@ -632,7 +633,7 @@ export class Rslint implements Disposable {
       void configuredNodeBelowFloor(configured).then((message) => {
         if (message !== undefined && !this.closing) {
           this.advisory = message;
-          if (this.isRunning()) this.reportRunning();
+          if (this.isRunning()) this.reportLive();
         }
       });
       return configured;
@@ -726,13 +727,13 @@ export class Rslint implements Disposable {
       this.configRefreshFailed = false;
       try {
         await client.sendRequest('rslint/configRefresh', { reason });
-        if (wasFailed && this.isRunning()) this.reportRunning();
+        if (wasFailed && this.isRunning()) this.reportLive();
       } catch (error) {
         // The worker verdict already surfaced this rejection as a real config
         // error. Keep the live runtime for config edits without duplicate logs
         // or a generic startup failure replacing its precise status.
         // Source-change races must still reach the existing startup retry.
-        // An unconfigured verdict is a healthy state, so Go rejecting that
+        // An unconfigured verdict is not a failure, so Go rejecting that
         // refresh (it keeps a last-good catalog) is not reported either.
         if (
           isConfigSourceChangeDuringTransaction(error) ||
