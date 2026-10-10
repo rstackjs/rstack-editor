@@ -56,13 +56,14 @@ jobs:
       - name: Unit Test
         run: pnpm run test:unit
 
-  # ======== E2E: Windows + macOS, no Linux ========
-  # These are the platforms the extension is actually used on, and the only
-  # ones upstream rstest runs its ported VS Code suites on. Linux is excluded
-  # deliberately: the Extension Host needs xvfb there, and inotify reports a
-  # non-atomic file rewrite as separate truncate/write events, so fixture edits
-  # in the watch-mode suites race the watcher in a way no user hits. Do not add
-  # a Linux E2E job back without also making every fixture edit atomic.
+  # ======== E2E: Windows + macOS ========
+  # Windows and macOS are the platforms users run the extension on. Linux E2E
+  # is deliberately not run here: rstack-ecosystem-ci runs the suites on
+  # ubuntu-latest (rstackjs/rstack-editor#40), and for that `e2e/run.mjs`
+  # re-execs under `xvfb-run` when DISPLAY is unset. The old concern that
+  # non-atomic fixture writes race inotify on Linux was tested and did not
+  # reproduce (rstackjs/rstack-editor#67), so the exclusion is about CI cost,
+  # not correctness.
   e2e:
     name: E2E (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
