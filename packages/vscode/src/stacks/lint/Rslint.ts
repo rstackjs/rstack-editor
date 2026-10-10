@@ -322,6 +322,8 @@ export class Rslint implements Disposable {
   private readonly configDependencyEpisode = new NotInstalledEpisode();
   private configDependencyRetryPending = false;
   private configRefreshFailed = false;
+  /** Holds the status detail while the bridged shim finds no `define.lint()` (#93). */
+  private readonly unconfigured = new MessageLatch();
   private readonly configError = new MessageLatch();
   private startPromise: Promise<void> | undefined;
   private startOperation: Promise<void> | undefined;
@@ -352,12 +354,33 @@ export class Rslint implements Disposable {
 
   private reportRunning(): void {
     if (this.configRefreshFailed || this.hasConfigDependencyFailure()) return;
-    this.report(runningRslintStatus(this.advisory));
+    this.report(runningRslintStatus(this.advisory, this.unconfigured.current));
   }
 
   private handleConfigDependencyStatus(
     notification: ConfigDependencyStatusNotification,
   ): void {
+    if (notification.kind === 'unconfigured') {
+      // Healthy, nothing to lint: no poll, no warning, no crash. The bridged
+      // config watcher re-runs the shim once `define.lint()` appears.
+      this.configError.clear();
+      this.configRefreshFailed = false;
+      this.configDependencyEpisode.clear();
+      const configPath =
+        this.bridgeConfigPath === undefined
+          ? 'rstack.config.*'
+          : displayPath(this.workspaceFolder.uri.fsPath, this.bridgeConfigPath);
+      const detail = `no define.lint() in ${configPath}`;
+      if (this.unconfigured.changed(detail)) {
+        this.logger.info(
+          `Rslint has nothing to lint: ${detail}. Add define.lint(...) to enable it.`,
+        );
+      }
+      this.reportRunning();
+      return;
+    }
+    const wasUnconfigured = this.unconfigured.current !== undefined;
+    this.unconfigured.clear();
     if (notification.kind === 'plugin') {
       const reason = `ESLint plugins failed to load: ${notification.cause}`;
       this.configRefreshFailed = true;
@@ -382,7 +405,9 @@ export class Rslint implements Disposable {
     this.configRefreshFailed = false;
     if (notification.kind === 'ok') {
       const wasMissing = this.configDependencyEpisode.clear();
-      if ((wasMissing || wasFailed) && this.isRunning()) this.reportRunning();
+      if ((wasMissing || wasFailed || wasUnconfigured) && this.isRunning()) {
+        this.reportRunning();
+      }
       return;
     }
     const failure = notification.failure;
@@ -437,6 +462,7 @@ export class Rslint implements Disposable {
     this.lifecycleEpoch++;
     const epoch = this.lifecycleEpoch;
     this.advisory = undefined;
+    this.unconfigured.clear();
     this.report({ kind: 'starting' });
 
     const folderRoot = this.workspaceFolder.uri.fsPath;
@@ -706,9 +732,11 @@ export class Rslint implements Disposable {
         // error. Keep the live runtime for config edits without duplicate logs
         // or a generic startup failure replacing its precise status.
         // Source-change races must still reach the existing startup retry.
+        // An unconfigured verdict is a healthy state, so Go rejecting that
+        // refresh (it keeps a last-good catalog) is not reported either.
         if (
           isConfigSourceChangeDuringTransaction(error) ||
-          !this.configRefreshFailed
+          (!this.configRefreshFailed && this.unconfigured.current === undefined)
         ) {
           this.configRefreshFailed = wasFailed;
           throw error;

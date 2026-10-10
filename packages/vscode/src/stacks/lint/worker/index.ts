@@ -11,6 +11,7 @@ import {
 } from 'vscode-jsonrpc/node';
 import {
   LspConfigTransactionAdapter,
+  withProcessExitAsThrow,
   type ConfigTransactionControlRequest,
 } from './ConfigTransactionAdapter';
 import { PluginLintPool } from './PluginLintPool';
@@ -228,14 +229,25 @@ export async function runLintWorker(
   );
   let configDependencyFailure: ConfigDependencyFailure | undefined;
   let configError: string | undefined;
+  let unconfigured = false;
   const adapter = new LspConfigTransactionAdapter(
-    installation.createConfigModuleHost(),
+    installation.createConfigModuleHost(
+      // `--config` means bridged: only rstack's shim exits on a refusal.
+      options.configPath === undefined
+        ? undefined
+        : {
+            loadFresh: withProcessExitAsThrow(installation.loadConfigFileFresh),
+          },
+    ),
     pluginLintPool,
     (activation) => fingerprinter.compute(activation),
     installation.protocolVersion,
     {
       report: (failure) => {
         configDependencyFailure ??= failure;
+      },
+      reportUnconfigured: () => {
+        unconfigured = true;
       },
       reportError: (message) => {
         configError ??= message;
@@ -258,10 +270,15 @@ export async function runLintWorker(
     takeConfigStatus: () => {
       const failure = configDependencyFailure;
       const message = configError;
+      const refused = unconfigured;
       configDependencyFailure = undefined;
       configError = undefined;
+      unconfigured = false;
       if (message !== undefined) return { kind: 'error', message };
       if (failure !== undefined) return { kind: 'missing', failure };
+      // Before `plugin`: a host failure left by an earlier `define.lint()`
+      // must not mask the healthy unconfigured state.
+      if (refused) return { kind: 'unconfigured' };
       const cause = pluginLintPool.hostFailure;
       if (cause !== undefined) return { kind: 'plugin', cause };
       return { kind: 'ok' };

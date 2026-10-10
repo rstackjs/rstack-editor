@@ -3,11 +3,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
-import { describe, expect, it } from '@rstest/core';
-import type {
-  ConfigModuleActivationPlan,
-  LoadConfigsRequest,
-  LoadConfigsResponse,
+import { describe, expect, it, rs } from '@rstest/core';
+import {
+  CONFIG_DISCOVERY_PROTOCOL_VERSION,
+  ConfigModuleHost,
+  type ConfigModuleActivationPlan,
+  type LoadConfigsRequest,
+  type LoadConfigsResponse,
 } from '@rslint/core/config-loader';
 import { createMessageConnection, NullLogger } from 'vscode-jsonrpc/node';
 import {
@@ -15,9 +17,13 @@ import {
   parseWorkerArgs,
   stampConfigRefresh,
 } from '../../../src/stacks/lint/worker/cli';
-import { LspConfigTransactionAdapter } from '../../../src/stacks/lint/worker/ConfigTransactionAdapter';
+import {
+  LspConfigTransactionAdapter,
+  withProcessExitAsThrow,
+} from '../../../src/stacks/lint/worker/ConfigTransactionAdapter';
 import {
   CONFIG_DEPENDENCY_STATUS_NOTIFICATION,
+  CONFIG_PROCESS_EXIT_CODE,
   type ConfigDependencyStatusNotification,
 } from '../../../src/stacks/lint/worker/configDependencyProtocol';
 import { registerEditorProxy } from '../../../src/stacks/lint/worker/index';
@@ -83,6 +89,12 @@ process.stdin.on('data', (chunk) => {
   readMessages();
 });
 `;
+
+const pluginLintPool = {
+  prepare: async () => true,
+  commit: async () => true,
+  abort: async () => undefined,
+};
 
 describe('lint worker CLI', () => {
   it('accepts only absolute core and optional config paths', () => {
@@ -264,6 +276,9 @@ describe('lint worker config dependency classification', () => {
       report: (failure: NonNullable<typeof missing>) => {
         missing = failure;
       },
+      reportUnconfigured: () => {
+        throw new Error('unexpected unconfigured verdict');
+      },
       reportError: (message: string) => {
         configError ??= message;
       },
@@ -296,11 +311,7 @@ describe('lint worker config dependency classification', () => {
         },
         deleteSession: () => true,
       },
-      {
-        prepare: async () => true,
-        commit: async () => true,
-        abort: async () => {},
-      },
+      pluginLintPool,
       () => 'fingerprint',
       3,
       observer,
@@ -379,11 +390,6 @@ describe('lint worker config dependency classification', () => {
       },
       deleteSession: () => true,
     };
-    const pluginLintPool = {
-      prepare: async () => true,
-      commit: async () => true,
-      abort: async () => undefined,
-    };
     const failures: Array<{ configPath: string; cause: string }> = [];
     const adapter = new LspConfigTransactionAdapter(
       host,
@@ -392,6 +398,9 @@ describe('lint worker config dependency classification', () => {
       3,
       {
         report: (failure) => failures.push(failure),
+        reportUnconfigured: () => {
+          throw new Error('unexpected unconfigured verdict');
+        },
         reportError: () => {
           throw new Error('unexpected config error');
         },
@@ -463,15 +472,14 @@ describe('lint worker config dependency classification', () => {
         },
         deleteSession: () => true,
       },
-      {
-        prepare: async () => true,
-        commit: async () => true,
-        abort: async () => undefined,
-      },
+      pluginLintPool,
       () => 'fingerprint',
       3,
       {
         report: (failure) => failures.push(failure),
+        reportUnconfigured: () => {
+          throw new Error('unexpected unconfigured verdict');
+        },
         reportError: (message) =>
           expect(message).toBe("Cannot find package './relative.js'"),
       },
@@ -492,5 +500,90 @@ describe('lint worker config dependency classification', () => {
 
     expect(result).toEqual(response);
     expect(failures).toEqual([]);
+  });
+});
+
+describe('lint worker bridged shim refusal (#93)', () => {
+  const shimPath = path.resolve(
+    '/project/node_modules/rstack/dist/rslintConfig.js',
+  );
+  const loadRequest = (transactionId: string): LoadConfigsRequest => ({
+    protocolVersion: CONFIG_DISCOVERY_PROTOCOL_VERSION,
+    transactionId,
+    loadMode: 'fresh',
+    candidates: [
+      {
+        id: 'shim',
+        configPath: shimPath,
+        configDirectory: path.dirname(shimPath),
+      },
+    ],
+  });
+  const realExit = (code?: number | string | null): never => {
+    throw new Error(`the real exit ran with ${String(code)}`);
+  };
+
+  it('turns process.exit during a bridged load into an unconfigured verdict', async () => {
+    const seam = { exit: realExit };
+    let unconfigured = 0;
+    // The real ConfigModuleHost: proves its error payload keeps the tag.
+    const host = new ConfigModuleHost({
+      readSource: async () => new TextEncoder().encode('export default []'),
+      loadFresh: withProcessExitAsThrow(async () => seam.exit(1), seam),
+    });
+    const adapter = new LspConfigTransactionAdapter(
+      host,
+      pluginLintPool,
+      () => 'fingerprint',
+      CONFIG_DISCOVERY_PROTOCOL_VERSION,
+      {
+        report: () => {
+          throw new Error('unexpected missing dependency');
+        },
+        reportUnconfigured: () => {
+          unconfigured++;
+        },
+        reportError: () => {
+          throw new Error('unexpected config error');
+        },
+      },
+    );
+
+    const response = await adapter.loadConfigs(loadRequest('refused'));
+
+    expect(response.results).toEqual([
+      {
+        id: 'shim',
+        status: 'failed',
+        error: {
+          code: CONFIG_PROCESS_EXIT_CODE,
+          message: 'config load called process.exit(1)',
+        },
+      },
+    ]);
+    expect(unconfigured).toBe(1);
+    expect(seam.exit).toBe(realExit);
+    adapter.dispose();
+  });
+
+  it('keeps the interception until the last overlapping load settles', async () => {
+    const seam = { exit: realExit };
+    const gates = new Map<string, PromiseWithResolvers<void>>();
+    const load = withProcessExitAsThrow(async (configPath) => {
+      const gate = Promise.withResolvers<void>();
+      gates.set(configPath, gate);
+      await gate.promise;
+    }, seam);
+
+    const first = load('/first');
+    const second = load('/second');
+    await rs.waitUntil(() => gates.size === 2);
+    expect(seam.exit).not.toBe(realExit);
+    gates.get('/first')?.resolve();
+    await first;
+    expect(() => seam.exit(1)).toThrow('config load called process.exit(1)');
+    gates.get('/second')?.resolve();
+    await second;
+    expect(seam.exit).toBe(realExit);
   });
 });

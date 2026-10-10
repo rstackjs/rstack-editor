@@ -14,10 +14,13 @@ type ConfigModuleHostConstructor = new (
   options?: ConfigModuleHostOptions,
 ) => ConfigModuleHost;
 
+type ConfigModuleLoader = NonNullable<ConfigModuleHostOptions['loadFresh']>;
+
 interface ConfigLoaderModule {
   readonly ConfigModuleHost: ConfigModuleHostConstructor;
   readonly CONFIG_DISCOVERY_PROTOCOL_VERSION: number;
   readonly resolveRslintBinary: () => unknown;
+  readonly loadConfigFileFresh: ConfigModuleLoader;
 }
 
 interface PluginHostModule {
@@ -33,7 +36,9 @@ export interface CoreInstallation {
   readonly version: string;
   readonly binaryPath: string;
   readonly protocolVersion: number;
-  createConfigModuleHost(): ConfigModuleHost;
+  /** The host's default fresh loader, for wrapping through `loadFresh`. */
+  readonly loadConfigFileFresh: ConfigModuleLoader;
+  createConfigModuleHost(options?: ConfigModuleHostOptions): ConfigModuleHost;
   createPluginLintHost: typeof createPluginLintHost;
 }
 
@@ -46,7 +51,8 @@ function isConfigLoaderModule(value: unknown): value is ConfigLoaderModule {
     isRecord(value) &&
     typeof value.ConfigModuleHost === 'function' &&
     Number.isInteger(value.CONFIG_DISCOVERY_PROTOCOL_VERSION) &&
-    typeof value.resolveRslintBinary === 'function'
+    typeof value.resolveRslintBinary === 'function' &&
+    typeof value.loadConfigFileFresh === 'function'
   );
 }
 
@@ -146,7 +152,9 @@ export async function loadCoreInstallation(
     version: packageJson.version,
     binaryPath,
     protocolVersion: configLoaderModule.CONFIG_DISCOVERY_PROTOCOL_VERSION,
-    createConfigModuleHost: () => new configLoaderModule.ConfigModuleHost(),
+    loadConfigFileFresh: configLoaderModule.loadConfigFileFresh,
+    createConfigModuleHost: (hostOptions) =>
+      new configLoaderModule.ConfigModuleHost(hostOptions),
     createPluginLintHost: async (...args) => {
       const factory = await getPluginFactory();
       return factory(...args);

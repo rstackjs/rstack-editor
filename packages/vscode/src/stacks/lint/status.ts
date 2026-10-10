@@ -57,10 +57,23 @@ export const attributeToCore = (
   return { kind: state.kind, detail: `${state.detail} (${coreDirectory})` };
 };
 
-export const runningRslintStatus = (advisory?: string): StackState =>
-  advisory === undefined
+/**
+ * An advisory wins over `detail`, which is the unconfigured bridge's
+ * `no define.lint()` note: healthy with nothing to lint, so `running` plus a
+ * detail like `idle`, not `disabled` — that would keep the dependency poll
+ * re-evaluating an unchanged config (#93).
+ */
+export const runningRslintStatus = (
+  advisory?: string,
+  detail?: string,
+): StackState => {
+  if (advisory !== undefined) {
+    return { kind: 'version-mismatch', detail: advisory };
+  }
+  return detail === undefined
     ? { kind: 'running' }
-    : { kind: 'version-mismatch', detail: advisory };
+    : { kind: 'running', detail };
+};
 
 /** A detected folder with no Lint runtime: `running` plus a detail, never a new kind (AGENTS.md, lint gotcha). */
 const RSLINT_IDLE_DETAIL = 'idle';

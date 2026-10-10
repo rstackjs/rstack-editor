@@ -259,6 +259,7 @@ suite('LSP config discovery transactions', () => {
     typeof LspConfigTransactionAdapter
   >[4] = {
     report: () => assert.fail('unexpected missing dependency'),
+    reportUnconfigured: () => assert.fail('unexpected unconfigured verdict'),
     reportError: () => assert.fail('unexpected config error'),
   };
 

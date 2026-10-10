@@ -8,7 +8,15 @@ export type ConfigDependencyStatusNotification =
   | { readonly kind: 'ok' }
   | { readonly kind: 'missing'; readonly failure: ConfigDependencyFailure }
   | { readonly kind: 'plugin'; readonly cause: string }
+  | { readonly kind: 'unconfigured' }
   | { readonly kind: 'error'; readonly message: string };
+
+/**
+ * `code` of the error `withProcessExitAsThrow` throws in place of exiting the
+ * worker; `ConfigModuleHost` keeps a string `code` on the failed load result,
+ * so the verdict survives to the adapter.
+ */
+export const CONFIG_PROCESS_EXIT_CODE = 'RSTACK_CONFIG_PROCESS_EXIT';
 
 /** Shared with the editor's startup retry; this module stays vscode-free. */
 export function isConfigSourceChangeDuringTransaction(error: unknown): boolean {

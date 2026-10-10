@@ -327,6 +327,13 @@ async function main(): Promise<void> {
       tests: suiteDir('suite-bridge'),
     },
     {
+      // A root `rstack.config.ts` with only `define.fmt()`: rstack's lint
+      // shim refuses it, and the runtime must stay healthy (#93).
+      name: 'Rstack fmt-only config tests',
+      workspace: sharedFixture('rstack-fmt-only'),
+      tests: suiteDir('suite-fmt-only-config'),
+    },
+    {
       // A root `rstack.config.ts` and a nested `rslint.config.ts` in one
       // folder: one bridged and one native runtime side by side (ADR 0006).
       name: 'Per-document ownership tests',

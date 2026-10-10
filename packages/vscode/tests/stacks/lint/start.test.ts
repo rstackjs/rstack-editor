@@ -9,7 +9,13 @@ import type { ResolvedCoreRuntime } from '../../../src/stacks/lint/CoreResolver'
 import { registerEditorProxy } from '../../../src/stacks/lint/worker/index';
 
 let refreshOutcome:
-  'missing' | 'broken' | 'fixed' | 'changed' | 'changed-once' = 'missing';
+  | 'missing'
+  | 'broken'
+  | 'fixed'
+  | 'changed'
+  | 'changed-once'
+  | 'unconfigured'
+  | 'unconfigured-rejected' = 'missing';
 let pendingRefresh: Promise<void> | undefined;
 let refreshCalls = 0;
 let reconciles = 0;
@@ -107,6 +113,17 @@ rs.mock('vscode-languageclient/node', () => ({
           },
         );
         return request('rslint/configRefresh', { reason: 'initial' });
+      }
+      if (
+        refreshOutcome === 'unconfigured' ||
+        refreshOutcome === 'unconfigured-rejected'
+      ) {
+        this.notification?.({ kind: 'unconfigured' });
+        // Go rejects instead of committing when a last-good catalog exists.
+        if (refreshOutcome === 'unconfigured-rejected') {
+          throw new Error('config refresh failed at last-good boundary');
+        }
+        return;
       }
       if (refreshOutcome !== 'missing') {
         this.notification?.(
@@ -233,17 +250,23 @@ it('updates a surviving bridge runtime attribution before the next config failur
   expect(warnings[0]).not.toContain('rstack.config.js');
 });
 
-function createRuntime() {
+function createRuntime(
+  installation: Record<string, unknown> = {
+    mode: 'native',
+    packageDirectory: '/project/core',
+  },
+) {
   const states: StackState[] = [];
   const warnings: string[] = [];
   const errors: unknown[] = [];
+  const infos: string[] = [];
   const runtime = new Rslint({
     rootKey: '/project/core',
     workspaceFolder: { name: 'project', uri: { fsPath: '/project' } },
-    installation: { mode: 'native', packageDirectory: '/project/core' },
+    installation,
     router: { createMiddleware: () => ({}) },
     logger: {
-      info() {},
+      info: (message: string) => infos.push(message),
       debug() {},
       warn: (message: string) => warnings.push(message),
       error: (...args: unknown[]) => errors.push(args),
@@ -251,7 +274,7 @@ function createRuntime() {
     reportStatus: (state: StackState) => states.push(state),
   } as unknown as RslintOptions);
 
-  return { runtime, states, warnings, errors };
+  return { runtime, states, warnings, errors, infos };
 }
 
 it('keeps dependency retries single-flight until a hung refresh settles', async () => {
@@ -341,4 +364,66 @@ it('reports one startup crash when the config source retry is exhausted', async 
   );
   expect(states.filter((state) => state.kind === 'crashed')).toHaveLength(1);
   expect(errors).toHaveLength(1);
+});
+
+function refreshConfig(runtime: Rslint, reason: string): Promise<void> {
+  return (
+    runtime as unknown as {
+      requestConfigRefresh(reason: string): Promise<void>;
+    }
+  ).requestConfigRefresh(reason);
+}
+
+it('keeps a bridged runtime running with a detail when the shim finds no define.lint()', async () => {
+  refreshOutcome = 'unconfigured';
+  const { runtime, states, warnings, errors, infos } = createRuntime({
+    mode: 'bridged',
+    packageDirectory: '/project/core',
+    shimPath: '/project/node_modules/rstack/dist/rslintConfig.js',
+  });
+  runtime.setBridgeConfigPath('/project/rstack.config.ts');
+  const unconfigured = {
+    kind: 'running',
+    detail: 'no define.lint() in rstack.config.ts',
+  };
+
+  await runtime.start(new AbortController().signal);
+  expect(states.at(-1)).toEqual(unconfigured);
+  expect(warnings).toEqual([]);
+  expect(errors).toEqual([]);
+  const notices = () =>
+    infos.filter((message) => message.includes('nothing to lint'));
+  expect(notices()).toEqual([
+    'Rslint has nothing to lint: no define.lint() in rstack.config.ts. Add define.lint(...) to enable it.',
+  ]);
+  // Healthy: the dependency poll has nothing to retry.
+  expect(runtime.retryConfigDependency()).toBeUndefined();
+
+  // An unchanged episode logs once; Go rejecting with a last-good catalog is
+  // not reported as a failure either.
+  await refreshConfig(runtime, 'config-change');
+  refreshOutcome = 'unconfigured-rejected';
+  await refreshConfig(runtime, 'config-change');
+  expect(states.at(-1)).toEqual(unconfigured);
+  expect(notices()).toHaveLength(1);
+  expect(errors).toEqual([]);
+
+  refreshOutcome = 'fixed';
+  await refreshConfig(runtime, 'config-change');
+  expect(states.at(-1)).toEqual({ kind: 'running' });
+
+  refreshOutcome = 'unconfigured';
+  await refreshConfig(runtime, 'config-change');
+  expect(states.at(-1)).toEqual(unconfigured);
+  expect(notices()).toHaveLength(2);
+  expect(states.some((state) => state.kind === 'crashed')).toBe(false);
+  expect(warnings).toEqual([]);
+
+  // A real config error replaces the detail.
+  refreshOutcome = 'broken';
+  await refreshConfig(runtime, 'config-change');
+  expect(states.at(-1)).toEqual({ kind: 'crashed', detail: 'Invalid config' });
+  expect(errors).toEqual([
+    ['Failed to refresh config discovery: Invalid config'],
+  ]);
 });

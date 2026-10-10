@@ -88,6 +88,12 @@ describe('Rslint status classification', () => {
       kind: 'version-mismatch',
       detail: 'Node 22.17 is below the floor',
     });
+    expect(
+      runningRslintStatus('Node 22.17 is below the floor', 'idle'),
+    ).toEqual({
+      kind: 'version-mismatch',
+      detail: 'Node 22.17 is below the floor',
+    });
   });
 });
 
