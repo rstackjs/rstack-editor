@@ -9,10 +9,51 @@ import type {
 } from '@rslint/core/config-loader';
 import { missingDependencyCause } from '../../../shared/missingDependency';
 import type { ConfigDependencyFailure } from '../../../shared/notInstalled';
+import { CONFIG_PROCESS_EXIT_CODE } from './configDependencyProtocol';
 
 interface ConfigDependencyObserver {
   report(failure: ConfigDependencyFailure): void;
+  reportUnconfigured(): void;
   reportError(message: string): void;
+}
+
+/**
+ * Wraps a bridged worker's fresh config loader. rstack's lint shim, evaluated
+ * in this process, calls `process.exit(1)` when the Rstack config has no
+ * `define.lint()` (#93), which would kill the worker, the Go child and the
+ * editor transport mid-transaction. While a load runs, `exit` throws an error
+ * tagged `CONFIG_PROCESS_EXIT_CODE` instead, so the evaluation fails like any
+ * other config error and lands as a `failed` result in `ConfigModuleHost`.
+ * Depth-counted because a canceled load's module evaluation can outlive Go's
+ * request and overlap the next refresh.
+ */
+export function withProcessExitAsThrow(
+  load: (configPath: string) => Promise<unknown>,
+  seam: Pick<NodeJS.Process, 'exit'> = process,
+): (configPath: string) => Promise<unknown> {
+  let depth = 0;
+  let originalExit: NodeJS.Process['exit'] | undefined;
+  return async (configPath) => {
+    if (depth++ === 0) {
+      originalExit = seam.exit;
+      seam.exit = (code) => {
+        throw Object.assign(
+          new Error(
+            `config load called process.exit(${code === undefined ? '' : String(code)})`,
+          ),
+          { code: CONFIG_PROCESS_EXIT_CODE },
+        );
+      };
+    }
+    try {
+      return await load(configPath);
+    } finally {
+      if (--depth === 0 && originalExit !== undefined) {
+        seam.exit = originalExit;
+        originalExit = undefined;
+      }
+    }
+  };
 }
 
 interface ConfigActivationWireResponse {
@@ -123,6 +164,12 @@ export class LspConfigTransactionAdapter {
         results: response.results.map((result, index) => {
           if (result.status !== 'failed') return result;
           const candidate = request.candidates[index];
+          // Only `withProcessExitAsThrow` produces this code, and only a
+          // bridged worker installs it: the shim refused (no `define.lint()`).
+          if (result.error.code === CONFIG_PROCESS_EXIT_CODE) {
+            this.configDependencyObserver.reportUnconfigured();
+            return result;
+          }
           const cause = missingDependencyCause(
             result.error.code,
             result.error.message,

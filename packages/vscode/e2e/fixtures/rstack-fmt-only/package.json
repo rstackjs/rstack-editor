@@ -1,0 +1,13 @@
+{
+  "name": "rstack-editor-fixture-rstack-fmt-only",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "E2E fixture: a formatting-only `rstack.config.ts` (#93).",
+  "dependencies": {
+    "rstack": "0.8.2"
+  },
+  "devDependencies": {
+    "jiti": "^2.7.0"
+  }
+}
