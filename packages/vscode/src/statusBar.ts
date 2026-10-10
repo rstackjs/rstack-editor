@@ -4,6 +4,8 @@ import {
   type StackState,
   type StatusReporter,
   STACK_IDS,
+  // The hover renders a state's two halves apart: the kind as the icon, this as prose.
+  stackStateDetail,
   STACK_LABELS,
   stackCommand,
   stackCommandTitle,
@@ -56,7 +58,9 @@ const STATE_STYLES: Readonly<
   'not-detected': {
     icon: '$(circle-slash)',
     color: 'disabledForeground',
-    spellsOutDetail: false,
+    // Only set when a runtime found nothing to do, and then that detail is
+    // the one thing telling the user the stack is not working on purpose.
+    spellsOutDetail: true,
     severity: 0,
   },
   disabled: {
@@ -136,27 +140,6 @@ const CARD_WIDTH = 140;
 const CARD_WIDTH_WITH_NOTICES = 250;
 
 /**
- * The free text a state carries, if any — a crash message, a version
- * complaint, a disable reason. It is its own function because the hover renders
- * the two halves of a state in different places — the kind is the icon, the
- * detail is prose — and the switch is exhaustive, so a state kind added to the
- * union has to say here whether it carries words.
- */
-const stateDetail = (state: StackState): string | undefined => {
-  switch (state.kind) {
-    case 'not-detected':
-      return undefined;
-    case 'disabled':
-      return state.reason;
-    case 'starting':
-    case 'running':
-    case 'crashed':
-    case 'version-mismatch':
-      return state.detail;
-  }
-};
-
-/**
  * The one-line form: the state's kind, plus its detail when it has one. This
  * is what the log records and what the icon's native tooltip says, so its
  * prefix has to stay distinct per kind — `setState` discriminates transitions
@@ -166,7 +149,7 @@ const stateText = (state: StackState): string => {
   // The ids read as prose once their hyphen is a space ('version-mismatch' →
   // 'version mismatch'); no kind has a second one.
   const kind = state.kind.replace('-', ' ');
-  const detail = stateDetail(state);
+  const detail = stackStateDetail(state);
   return detail ? `${kind} — ${detail}` : kind;
 };
 
@@ -388,7 +371,7 @@ export class StatusBar implements vscode.Disposable {
       // `stateText` embeds arbitrary text a stack produced, hence the escaping.
       const status = stateIcon(style, stateText(state));
       const detail = style.spellsOutDetail
-        ? stateDetail(state)?.trim()
+        ? stackStateDetail(state)?.trim()
         : undefined;
       if (detail) {
         notices.push({ style, label, detail });

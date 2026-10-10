@@ -12,9 +12,9 @@ import { extensionExports } from '../utils/extension';
 
 // rstack's lint shim calls `process.exit(1)` when the Rstack config has no
 // `define.lint()` (#93). The root config still lights the lint stack, so the
-// bridged runtime must survive the shim's refusal and report a healthy
-// runtime with nothing to lint, then pick up `define.lint()` through its
-// config watcher in the same worker.
+// bridged runtime must survive the shim's refusal and report `not-detected`
+// with the reason (the status bar's word for "no configuration here"), then
+// pick up `define.lint()` through its config watcher in the same worker.
 
 function lintExports(): {
   getFolderStates(): ReadonlyMap<string, StackState>;
@@ -35,7 +35,7 @@ function lintStates(): StackState[] {
 
 function isUnconfigured(state: StackState): boolean {
   return (
-    state.kind === 'running' &&
+    state.kind === 'not-detected' &&
     state.detail !== undefined &&
     state.detail.includes('define.lint()')
   );
@@ -113,7 +113,7 @@ suite('Rstack fmt-only config', function () {
     fs.rmSync(markerPath, { force: true });
   });
 
-  test('a formatting-only config keeps a healthy runtime and recovers on define.lint()', async () => {
+  test('a formatting-only config reports not-detected and recovers on define.lint()', async () => {
     // Still formatting-only; the lint runtime starts on `didOpen`, so the
     // first shim evaluation records the lint worker's pid.
     fs.writeFileSync(configPath, configSource(markerPath, false), 'utf8');
@@ -122,9 +122,9 @@ suite('Rstack fmt-only config', function () {
     );
     await vscode.window.showTextDocument(document);
 
-    // Bare `running` appears before the initial config refresh settles;
-    // only the detail proves the shim's refusal was classified.
-    await waitForLintStates('the unconfigured running detail', (states) =>
+    // Bare `running` appears before the initial config refresh settles; the
+    // folder and its runtime must both show the classified refusal.
+    await waitForLintStates('the unconfigured not-detected detail', (states) =>
       states.every(isUnconfigured),
     );
     assert.ok(fs.existsSync(markerPath), 'the lint worker never ran the shim');
@@ -145,7 +145,7 @@ suite('Rstack fmt-only config', function () {
       workerPid,
       'define.lint() must be picked up by the same lint worker, without a restart',
     );
-    // A healthy state: logged at info, so no warning was recorded.
+    // Not a failure: logged at info, so no warning was recorded.
     assert.deepStrictEqual(
       extensionExports().getRecordedWarnings('rslint'),
       [],

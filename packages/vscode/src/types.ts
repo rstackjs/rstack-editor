@@ -47,14 +47,35 @@ export const stackCommandTitle = (stack: StackId): string =>
  * `disabled` covers every "we deliberately did not start" case: the kill-switch
  * settings, Restricted Mode, and phase-gated stacks. The reason is shown to the
  * user, so it must be a complete sentence fragment.
+ *
+ * `not-detected` carries a detail only to say why a runtime found nothing to
+ * do after detection lit the stack; detection itself never sets one.
  */
 export type StackState =
-  | { readonly kind: 'not-detected' }
+  | { readonly kind: 'not-detected'; readonly detail?: string }
   | { readonly kind: 'disabled'; readonly reason?: string }
   | { readonly kind: 'starting'; readonly detail?: string }
   | { readonly kind: 'running'; readonly detail?: string }
   | { readonly kind: 'crashed'; readonly detail: string }
   | { readonly kind: 'version-mismatch'; readonly detail: string };
+
+/**
+ * The free text a state carries, if any — a crash message, a version
+ * complaint, a disable reason. The switch is exhaustive, so a state kind added
+ * to the union has to say here whether it carries words.
+ */
+export const stackStateDetail = (state: StackState): string | undefined => {
+  switch (state.kind) {
+    case 'disabled':
+      return state.reason;
+    case 'not-detected':
+    case 'starting':
+    case 'running':
+    case 'crashed':
+    case 'version-mismatch':
+      return state.detail;
+  }
+};
 
 /** Raw runtime failures that need dependency recovery, not shell gate states. */
 export const isFailedStackState = (

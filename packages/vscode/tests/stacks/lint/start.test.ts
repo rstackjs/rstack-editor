@@ -374,7 +374,7 @@ function refreshConfig(runtime: Rslint, reason: string): Promise<void> {
   ).requestConfigRefresh(reason);
 }
 
-it('keeps a bridged runtime running with a detail when the shim finds no define.lint()', async () => {
+it('reports a bridged runtime as not-detected with a detail when the shim finds no define.lint()', async () => {
   refreshOutcome = 'unconfigured';
   const { runtime, states, warnings, errors, infos } = createRuntime({
     mode: 'bridged',
@@ -383,7 +383,7 @@ it('keeps a bridged runtime running with a detail when the shim finds no define.
   });
   runtime.setBridgeConfigPath('/project/rstack.config.ts');
   const unconfigured = {
-    kind: 'running',
+    kind: 'not-detected',
     detail: 'no define.lint() in rstack.config.ts',
   };
 
@@ -396,7 +396,7 @@ it('keeps a bridged runtime running with a detail when the shim finds no define.
   expect(notices()).toEqual([
     'Rslint has nothing to lint: no define.lint() in rstack.config.ts. Add define.lint(...) to enable it.',
   ]);
-  // Healthy: the dependency poll has nothing to retry.
+  // Not a failure: the dependency poll has nothing to retry.
   expect(runtime.retryConfigDependency()).toBeUndefined();
 
   // An unchanged episode logs once; Go rejecting with a last-good catalog is

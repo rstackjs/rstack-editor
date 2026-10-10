@@ -4,11 +4,16 @@ import {
   aggregateFolderStates,
   attributeToCore,
   foldRslintFolderState,
+  liveRslintStatus,
   missingPackageOf,
   RslintVersionMismatchError,
-  runningRslintStatus,
   statusForRslintStartFailure,
 } from '../../../src/stacks/lint/status';
+
+const UNCONFIGURED = {
+  kind: 'not-detected',
+  detail: 'no define.lint() in rstack.config.ts',
+} as const;
 
 describe('Rslint status classification', () => {
   it('disables a folder whose package is not installed', () => {
@@ -83,17 +88,23 @@ describe('Rslint status classification', () => {
   });
 
   it('surfaces a configured Node advisory without stopping the worker', () => {
-    expect(runningRslintStatus()).toEqual({ kind: 'running' });
-    expect(runningRslintStatus('Node 22.17 is below the floor')).toEqual({
+    expect(liveRslintStatus()).toEqual({ kind: 'running' });
+    expect(liveRslintStatus('Node 22.17 is below the floor')).toEqual({
       kind: 'version-mismatch',
       detail: 'Node 22.17 is below the floor',
     });
     expect(
-      runningRslintStatus('Node 22.17 is below the floor', 'idle'),
+      liveRslintStatus('Node 22.17 is below the floor', UNCONFIGURED.detail),
     ).toEqual({
       kind: 'version-mismatch',
       detail: 'Node 22.17 is below the floor',
     });
+  });
+
+  it('reports an unconfigured bridge as not-detected with its reason', () => {
+    expect(liveRslintStatus(undefined, UNCONFIGURED.detail)).toEqual(
+      UNCONFIGURED,
+    );
   });
 });
 
@@ -183,6 +194,20 @@ describe('foldRslintFolderState', () => {
       ]),
     ).toEqual({ kind: 'disabled', reason: 'rstack is not installed in /w' });
   });
+
+  it('keeps an unconfigured bridge as the folder state, detail included', () => {
+    // The fold starts from `not-detected`, so the shim's refusal is not
+    // masked into `running: idle`, and its reason survives for the hover.
+    expect(foldRslintFolderState([UNCONFIGURED])).toEqual(UNCONFIGURED);
+  });
+
+  it('lets a healthy native runtime outrank an unconfigured bridge', () => {
+    // The folder is linting; "nothing configured" for its bridged documents
+    // is not worth showing over that.
+    expect(foldRslintFolderState([UNCONFIGURED, { kind: 'running' }])).toEqual({
+      kind: 'running',
+    });
+  });
 });
 
 describe('aggregateFolderStates', () => {
@@ -201,6 +226,19 @@ describe('aggregateFolderStates', () => {
         { name: 'app', state: { kind: 'running', detail: 'idle' } },
       ]),
     ).toEqual({ kind: 'running', detail: 'idle' });
+  });
+
+  it('keeps a single-root unconfigured reason; a healthy sibling folder wins', () => {
+    expect(
+      aggregateFolderStates([{ name: 'app', state: UNCONFIGURED }]),
+    ).toEqual(UNCONFIGURED);
+    // Same rank as inside a folder: a healthy sibling folder wins.
+    expect(
+      aggregateFolderStates([
+        { name: 'app', state: UNCONFIGURED },
+        { name: 'lib', state: { kind: 'running', detail: 'idle' } },
+      ]),
+    ).toEqual({ kind: 'running', detail: 'lib: idle' });
   });
 
   it('reports starting before any folder registered', () => {

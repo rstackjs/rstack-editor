@@ -257,6 +257,25 @@ describe('StatusBar hover', () => {
     expect(rowsOf(html())).toHaveLength(7);
   });
 
+  it('spells out why a runtime found nothing to do, but not plain detection', () => {
+    const { bar, html } = build();
+    // Detection's own `not-detected` carries no detail and adds nothing.
+    bar.setState('fmt', { kind: 'not-detected' });
+    expect(noticesOf(html())).toEqual([]);
+    expect(rowsOf(html())).toHaveLength(7);
+
+    bar.setState('rslint', {
+      kind: 'not-detected',
+      detail: 'no define.lint() in rstack.config.ts',
+    });
+    expect(stackRows(html())[0]).toContain(
+      'title="not detected — no define.lint() in rstack.config.ts"',
+    );
+    expect(noticesOf(html())[0]).toContain(
+      '<b>Rslint</b><br>no define.lint() in rstack.config.ts',
+    );
+  });
+
   it('spells out why a stack was deliberately turned off', () => {
     const { bar, html } = build();
     bar.setState('fmt', {
