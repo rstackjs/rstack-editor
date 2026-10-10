@@ -5,6 +5,6 @@
   "type": "module",
   "dependencies": {
     "@rstest/core": "0.12.3",
-    "rstack": "0.8.2"
+    "rstack": "0.8.3"
   }
 }
