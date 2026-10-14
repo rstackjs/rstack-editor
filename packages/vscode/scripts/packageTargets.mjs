@@ -1,8 +1,8 @@
 // Builds and packages one platform-targeted VSIX per supported target.
 //
 // The extension is platform targeted for a single reason: Rstest's AST test
-// collection loads the `yuku-parser` napi binding, which `rslib.config.mts`
-// stages into `dist/` based on `VSCE_TARGET`.
+// collection loads the `yuku-core` napi binding (via `yuku-parser`), which
+// `rslib.config.mts` stages into `dist/` based on `VSCE_TARGET`.
 //
 // Packaging a target other than the host platform requires the matching
 // optional `@yuku-core/binding-*` package to be installed locally, e.g.:

@@ -21,14 +21,12 @@ const LINUX_LIBC: Record<string, string> = { linux: 'gnu', alpine: 'musl' };
 const [targetOs, targetArch] = vsceTarget.split('-');
 const libc = LINUX_LIBC[targetOs];
 const yukuBindingSuffix = libc ? `linux-${targetArch}-${libc}` : vsceTarget;
-// `yuku-parser` loads its native binding through its `yuku-core` dependency.
 const yukuCoreRequire = createRequire(
   createRequire(require.resolve('yuku-parser')).resolve('yuku-core'),
 );
 // Yuku computes this package name at runtime, so Rspack cannot discover it.
-const yukuBindingPath = yukuCoreRequire.resolve(
-  `@yuku-core/binding-${yukuBindingSuffix}`,
-);
+const yukuBindingPackage = `@yuku-core/binding-${yukuBindingSuffix}`;
+const yukuBindingPath = yukuCoreRequire.resolve(yukuBindingPackage);
 
 /**
  * Packages that are always resolved from the user's project at runtime, never
@@ -72,7 +70,7 @@ const libs: LibConfig[] = [
             patterns: [
               {
                 from: yukuBindingPath,
-                to: `@yuku-core/binding-${yukuBindingSuffix}/yuku-core.node`,
+                to: `${yukuBindingPackage}/${path.basename(yukuBindingPath)}`,
               },
               {
                 // The VSIX must carry a LICENSE (`.vscodeignore` keeps it), and
