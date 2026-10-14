@@ -18,6 +18,11 @@
  *   server opens a document and awaits its diagnostics — which is what the
  *   ported suites already do.
  * - `fast-glob` is replaced by a small recursive walk (one dependency less).
+ * - Mocha's default timeout is raised from 2000ms to the same 120s the Rstest
+ *   runners use. Hooks and tests without their own `this.timeout()` do real
+ *   workspace I/O (e.g. the router suite's `suiteSetup` creates a directory,
+ *   writes a file and opens it), which exceeded 2000ms on Windows CI runners.
+ *   Upstream still uses the default; worth offering back when syncing.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -111,7 +116,7 @@ async function activateAndRun(
     if (files.length === 0) {
       throw new Error(`No compiled test files found in ${testPath}`);
     }
-    const mocha = new Mocha({ ui: 'tdd' });
+    const mocha = new Mocha({ ui: 'tdd', timeout: 120_000 });
     files.forEach((file) => mocha.addFile(file));
     const failed: string[] = [];
     const runner = mocha.run((failures) => {
