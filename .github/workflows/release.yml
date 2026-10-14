@@ -68,7 +68,7 @@ jobs:
       run:
         shell: bash
     env:
-      # rslib.config.mts keys the staged `@yuku-parser/binding-*` napi payload
+      # rslib.config.mts keys the staged `@yuku-core/binding-*` napi payload
       # off this variable (`linux-*` → `-gnu`, `alpine-*` → `linux-*-musl`).
       VSCE_TARGET: ${{ matrix.vsce-target }}
     steps:
@@ -88,7 +88,7 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       # `supportedArchitectures` must be set BEFORE `pnpm install` so pnpm also
-      # fetches the cross-target optional `@yuku-parser/binding-*` package.
+      # fetches the cross-target optional `@yuku-core/binding-*` package.
       # musl is always listed so the alpine-* legs get Yuku's `-musl` binding;
       # on the glibc Linux legs that is a few extra optional downloads, and the
       # macOS/Windows legs are unaffected because pnpm still filters by os.

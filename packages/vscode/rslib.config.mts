@@ -9,9 +9,9 @@ const require = createRequire(import.meta.url);
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
 // The VSIX is platform-targeted for exactly one reason: Rstest's AST test-case
-// collection loads the `yuku-parser` napi binding. Everything else in this
-// extension is platform neutral (the Rslint Go binary and its napi parser are
-// resolved from the project at runtime and never ship in the VSIX).
+// collection loads the `yuku-core` napi binding (via `yuku-parser`). Everything
+// else in this extension is platform neutral (the Rslint Go binary and its napi
+// parser are resolved from the project at runtime and never ship in the VSIX).
 // On musl Linux (Alpine), set `VSCE_TARGET=alpine-<arch>` explicitly.
 const vsceTarget =
   process.env.VSCE_TARGET ?? `${process.platform}-${process.arch}`;
@@ -21,10 +21,13 @@ const LINUX_LIBC: Record<string, string> = { linux: 'gnu', alpine: 'musl' };
 const [targetOs, targetArch] = vsceTarget.split('-');
 const libc = LINUX_LIBC[targetOs];
 const yukuBindingSuffix = libc ? `linux-${targetArch}-${libc}` : vsceTarget;
-const yukuRequire = createRequire(require.resolve('yuku-parser'));
+// `yuku-parser` loads its native binding through its `yuku-core` dependency.
+const yukuCoreRequire = createRequire(
+  createRequire(require.resolve('yuku-parser')).resolve('yuku-core'),
+);
 // Yuku computes this package name at runtime, so Rspack cannot discover it.
-const yukuBindingPath = yukuRequire.resolve(
-  `@yuku-parser/binding-${yukuBindingSuffix}`,
+const yukuBindingPath = yukuCoreRequire.resolve(
+  `@yuku-core/binding-${yukuBindingSuffix}`,
 );
 
 /**
@@ -69,7 +72,7 @@ const libs: LibConfig[] = [
             patterns: [
               {
                 from: yukuBindingPath,
-                to: `@yuku-parser/binding-${yukuBindingSuffix}/yuku-parser.node`,
+                to: `@yuku-core/binding-${yukuBindingSuffix}/yuku-core.node`,
               },
               {
                 // The VSIX must carry a LICENSE (`.vscodeignore` keeps it), and

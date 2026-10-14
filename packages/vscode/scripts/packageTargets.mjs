@@ -5,7 +5,7 @@
 // stages into `dist/` based on `VSCE_TARGET`.
 //
 // Packaging a target other than the host platform requires the matching
-// optional `@yuku-parser/binding-*` package to be installed locally, e.g.:
+// optional `@yuku-core/binding-*` package to be installed locally, e.g.:
 //
 //   pnpm config set --location=project --json supportedArchitectures \
 //     '{"cpu":["current","arm64"]}' && pnpm install
