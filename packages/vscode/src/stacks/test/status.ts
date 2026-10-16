@@ -39,8 +39,9 @@ class StatusHolder implements StatusReporter {
   // A recovery observed under one key must not clear another key's
   // live failure. An entry is cleared by the code path that observes the
   // corresponding recovery (a worker that actually spawned, a version check
-  // that passed) or by `forget` when its reporter goes away — neither of which
-  // reaches a host-scoped entry, since both are per-resolution-root. A
+  // that passed, a bridge resolution that succeeded) or by `forget` when its
+  // reporter goes away — neither of which reaches a host-scoped entry, since
+  // both are per-resolution-root. A
   // host-scoped latch is cleared only by `bind`, i.e. by re-registering the
   // stack, which is exactly the lifetime of the resolution it reports on.
   #crashes = new Map<string, string>();
@@ -188,6 +189,16 @@ class StatusHolder implements StatusReporter {
     const hadMismatch = this.#mismatches.delete(source);
     const hadNotInstalled = this.#notInstalled.delete(source);
     if (hadMismatch || hadNotInstalled) this.#paintOrRun();
+  }
+
+  /**
+   * A bridge shim resolved completely under its config directory: every latch
+   * there is over, a crash included. Workers report under their project URI,
+   * so the only crash under that key is the resolution's own invalid
+   * `rstack.rstackCli.packagePath`, a package-state fact like the other two.
+   */
+  resolved(source: string): void {
+    this.forget(source);
   }
 
   /** A root's dependencies are not installed: `disabled`, with the way out. */

@@ -16,7 +16,10 @@ import { RSTACK_CONFIG_GLOB } from '../../detection';
 import { MessageLatch } from '../../shared/messageLatch';
 import { displayPath } from '../../shared/displayPath';
 import { classifyMissingDependencyMessage } from '../../shared/missingDependency';
-import { getConfiguredNodeExecutable } from '../../shared/nodeExecutableSetting';
+import {
+  getConfiguredNodeExecutable,
+  getConfiguredPathSetting,
+} from '../../shared/nodeExecutableSetting';
 import {
   NotInstalledEpisode,
   formatNotInstalledLog,
@@ -28,10 +31,13 @@ import {
   NodePreflightError,
   resolveUserNodeOnce,
 } from '../../shared/nodeResolution';
+import { readPackageJson } from '../../shared/packageResolve';
 import {
-  findPackageJsonUncached,
-  readPackageJson,
-} from '../../shared/packageResolve';
+  RSTACK_PACKAGE_PATH_HINT,
+  RSTACK_PACKAGE_PATH_SETTING,
+  resolveRstackPackageJson,
+  rstackResolveHookArgs,
+} from '../../shared/rstackPackage';
 import {
   checkPackageVersion,
   formatVersionMismatch,
@@ -363,19 +369,38 @@ class FmtFolderRuntime {
     this.#closing = false;
     this.setState('starting');
 
-    const pkgJsonPath = findPackageJsonUncached('rstack', folderRoot);
-    if (!pkgJsonPath) {
+    const configured = getConfiguredPathSetting(
+      RSTACK_PACKAGE_PATH_SETTING,
+      this.folder,
+    );
+    const rstackPackage = resolveRstackPackageJson(folderRoot, configured);
+    if (rstackPackage.kind === 'invalid-setting') {
+      // A wrong setting is fixed in the setting, not by an install, so it is
+      // `crashed` rather than the not-installed `disabled`.
+      this.setState('crashed', rstackPackage.message);
+      if (this.#packageEpisode.changed(rstackPackage.message)) {
+        context.output.error(rstackPackage.message);
+      }
+      return;
+    }
+    if (rstackPackage.kind === 'not-installed') {
       // The shell polls while this state remains disabled. The trailing restart
       // hint stays as the explicit fallback if recovery is delayed.
       this.setState('disabled', formatNotInstalledStatus('fmt', 'rstack'));
       if (this.#packageEpisode.changed(folderRoot)) {
         context.output.warn(
-          formatNotInstalledLog('rstack', this.folder.name, folderRoot),
+          formatNotInstalledLog(
+            'rstack',
+            this.folder.name,
+            folderRoot,
+            RSTACK_PACKAGE_PATH_HINT,
+          ),
         );
       }
       return;
     }
     this.#packageEpisode.clear();
+    const pkgJsonPath = rstackPackage.packageJsonPath;
 
     // One read for the version and the bin entry; `readPackageJson` re-reads
     // from disk by design, so a reinstall is picked up on the next start.
@@ -401,7 +426,15 @@ class FmtFolderRuntime {
 
     const owner = new LanguageServerProcessOwner(
       nodeExecutable,
-      [rsBinJs, 'fmt', '--lsp'],
+      [
+        ...rstackResolveHookArgs(
+          path.dirname(pkgJsonPath),
+          configured !== undefined,
+        ),
+        rsBinJs,
+        'fmt',
+        '--lsp',
+      ],
       folderRoot,
     );
     this.#owner = owner;
@@ -651,10 +684,14 @@ class FmtFolderRuntime {
 class FmtController implements StackController {
   readonly id = 'fmt' as const;
   /**
-   * The Node runtime is chosen once per server start, so a changed pin can only
-   * reach a live server through a rebuild of this controller.
+   * The Node runtime and the `rstack` package are chosen once per server
+   * start, so a changed pin can only reach a live server through a rebuild of
+   * this controller.
    */
-  readonly restartOnSettings = [NODE_EXECUTABLE_SETTING];
+  readonly restartOnSettings = [
+    NODE_EXECUTABLE_SETTING,
+    RSTACK_PACKAGE_PATH_SETTING,
+  ];
 
   #context: StackContext | undefined;
   /** The newest detection result, which `running` reports the reason from. */

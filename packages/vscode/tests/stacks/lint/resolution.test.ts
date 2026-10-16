@@ -68,6 +68,74 @@ describe('resolveRslint', () => {
     },
   );
 
+  it('follows a configured rstack outside the walk-up for a bridged runtime', () => {
+    // The #103 layout: rstack only under `infra/`. The core hop starts from
+    // the configured rstack directory, so rstack's own `@rslint/core` wins.
+    const root = temporaryDirectory();
+    const rstackDir = installPackage(
+      path.join(root, 'infra'),
+      'rstack',
+      '0.8.4',
+    );
+    const coreDir = installPackage(rstackDir, '@rslint/core', '0.9.5');
+    const shimPath = installShim(rstackDir);
+
+    expect(() => resolveRslint({ folderRoot: root, mode: 'bridged' })).toThrow(
+      'Could not resolve rstack',
+    );
+    expect(
+      resolveRslint({
+        folderRoot: root,
+        mode: 'bridged',
+        rstackPackagePath: 'infra/node_modules/rstack',
+      }),
+    ).toEqual({
+      mode: 'bridged',
+      coreDir,
+      coreVersion: '0.9.5',
+      rstackDir,
+      rstackVersion: '0.8.4',
+      shimPath,
+    });
+  });
+
+  it('reports a configured rstack that does not resolve as a setting error', () => {
+    const root = temporaryDirectory();
+    // A rstack the walk-up would find must not mask the wrong setting.
+    installShim(installPackage(root, 'rstack', '0.8.4'));
+
+    let thrown: unknown;
+    try {
+      resolveRslint({
+        folderRoot: root,
+        mode: 'bridged',
+        rstackPackagePath: 'infra/node_modules/rstack',
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(RslintResolutionError);
+    // `invalid-package` without `missingPackage`: not the not-installed state.
+    expect(thrown).toMatchObject({
+      code: 'invalid-package',
+      missingPackage: undefined,
+    });
+    expect((thrown as Error).message).toContain('rstack.rstackCli.packagePath');
+  });
+
+  it('ignores the rstack setting in native mode', () => {
+    const root = temporaryDirectory();
+    const coreDir = installPackage(root, '@rslint/core', '0.8.0');
+
+    expect(
+      resolveRslint({
+        folderRoot: root,
+        mode: 'native',
+        rstackPackagePath: 'missing',
+      }).coreDir,
+    ).toBe(coreDir);
+  });
+
   it('reports an invalid configured path', () => {
     const corePath = 'missing-core';
     const root = temporaryDirectory();

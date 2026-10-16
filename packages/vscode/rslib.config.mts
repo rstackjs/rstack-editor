@@ -73,6 +73,14 @@ const libs: LibConfig[] = [
                 to: `${yukuBindingPackage}/${path.basename(yukuBindingPath)}`,
               },
               {
+                // Preloaded via a `--import` node arg, so a file of its own.
+                from: path.join(
+                  rootDir,
+                  'src/shared/rstackResolveHookPreload.mjs',
+                ),
+                to: 'rstack-resolve-hook.mjs',
+              },
+              {
                 // The VSIX must carry a LICENSE (`.vscodeignore` keeps it), and
                 // the workspace root LICENSE is the single source of truth. The
                 // copy lands next to package.json — not in dist/ — because vsce

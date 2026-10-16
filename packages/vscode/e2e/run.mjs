@@ -24,9 +24,16 @@ const SLICES = [
   },
   {
     // The shell/detection/fmt suites (`e2e/suite/`) over the multi-root
-    // workspace of the three shared fixtures.
+    // workspace of the three shared fixtures, plus the single-folder
+    // launches in `e2e/runTest.ts`.
     name: 'vscode',
-    fixtures: ['rslint', 'rstest', 'rstack', 'fmt-missing-config-dependency'],
+    fixtures: [
+      'rslint',
+      'rstest',
+      'rstack',
+      'fmt-missing-config-dependency',
+      'rstack-cli-package-path',
+    ],
     entry: 'tests-dist/e2e/runTest.js',
     compile: true,
   },

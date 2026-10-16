@@ -15,6 +15,7 @@ import {
 } from './master';
 import { quoteFilter } from './vendored/coreInternals';
 import { NODE_EXECUTABLE_SETTING } from '../../shared/nodeResolution';
+import { RSTACK_PACKAGE_PATH_SETTING } from '../../shared/rstackPackage';
 import { Project, WorkspaceManager } from './project';
 import { routeToOwners } from './runRouting';
 import { status } from './status';
@@ -560,7 +561,10 @@ class RstestController implements StackController {
   // qualifies: installing a newer Node on the machine is not observable by the
   // extension and stays a manual restart, the deliberate half of the deal (see
   // `docs/adr/0001-node-runtime-selection.md`).
-  readonly restartOnSettings = [NODE_EXECUTABLE_SETTING];
+  readonly restartOnSettings = [
+    NODE_EXECUTABLE_SETTING,
+    RSTACK_PACKAGE_PATH_SETTING,
+  ];
 
   #rstest: Rstest | undefined;
 

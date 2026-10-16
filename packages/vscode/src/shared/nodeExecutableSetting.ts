@@ -25,10 +25,17 @@ export const expandWorkspaceFolder = (
  */
 export const getConfiguredNodeExecutable = (
   folder: vscode.WorkspaceFolder,
+): string | undefined =>
+  getConfiguredPathSetting(NODE_EXECUTABLE_SETTING, folder);
+
+/** A folder's path setting: unset or empty is `undefined`, else expanded. */
+export const getConfiguredPathSetting = (
+  setting: string,
+  folder: vscode.WorkspaceFolder,
 ): string | undefined => {
   const value = vscode.workspace
     .getConfiguration(undefined, folder.uri)
-    .get(NODE_EXECUTABLE_SETTING);
+    .get(setting);
   if (typeof value !== 'string' || value === '') {
     return undefined;
   }

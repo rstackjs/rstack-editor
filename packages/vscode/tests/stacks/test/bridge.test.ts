@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from '@rstest/core';
+import { resolveRstackPackageJson } from '../../../src/shared/rstackPackage';
 import { resolveRstackShim } from '../../../src/stacks/test/bridge';
 import { logger } from '../../../src/stacks/test/logger';
 import { status } from '../../../src/stacks/test/status';
@@ -118,6 +119,8 @@ describe('resolveRstackShim', () => {
     expect(resolveRstackShim(root)).toBeUndefined();
     // The shared not-installed wording, with the bridge's own consequence.
     expect(logged.join('\n')).toContain('rstack is not installed');
+    // The way out for an install the walk-up cannot see (#103).
+    expect(logged.join('\n')).toContain('set "rstack.rstackCli.packagePath"');
     expect(logged.join('\n')).toContain('Rstest cannot be driven');
     // The uniform not-installed policy: the same `disabled` shape fmt and
     // lint report, with the restart command as the way out.
@@ -150,6 +153,45 @@ describe('resolveRstackShim', () => {
 
     expect(resolveRstackShim(root, { silent: true })).toBeUndefined();
     expect(logged).toEqual([]);
+  });
+
+  it('reports a configured path that does not resolve as a crash, not a missing install', () => {
+    const root = makeTmpDir();
+
+    expect(
+      resolveRstackShim(root, {
+        configured: resolveRstackPackageJson(root, 'infra/node_modules/rstack'),
+      }),
+    ).toBeUndefined();
+    expect(logged.join('\n')).toContain('rstack.rstackCli.packagePath');
+    expect(reported.map((state) => state.kind)).toEqual(['crashed']);
+  });
+
+  it('retires the setting crash once the configured path resolves', () => {
+    const root = makeTmpDir();
+    const configured = 'infra/node_modules/rstack';
+    resolveRstackShim(root, {
+      configured: resolveRstackPackageJson(root, configured),
+    });
+    expect(status.hasFailed(root)).toBe(true);
+
+    // The path appears without a settings edit (e.g. `pnpm install`); the
+    // next sync pass re-resolves it.
+    const rstackDir = path.join(root, configured);
+    fs.mkdirSync(path.join(rstackDir, 'dist'), { recursive: true });
+    fs.writeFileSync(
+      path.join(rstackDir, 'package.json'),
+      JSON.stringify({ name: 'rstack', version: '0.7.6' }),
+    );
+    fs.writeFileSync(path.join(rstackDir, 'dist', 'rstestConfig.js'), '');
+
+    expect(
+      resolveRstackShim(root, {
+        configured: resolveRstackPackageJson(root, configured),
+      }),
+    ).toBeDefined();
+    expect(status.hasFailed(root)).toBe(false);
+    expect(reported.map((state) => state.kind)).toEqual(['crashed', 'running']);
   });
 
   it('refuses an rstack install that ships no Rstest shim', () => {

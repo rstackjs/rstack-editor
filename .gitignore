@@ -154,6 +154,7 @@ packages/vscode/.playground/
 # their generated node_modules directories and lockfiles stay disposable.
 packages/vscode/e2e/fixtures/*/node_modules/
 packages/vscode/e2e/fixtures/*/pnpm-lock.yaml
+packages/vscode/e2e/fixtures/rstack-cli-package-path/infra/pnpm-lock.yaml
 packages/vscode/e2e/lint/fixtures/pnpm-lock.yaml
 packages/vscode/e2e/lint/fixtures/*/pnpm-lock.yaml
 packages/vscode/e2e/rstest/fixtures/*/pnpm-lock.yaml

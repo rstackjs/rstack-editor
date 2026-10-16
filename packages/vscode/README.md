@@ -77,6 +77,7 @@ All settings live under the unified `rstack.*` namespace. There are no `rslint.*
 | Setting | Default | Description |
 | --- | --- | --- |
 | `rstack.nodeExecutable` | — | Node binary used for the processes that load your project: the lint worker, test worker and `rs fmt` language server. Empty means the extension picks one (`PATH` first, then the `node` your interactive shell resolves). |
+| `rstack.rstackCli.packagePath` | — | Path to an `rstack` package directory or its `package.json` (e.g. `infra/node_modules/rstack`); relative paths resolve from the workspace folder and `${workspaceFolder}` is supported. Used by the formatter, and by Rslint and Rstest when a root `rstack.config.*` drives them. Use only when `rstack` is not installed in a `node_modules` above the workspace folder. The config's own `import 'rstack'` resolves to the same package. On Node 22 and Node 24 below 24.15, this works only for configs Node can load natively: no `enum`, `namespace` or parameter properties, and relative imports with their file extension. |
 | `rstack.rslint.enable` | `true` | Enable/disable the Rslint integration. |
 | `rstack.rslint.corePath` | — | Path to an `@rslint/core` package directory or its `package.json`; relative paths resolve from the workspace folder. Use only to override automatic resolution. |
 | `rstack.rslint.trace.server` | `off` | LSP trace level (`off` / `messages` / `verbose`). |

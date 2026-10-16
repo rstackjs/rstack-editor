@@ -20,6 +20,7 @@ import {
 import { CONFIG_SECTION, getConfigValue } from './config';
 import { createDebugWorker } from './debugWorker';
 import { MessageLatch } from '../../shared/messageLatch';
+import { rstackResolveHookArgs } from '../../shared/rstackPackage';
 import {
   formatNotInstalledLog,
   formatNotInstalledStatus,
@@ -223,7 +224,8 @@ export class RstestApi {
   }
 
   // The node executable + exec args honoring the shared `rstack.nodeExecutable`
-  // and the stack's `nodeExecArgs` settings (`${workspaceFolder}` expanded).
+  // and the stack's `nodeExecArgs` settings (`${workspaceFolder}` expanded),
+  // plus the bridge's rstack resolve hook.
   // Used verbatim by the terminal CLI, which deliberately skips the worker
   // preflight below: the command runs inside the user's own shell, which is the
   // very thing the preflight exists to emulate. `configured` reports whether
@@ -238,9 +240,16 @@ export class RstestApi {
     return {
       nodeExecutable: configuredExecutable ?? 'node',
       configured: configuredExecutable !== undefined,
-      nodeExecArgs: getConfigValue('nodeExecArgs', this.workspace).map((arg) =>
-        this.expandWorkspaceFolder(arg),
-      ),
+      nodeExecArgs: [
+        ...getConfigValue('nodeExecArgs', this.workspace).map((arg) =>
+          this.expandWorkspaceFolder(arg),
+        ),
+        // Adaptation 2: the bridge's shim loads `rstack.config.*`.
+        ...rstackResolveHookArgs(
+          this.rstestResolutionDir,
+          this.project.source.rstackFromSetting,
+        ),
+      ],
     };
   }
 

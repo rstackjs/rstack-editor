@@ -55,6 +55,8 @@ export interface CoreInstallation {
   readonly shimPath?: string;
   readonly rstackDirectory?: string;
   readonly rstackVersion?: string;
+  /** `rstack.rstackCli.packagePath` chose rstack, so the worker needs the hook. */
+  readonly rstackFromSetting?: boolean;
 }
 
 export interface ResolvedCoreRuntime {
@@ -68,6 +70,8 @@ export interface CoreResolutionRequest {
   readonly mode: RslintMode;
   /** `rstack.rslint.corePath`, read with the document's URI (resource scope). */
   readonly corePath?: string;
+  /** `rstack.rstackCli.packagePath`; bridged mode only. */
+  readonly rstackPackagePath?: string;
 }
 
 function normalizeIdentity(filePath: string): string {
@@ -93,6 +97,7 @@ export function runtimeKey(
 function validateInstallation(
   identity: string,
   resolution: RslintResolution,
+  rstackFromSetting: boolean,
 ): CoreInstallation {
   if (resolution.mode === 'bridged') {
     const rstackCheck = checkPackageVersion('rstack', resolution.rstackVersion);
@@ -119,6 +124,7 @@ function validateInstallation(
           shimPath: resolution.shimPath,
           rstackDirectory: resolution.rstackDir,
           rstackVersion: resolution.rstackVersion,
+          rstackFromSetting,
         }),
   };
 }
@@ -140,11 +146,13 @@ export class CoreResolver {
       folderRoot: workspaceFolder.uri.fsPath,
       mode: request.mode,
       corePath: request.corePath,
+      rstackPackagePath: request.rstackPackagePath,
       documentDirectory: path.dirname(document.uri.fsPath),
     });
     const installation = validateInstallation(
       normalizeIdentity(resolution.coreDir),
       resolution,
+      request.rstackPackagePath !== undefined,
     );
     return {
       key: runtimeKey(workspaceFolder, installation),

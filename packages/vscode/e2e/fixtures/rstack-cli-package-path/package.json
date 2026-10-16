@@ -1,0 +1,7 @@
+{
+  "name": "rstack-editor-fixture-rstack-cli-package-path",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "E2E fixture (#103): a root `rstack.config.ts` whose `rstack` is installed only under `infra/`."
+}
