@@ -129,9 +129,13 @@ export class Worker {
           ? { ...data.coverage, reporters: [new CoverageReporter()] }
           : data.coverage,
       });
-      const runOptions = { filters: fileFilters } satisfies NonNullable<
-        Parameters<typeof rstest.run>[0]
-      >;
+      const runOptions: NonNullable<Parameters<typeof rstest.run>[0]> = {
+        filters: fileFilters,
+      };
+      // Project configs receive operation options, not root config overrides.
+      if (data.testNamePattern !== undefined) {
+        runOptions.testNamePattern = data.testNamePattern;
+      }
       if (command === 'watch') {
         const startup = rstest.watch(runOptions);
         this.watcherStartupPromise = startup;

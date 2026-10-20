@@ -1018,6 +1018,28 @@ describe('Rstest public API', () => {
   });
 
   describe('Rstest public run lifecycle', () => {
+    it('passes a selected test name to the run operation', async () => {
+      const engineRun = rs.fn(async () => ({
+        status: 'pass',
+        unhandledErrors: [],
+      }));
+      const worker = new Worker();
+      rs.spyOn(worker as any, 'init').mockResolvedValue({
+        command: 'run',
+        fileFilters: ['"/x/file.test.ts"'],
+        rstest: { run: engineRun },
+      });
+
+      await worker.runTest({
+        testNamePattern: '^selected test$',
+      } as WorkerInitOptions);
+
+      expect(engineRun).toHaveBeenCalledWith({
+        filters: ['"/x/file.test.ts"'],
+        testNamePattern: '^selected test$',
+      });
+    });
+
     it.each([
       { filter: '/x/tests', kind: 'folder' },
       { filter: '"/x/tests/file.test.ts"', kind: 'file' },
