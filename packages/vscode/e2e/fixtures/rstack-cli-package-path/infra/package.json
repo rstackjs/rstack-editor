@@ -5,7 +5,7 @@
   "type": "module",
   "description": "The tooling install of the rstack-cli-package-path fixture, outside the folder root's walk-up.",
   "dependencies": {
-    "rstack": "0.8.4"
+    "rstack": "0.8.5"
   },
   "devDependencies": {
     "jiti": "^2.7.0"
