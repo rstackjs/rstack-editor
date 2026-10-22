@@ -432,7 +432,7 @@
   ],
   "devDependencies": {
     "@rsbuild/core": "~2.2.14",
-    "@rslib/core": "^1.0.3",
+    "@rslib/core": "^1.0.4",
     "@rslint/core": "^0.9.5",
     "@rstackjs/load-config": "^1.0.2",
     "@rstest/core": "^0.12.4",
