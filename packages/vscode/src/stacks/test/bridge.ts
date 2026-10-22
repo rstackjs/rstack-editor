@@ -1,6 +1,10 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { findPackageJsonUncached } from '../../shared/packageResolve';
+import {
+  RSTACK_PACKAGE_PATH_HINT,
+  type RstackPackageResolution,
+  resolveRstackPackageJson,
+} from '../../shared/rstackPackage';
 import {
   checkPackageVersion,
   formatVersionMismatch,
@@ -74,22 +78,39 @@ export type RstackShim = {
  *
  * Resolution is anchored on the config directory rather than the workspace
  * folder so a monorepo package with its own `rstack` install wins over the root.
+ * A set `rstack.rstackCli.packagePath` replaces that walk-up.
  */
 export function resolveRstackShim(
   configDir: string,
-  // The caller re-resolves on every tree refresh (a fresh `pnpm install` has to
-  // be picked up without a reload), so a persistent failure must not re-log.
-  { silent = false }: { silent?: boolean } = {},
+  {
+    configured,
+    // The caller re-resolves on every tree refresh (a fresh `pnpm install` has
+    // to be picked up without a reload), so a persistent failure must not
+    // re-log.
+    silent = false,
+  }: {
+    /** The resolution of a set `rstack.rstackCli.packagePath`. */
+    configured?: RstackPackageResolution;
+    silent?: boolean;
+  } = {},
 ): RstackShim | undefined {
-  const packageJsonPath = findPackageJsonUncached('rstack', configDir);
-  if (packageJsonPath === undefined) {
+  const resolution = configured ?? resolveRstackPackageJson(configDir);
+  if (resolution.kind === 'invalid-setting') {
+    // Not the not-installed state: the fix is the setting, not an install.
+    if (!silent) {
+      logger.error(resolution.message);
+    }
+    status.crashed(resolution.message, configDir);
+    return undefined;
+  }
+  if (resolution.kind === 'not-installed') {
     if (!silent) {
       logger.warn(
         formatNotInstalledLog(
           'rstack',
           path.basename(configDir),
           configDir,
-          'Rstest cannot be driven by "rstack.config.*" until it is installed',
+          `Rstest cannot be driven by "rstack.config.*" until it is installed; ${RSTACK_PACKAGE_PATH_HINT}`,
         ),
       );
     }
@@ -100,6 +121,7 @@ export function resolveRstackShim(
     status.notInstalled(RSTACK_NOT_INSTALLED_STATUS, configDir);
     return undefined;
   }
+  const packageJsonPath = resolution.packageJsonPath;
 
   const packageDirectory = path.dirname(packageJsonPath);
   const configFilePath = path.join(packageDirectory, SHIM_RELATIVE_PATH);
@@ -135,9 +157,9 @@ export function resolveRstackShim(
     packageDirectory,
     version,
   });
-  // One recovery observation: a passed version check proves the package is
-  // installed, so `versionOk` retires whichever of the two latches the
-  // previous pass left.
-  status.versionOk(configDir);
+  // One recovery observation: the shim resolved completely, so `resolved`
+  // retires whatever latch the previous pass left here, an invalid-setting
+  // crash included.
+  status.resolved(configDir);
   return { configFilePath, packageDirectory, version };
 }

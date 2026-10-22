@@ -193,7 +193,10 @@ const createApi = (cwd = noCoreDir, rstestResolutionDir = cwd) => {
   const workspace = { uri: { fsPath: cwd } };
   // `sourceUri` backs the per-project status latch key, which the version
   // check on the spawn path reads before anything can fail.
-  const project = { sourceUri: { toString: () => `test://${cwd}` } };
+  const project = {
+    sourceUri: { toString: () => `test://${cwd}` },
+    source: {},
+  };
   return new RstestApi(
     workspace as any,
     cwd,

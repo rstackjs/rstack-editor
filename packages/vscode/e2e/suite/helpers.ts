@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import type * as vscode from 'vscode';
 
 export const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
@@ -34,4 +35,26 @@ export const eventually = async <T>(
     }
     await delay(intervalMs);
   }
+};
+
+/**
+ * Applies the edits a `vscode.executeFormatDocumentProvider` call returned.
+ * The command post-processes a provider's edits through VS Code's
+ * `computeMoreMinimalEdits`, so they are applied from the end backwards.
+ */
+export const applyEdits = (
+  document: vscode.TextDocument,
+  edits: readonly vscode.TextEdit[],
+): string => {
+  let applied = document.getText();
+  for (const edit of [...edits].sort(
+    (left, right) =>
+      document.offsetAt(right.range.start) -
+      document.offsetAt(left.range.start),
+  )) {
+    const start = document.offsetAt(edit.range.start);
+    const end = document.offsetAt(edit.range.end);
+    applied = applied.slice(0, start) + edit.newText + applied.slice(end);
+  }
+  return applied;
 };

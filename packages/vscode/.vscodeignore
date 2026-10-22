@@ -2,6 +2,7 @@
 # dist/ — never source maps.
 **
 !dist/**/*.js
+!dist/rstack-resolve-hook.mjs
 !dist/**/*.node
 !dist/*.licenses.json
 !icon.png

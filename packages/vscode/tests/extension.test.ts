@@ -549,6 +549,7 @@ describe('the extension manifest', () => {
     expect(settings['rstack.fmt.trace.server']?.scope).toBe('window');
     expect(settings['rstack.rslint.corePath']?.scope).toBe('resource');
     expect(settings['rstack.rstest.corePath']?.scope).toBe('resource');
+    expect(settings['rstack.rstackCli.packagePath']?.scope).toBe('resource');
   });
 });
 

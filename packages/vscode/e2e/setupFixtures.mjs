@@ -49,6 +49,13 @@ export const FIXTURES = {
     FIXTURES_DIR,
     'fmt-missing-config-dependency',
   ),
+  // The #103 layout installs only its `infra/` tooling directory; the folder
+  // root has no dependencies of its own.
+  'rstack-cli-package-path': path.join(
+    FIXTURES_DIR,
+    'rstack-cli-package-path',
+    'infra',
+  ),
   'rstest-workspace-1': path.join(here, 'rstest', 'fixtures', 'workspace-1'),
   'rstest-workspace-2': path.join(here, 'rstest', 'fixtures', 'workspace-2'),
   lint: path.join(here, 'lint', 'fixtures'),

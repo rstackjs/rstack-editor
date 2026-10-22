@@ -1,0 +1,5 @@
+{
+  // The setting under test (#103): the only way the extension can find the
+  // `rstack` installed under `infra/`.
+  "rstack.rstackCli.packagePath": "infra/node_modules/rstack"
+}

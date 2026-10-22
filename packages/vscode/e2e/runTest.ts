@@ -6,7 +6,7 @@
  * control to `suite/index.ts` inside the extension host.
  */
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { runTests } from '@vscode/test-electron';
@@ -110,6 +110,60 @@ async function main() {
     workspace: path.join(fixturesDir, 'fmt-missing-config-dependency'),
     profileSuffix: 'fmt-missing-config-dependency',
   });
+  await launchRstackCliPackagePath(extensionDevelopmentPath, fixturesDir);
+}
+
+/**
+ * The #103 layout must run outside this repository: a walk-up from a fixture
+ * inside the checkout would reach the repository's own `node_modules/rstack`,
+ * which would satisfy all three stacks without the setting under test. The
+ * copy keeps the layout and links `infra/node_modules` back to the installed
+ * fixture, so `rstack` stays reachable only through
+ * `rstack.rstackCli.packagePath`.
+ */
+async function launchRstackCliPackagePath(
+  extensionDevelopmentPath: string,
+  fixturesDir: string,
+): Promise<void> {
+  const fixture = path.join(fixturesDir, 'rstack-cli-package-path');
+  const installed = path.join(fixture, 'infra', 'node_modules');
+  if (!existsSync(installed)) {
+    throw new Error(
+      'the rstack-cli-package-path E2E fixture is not installed — run `pnpm test:e2e:fixtures`.',
+    );
+  }
+  // Short on Unix: VS Code appends socket names to paths under the workspace.
+  const sandbox = mkdtempSync(
+    path.join(process.platform === 'win32' ? tmpdir() : '/tmp', 'rsp-'),
+  );
+  const workspace = path.join(sandbox, 'w');
+  try {
+    cpSync(fixture, workspace, {
+      recursive: true,
+      filter: (source) => path.basename(source) !== 'node_modules',
+    });
+    symlinkSync(
+      installed,
+      path.join(workspace, 'infra', 'node_modules'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+    await launch({
+      extensionDevelopmentPath,
+      extensionTestsPath: path.resolve(
+        __dirname,
+        './suite-rstack-cli-package-path/index',
+      ),
+      workspace,
+      profileSuffix: 'rstack-cli-package-path',
+    });
+  } finally {
+    rmSync(sandbox, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 200,
+    });
+  }
 }
 
 main().catch((error) => {

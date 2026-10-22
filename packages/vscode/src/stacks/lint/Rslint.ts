@@ -35,6 +35,7 @@ import {
   resolveUserNodeOnce,
 } from '../../shared/nodeResolution';
 import { getConfiguredNodeExecutable } from '../../shared/nodeExecutableSetting';
+import { rstackResolveHookArgs } from '../../shared/rstackPackage';
 import type { StackState } from '../../types';
 import type { CoreInstallation } from './CoreResolver';
 import { LanguageServerProcessOwner } from './LanguageServerProcessOwner';
@@ -482,7 +483,17 @@ export class Rslint implements Disposable {
     const nodeExecutable = await this.resolveNodeExecutable();
     this.assertStartCurrent(epoch, signal);
     const workerPath = path.resolve(__dirname, 'lint-worker.js');
-    const workerArgs = [workerPath, '--lsp', '--core', packageDirectory];
+    const workerArgs = [
+      // Adaptation 2: the bridged worker's shim loads `rstack.config.*`.
+      ...rstackResolveHookArgs(
+        this.installation.rstackDirectory,
+        this.installation.rstackFromSetting,
+      ),
+      workerPath,
+      '--lsp',
+      '--core',
+      packageDirectory,
+    ];
     if (shimPath !== undefined) {
       workerArgs.push('--config', shimPath);
     }

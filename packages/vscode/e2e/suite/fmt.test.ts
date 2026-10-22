@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import * as vscode from 'vscode';
 import type { RstackExtensionExports } from '../../src/types';
-import { eventually } from './helpers';
+import { applyEdits, eventually } from './helpers';
 
 const EXTENSION_ID = 'rstack.rstack';
 /**
@@ -80,21 +80,12 @@ suite('fmt', () => {
       );
       assert.ok(edits && edits.length > 0, 'the formatter returned no edits');
 
-      let applied = document.getText();
-      // The command post-processes our single minimal edit through VS Code's
-      // `computeMoreMinimalEdits`, so apply its result from the end backwards.
-      for (const edit of [...edits].sort(
-        (left, right) =>
-          document.offsetAt(right.range.start) -
-          document.offsetAt(left.range.start),
-      )) {
-        const start = document.offsetAt(edit.range.start);
-        const end = document.offsetAt(edit.range.end);
-        applied = applied.slice(0, start) + edit.newText + applied.slice(end);
-      }
       // The quote normalization is Prettier-specific, so VS Code's built-in
       // TypeScript formatter cannot mask a failed Rstack provider via fallback.
-      assert.equal(applied, 'const answer = { value: "42" };\n');
+      assert.equal(
+        applyEdits(document, edits),
+        'const answer = { value: "42" };\n',
+      );
       return document;
     }, 'the rs fmt language server to return a Prettier-formatted edit');
 

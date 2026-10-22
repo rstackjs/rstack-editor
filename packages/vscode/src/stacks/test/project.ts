@@ -5,6 +5,11 @@ import picomatch from 'picomatch';
 import { glob } from 'tinyglobby';
 import vscode from 'vscode';
 import { RSTACK_CONFIG_NAMES } from '../../detection';
+import { getConfiguredPathSetting } from '../../shared/nodeExecutableSetting';
+import {
+  RSTACK_PACKAGE_PATH_SETTING,
+  resolveRstackPackageJson,
+} from '../../shared/rstackPackage';
 import { resolveRstackShim } from './bridge';
 import { watchConfigValue } from './config';
 import {
@@ -75,6 +80,8 @@ export type ProjectSource = {
   readonly rstestResolutionDir?: string;
   /** True for a `Project` synthesized by the rstack bridge. */
   readonly isBridge?: boolean;
+  /** `rstack.rstackCli.packagePath` chose rstack, so workers need the hook. */
+  readonly rstackFromSetting?: boolean;
 };
 
 export class WorkspaceManager implements vscode.Disposable {
@@ -336,11 +343,24 @@ export class WorkspaceManager implements vscode.Disposable {
 
     const candidateDirs = new Set<string>();
     const wanted = new Map<string, ProjectSource>();
+    // A set `rstack.rstackCli.packagePath` is one package for every bridge.
+    const configuredPath = getConfiguredPathSetting(
+      RSTACK_PACKAGE_PATH_SETTING,
+      this.workspaceFolder,
+    );
+    const configuredRstack =
+      configuredPath === undefined
+        ? undefined
+        : resolveRstackPackageJson(
+            this.workspaceFolder.uri.fsPath,
+            configuredPath,
+          );
     for (const [cwd, rstackConfig] of winnerByDir) {
       const key = rstackConfig.toString();
       if (nativeProjectDirs.has(cwd)) continue;
       candidateDirs.add(cwd);
       const shim = resolveRstackShim(cwd, {
+        configured: configuredRstack,
         silent: this.reportedShimFailures.has(cwd),
       });
       if (!shim) {
@@ -371,6 +391,7 @@ export class WorkspaceManager implements vscode.Disposable {
         cwd,
         rstestResolutionDir: shim.packageDirectory,
         isBridge: true,
+        rstackFromSetting: configuredRstack !== undefined,
       });
       logger.info(
         `Driving Rstest from ${rstackConfig.fsPath} through the rstack config shim`,

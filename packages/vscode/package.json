@@ -134,6 +134,19 @@
       },
       {
         "type": "object",
+        "title": "Rstack › Rstack CLI",
+        "properties": {
+          "rstack.rstackCli.packagePath": {
+            "order": 0,
+            "type": "string",
+            "default": "",
+            "scope": "resource",
+            "markdownDescription": "Path to an `rstack` installation, either its package directory or its `package.json` file (for example `infra/node_modules/rstack`). Relative paths are resolved from the workspace folder. Supports the `${workspaceFolder}` placeholder. It applies wherever the extension uses `rstack`: the `rs fmt` formatter, and Rslint and Rstest when a root `rstack.config.*` drives them, which then resolve `@rslint/core` and `@rstest/core` from this installation. Tools still run from the workspace folder, so its `rstack.config.*` applies. Use this override only when `rstack` is not installed in a `node_modules` above the workspace folder."
+          }
+        }
+      },
+      {
+        "type": "object",
         "title": "Rstack › Rslint",
         "properties": {
           "rstack.rslint.enable": {
