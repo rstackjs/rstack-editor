@@ -1,11 +1,11 @@
 // Builds and packages one platform-targeted VSIX per supported target.
 //
 // The extension is platform targeted for a single reason: Rstest's AST test
-// collection loads the `yuku-core` napi binding (via `yuku-parser`), which
+// collection loads the `@swc-next/parser` napi binding, which
 // `rslib.config.mts` stages into `dist/` based on `VSCE_TARGET`.
 //
 // Packaging a target other than the host platform requires the matching
-// optional `@yuku-core/binding-*` package to be installed locally, e.g.:
+// optional `@swc-next/parser-binding-*` package to be installed locally, e.g.:
 //
 //   pnpm config set --location=project --json supportedArchitectures \
 //     '{"cpu":["current","arm64"]}' && pnpm install
