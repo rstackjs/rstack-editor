@@ -21,3 +21,5 @@ minimumReleaseAgeExclude:
   - '@rstackjs/*'
   - rsbuild-plugin-dts
   - '@rspack/*'
+  # Extension-only parser packages; E2E fixtures do not depend on these.
+  - '@swc-next/*'

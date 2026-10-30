@@ -1,4 +1,4 @@
-import { type Node, parse } from 'yuku-parser';
+import { type Node, parseSync } from '@swc-next/parser';
 
 export class Range {
   constructor(
@@ -25,7 +25,7 @@ export const parseTestFile = (
     ): (() => void) | void;
   },
 ) => {
-  const result = parse(code, {
+  const result = parseSync(code, {
     lang: 'tsx',
     preserveParens: false,
     sourceType: 'module',
