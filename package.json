@@ -18,9 +18,9 @@
     "bumpp": "^11.1.0",
     "rstack": "^0.8.5"
   },
-  "packageManager": "pnpm@11.20.0",
+  "packageManager": "pnpm@11.28.10",
   "engines": {
     "node": "^22.18.0 || >=24.3.0",
-    "pnpm": ">=11.0.0"
+    "pnpm": ">=11.28.10"
   }
 }
