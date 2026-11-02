@@ -1,14 +1,16 @@
 /**
  * Regression smoke test — "rslint eslint-plugin host path".
  *
- * This is a *verified non-requirement*: with a plain project
- * install of `@rslint/core`, a bare-specifier `import('@rslint/core/eslint-plugin')`
- * → `createPluginLintHost` → `host.lint()` runs the whole pipeline (worker
- * spawned from the sibling `lint-worker.js`, napi parser resolved by walking up
- * `node_modules`, an object-form plugin rule producing a diagnostic, clean
- * shutdown). Nothing rslint-related ships in the VSIX, so if that ever stops
- * being true, this extension's plugin-lint path is dead — hence a regression
- * test rather than a one-off manual verification.
+ * This is a *verified non-requirement*: with a plain project install of
+ * `@rslint/core`, a bare-specifier `import('@rslint/core/eslint-plugin')`
+ * resolves to the project's own copy and exports `createPluginLintHost`, and
+ * the full plugin pipeline runs (Go projects each file's ESTree frame, the
+ * host's sibling `lint-worker.js` answers the reverse `pluginLint` request,
+ * the native byte transport resolves by walking up `node_modules`, an
+ * object-form plugin rule produces a diagnostic, clean shutdown). Nothing
+ * rslint-related ships in the VSIX, so if that ever stops being true, this
+ * extension's plugin-lint path is dead — hence a regression test rather than
+ * a one-off manual verification.
  *
  * It needs no VS Code: it is a plain Node script, run by `pnpm test:e2e:smoke`
  * as well as by the full `pnpm test:e2e`. It deliberately mirrors the
@@ -16,11 +18,19 @@
  *
  *   1. `require.resolve('@rslint/core/package.json', { paths: [projectDir] })`
  *      — the project's install, never this repo's;
- *   2. `createRequire(<that package.json>).resolve('@rslint/core/eslint-plugin')`
- *      — self-reference resolution, pinning the subpath to that same install;
+ *   2. `createRequire(<that package.json>).resolve(...)` for both the package
+ *      entry and `@rslint/core/eslint-plugin` — self-reference resolution,
+ *      pinning both subpaths to that same install;
  *   3. the one-resolution-root assertion;
- *   4. a dynamic `import()` of the resolved path — the host is ESM and spawns
+ *   4. dynamic `import()`es of the resolved paths — the host is ESM and spawns
  *      its sibling worker via `import.meta.url`, so it can never be `require`d.
+ *
+ * Since `@rslint/core` 0.10.0 Go projects the ESTree frame itself and the host
+ * only consumes it (`EslintPluginLintRequest.files[].frame` is required), so a
+ * hand-built `host.lint()` request with just a path is no longer a valid
+ * request. Driving the pipeline through the public `Rslint` class exercises
+ * the same reverse `pluginLint` request — real frames included — against the
+ * entry asserted below, and keeps this test valid across core versions.
  */
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
@@ -29,9 +39,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_DIR = path.resolve(here, '../fixtures/rslint');
-const CONFIG_PATH = path.join(PROJECT_DIR, 'rslint.config.mjs');
-const SOURCE_PATH = path.join(PROJECT_DIR, 'src/index.ts');
+const SOURCE_PATTERN = 'src/index.ts';
 const RULE_NAME = 'local/no-null';
+const RULE_MESSAGE_ID = 'unexpected';
 
 const nodeRequire = createRequire(import.meta.url);
 
@@ -57,10 +67,14 @@ const main = async () => {
     );
   }
   const coreDir = path.dirname(corePackageJsonPath);
+  const projectRequire = createRequire(corePackageJsonPath);
 
-  const eslintPluginPath = createRequire(corePackageJsonPath).resolve(
-    '@rslint/core/eslint-plugin',
+  const coreEntryPath = projectRequire.resolve('@rslint/core');
+  assert.ok(
+    isInside(coreEntryPath, coreDir),
+    `one resolution root violated: ${coreEntryPath} is outside ${coreDir}`,
   );
+  const eslintPluginPath = projectRequire.resolve('@rslint/core/eslint-plugin');
   assert.ok(
     isInside(eslintPluginPath, coreDir),
     `one resolution root violated: ${eslintPluginPath} is outside ${coreDir}`,
@@ -70,61 +84,56 @@ const main = async () => {
   console.log(`[smoke] @rslint/core:   ${coreDir}`);
   console.log(`[smoke] eslint-plugin:  ${eslintPluginPath}`);
 
-  const logs = [];
-  const module = await import(pathToFileURL(eslintPluginPath).href);
+  const coreModule = await import(pathToFileURL(coreEntryPath).href);
   assert.equal(
-    typeof module.createPluginLintHost,
+    typeof coreModule.Rslint,
+    'function',
+    `${coreEntryPath} does not export Rslint`,
+  );
+
+  const pluginModule = await import(pathToFileURL(eslintPluginPath).href);
+  assert.equal(
+    typeof pluginModule.createPluginLintHost,
     'function',
     `${eslintPluginPath} does not export createPluginLintHost`,
   );
 
-  const host = await module.createPluginLintHost(
-    [{ configPath: CONFIG_PATH, configDirectory: PROJECT_DIR }],
-    (record) => {
-      logs.push(record);
-    },
-  );
-
-  let result;
+  let results;
+  const rslint = new coreModule.Rslint({ cwd: PROJECT_DIR });
   try {
-    result = await host.lint({
-      // No `text`: the worker reads the file from disk, the path the CLI uses.
-      files: [{ path: SOURCE_PATH, configKey: PROJECT_DIR }],
-      // The rule set Go would have computed from the config for this file.
-      rules: { [RULE_NAME]: { options: [] } },
-      collectFixes: false,
-      suggestionsMode: 'off',
-    });
+    results = await rslint.lintFiles(SOURCE_PATTERN);
   } finally {
-    await host.shutdown();
+    await rslint.close();
   }
 
-  const fileResult = result?.results?.[0];
-  assert.ok(fileResult, `no per-file result: ${JSON.stringify(result)}`);
-  assert.equal(
-    fileResult.parseError,
-    undefined,
-    `the napi parser failed: ${String(fileResult.parseError)}`,
-  );
+  const fileResult = results?.[0];
+  assert.ok(fileResult, `no per-file result: ${JSON.stringify(results)}`);
+
+  const messages = fileResult.messages ?? [];
+  const fatal = messages.filter((message) => message.fatal);
   assert.deepEqual(
-    fileResult.ruleErrors ?? [],
+    fatal,
     [],
-    `the plugin rule threw: ${JSON.stringify(fileResult.ruleErrors)}`,
+    `the linter failed fatally: ${JSON.stringify(fatal)}`,
   );
 
-  const diagnostics = fileResult.diagnostics ?? [];
+  // `local/no-null` is an object-form plugin rule: Go cannot run it, so this
+  // diagnostic proves the project install's plugin host answered the reverse
+  // request with a Go-projected frame. The VS Code `eslintPlugins` E2E suite
+  // covers the same path through the extension's own worker.
+  const diagnostics = messages.filter(
+    (message) => message.ruleId === RULE_NAME,
+  );
   assert.equal(
     diagnostics.length,
     1,
-    `expected exactly one ${RULE_NAME} diagnostic, got ${JSON.stringify(diagnostics)}`,
+    `expected exactly one ${RULE_NAME} diagnostic, got ${JSON.stringify(messages)}`,
   );
-  assert.equal(diagnostics[0].ruleName, RULE_NAME);
+  assert.equal(diagnostics[0].messageId, RULE_MESSAGE_ID);
 
   console.log(
-    `[smoke] diagnostic:     ${diagnostics[0].ruleName} — ${String(diagnostics[0].message)}`,
+    `[smoke] diagnostic:     ${diagnostics[0].ruleId} — ${String(diagnostics[0].message)} (${diagnostics[0].line}:${diagnostics[0].column})`,
   );
-  const errors = logs.filter((record) => record.level === 'error');
-  assert.deepEqual(errors, [], `host logged errors: ${JSON.stringify(errors)}`);
   console.log(
     '[smoke] OK — project-resolved plugin lint host produced a diagnostic',
   );
