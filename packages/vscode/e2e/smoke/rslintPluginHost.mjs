@@ -2,15 +2,11 @@
  * Regression smoke test — "rslint eslint-plugin host path".
  *
  * This is a *verified non-requirement*: with a plain project install of
- * `@rslint/core`, a bare-specifier `import('@rslint/core/eslint-plugin')`
- * resolves to the project's own copy and exports `createPluginLintHost`, and
- * the full plugin pipeline runs (Go projects each file's ESTree frame, the
- * host's sibling `lint-worker.js` answers the reverse `pluginLint` request,
- * the native byte transport resolves by walking up `node_modules`, an
- * object-form plugin rule produces a diagnostic, clean shutdown). Nothing
- * rslint-related ships in the VSIX, so if that ever stops being true, this
- * extension's plugin-lint path is dead — hence a regression test rather than
- * a one-off manual verification.
+ * `@rslint/core`, the project's own copy resolves, runs an object-form plugin
+ * rule to a diagnostic, and shuts down cleanly. Nothing rslint-related ships
+ * in the VSIX, so if that ever stops being true, this extension's plugin-lint
+ * path is dead — hence a regression test rather than a one-off manual
+ * verification.
  *
  * It needs no VS Code: it is a plain Node script, run by `pnpm test:e2e:smoke`
  * as well as by the full `pnpm test:e2e`. It deliberately mirrors the
@@ -22,15 +18,11 @@
  *      entry and `@rslint/core/eslint-plugin` — self-reference resolution,
  *      pinning both subpaths to that same install;
  *   3. the one-resolution-root assertion;
- *   4. dynamic `import()`es of the resolved paths — the host is ESM and spawns
- *      its sibling worker via `import.meta.url`, so it can never be `require`d.
+ *   4. dynamic `import()` of the resolved paths.
  *
- * Since `@rslint/core` 0.10.0 Go projects the ESTree frame itself and the host
- * only consumes it (`EslintPluginLintRequest.files[].frame` is required), so a
- * hand-built `host.lint()` request with just a path is no longer a valid
- * request. Driving the pipeline through the public `Rslint` class exercises
- * the same reverse `pluginLint` request — real frames included — against the
- * entry asserted below, and keeps this test valid across core versions.
+ * The project's installed `@rslint/core` lints the fixture and reports the
+ * plugin rule, so this exercises the package a user actually installs and
+ * stays valid across core versions.
  */
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
@@ -117,10 +109,9 @@ const main = async () => {
     `the linter failed fatally: ${JSON.stringify(fatal)}`,
   );
 
-  // `local/no-null` is an object-form plugin rule: Go cannot run it, so this
-  // diagnostic proves the project install's plugin host answered the reverse
-  // request with a Go-projected frame. The VS Code `eslintPlugins` E2E suite
-  // covers the same path through the extension's own worker.
+  // `local/no-null` is an object-form plugin rule, so this diagnostic proves
+  // the project install runs plugin rules. The VS Code `eslintPlugins` E2E
+  // suite covers the same path through the extension's own worker.
   const diagnostics = messages.filter(
     (message) => message.ruleId === RULE_NAME,
   );
@@ -135,7 +126,7 @@ const main = async () => {
     `[smoke] diagnostic:     ${diagnostics[0].ruleId} — ${String(diagnostics[0].message)} (${diagnostics[0].line}:${diagnostics[0].column})`,
   );
   console.log(
-    '[smoke] OK — project-resolved plugin lint host produced a diagnostic',
+    "[smoke] OK — the project's @rslint/core ran a plugin rule and produced a diagnostic",
   );
 };
 

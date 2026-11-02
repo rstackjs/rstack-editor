@@ -1,15 +1,13 @@
 /**
  * An object-form ESLint plugin, mounted by `rslint.config.mjs`.
  *
- * Object-form plugin rules run in JS, not in the Go linter: the server sends a
- * reverse `rslint/pluginLint` request back to the client, which answers it from
- * a worker pool owned by `@rslint/core/eslint-plugin`. That is exactly the path
- * the plugin-host regression smoke test exercises, so the rule has to come from a
- * plugin rather than from Rslint's native rule set.
+ * Object-form plugin rules run in the project's own plugin runtime, so this
+ * rule has to come from a plugin rather than from the built-in rule set. That
+ * is exactly the path the plugin-host regression smoke test exercises.
  *
  * `.mjs` on purpose: a `.ts` plugin/config would drag `jiti` (or native type
- * stripping) into a test that is about module resolution, not about config
- * loaders.
+ * stripping) into a test that is about module resolution, not about loading
+ * TypeScript configs.
  */
 export default {
   meta: { name: 'rstack-editor-e2e-local-plugin', version: '1.0.0' },

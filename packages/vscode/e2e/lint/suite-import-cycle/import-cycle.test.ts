@@ -187,7 +187,7 @@ suite('rslint import/no-cycle over LSP', function () {
     );
 
     // a.ts is unchanged in meaning, so only a fresh cross-file answer — built
-    // from the Program that holds c.ts's edited buffer — can clear its report.
+    // from the edited buffer for c.ts — can clear its report.
     const clearedA = await touchAndWait(
       docA,
       (all) => isLintedPass(all) && cycleDiagnostics(all).length === 0,

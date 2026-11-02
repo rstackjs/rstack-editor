@@ -16,7 +16,8 @@
 //   register the stack without a window reload, and deleting the last one
 //   must deregister it (the config-glob + lockfile detection watcher).
 // - Upstream's "a broken discovered JS config must not fall back to JSON"
-//   step is preserved: the Go server owns that behavior and is unchanged.
+//   step is preserved: a broken config yields no diagnostics, never the
+//   legacy JSON rules.
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import path from 'node:path';
@@ -228,10 +229,9 @@ suite('rslint no config fallback', function () {
   });
 
   test('a broken JS config does not fall back to rslint.json', async () => {
-    // Upstream's lifecycle step 4: a *freshly discovered* broken JS config
-    // (no last-good catalog for its path) must yield an explicit no-lint
-    // state instead of falling back to JSON. A broken rewrite of an already
-    // loaded config would instead keep the last-good catalog active — that
+    // Upstream's lifecycle step 4: a freshly discovered broken JS config must
+    // yield no lint state instead of falling back to JSON. A broken rewrite of
+    // an already loaded config keeps linting with the last good config — that
     // scenario belongs to the jsconfig suite ("broken higher-priority config
     // preserves last-good").
     await withConfigFilesAbsent(async ({ json, js }) => {
@@ -256,15 +256,15 @@ suite('rslint no config fallback', function () {
         );
 
         // Delete the JS config: the folder is un-detected (rslint.json does
-        // not count), the stack deregisters and its last-good
-        // catalog dies with the server.
+        // not count), the stack deregisters and the previous config's results
+        // are gone.
         fs.rmSync(js);
         await waitForLintStackRegistration(false);
         await waitForDiagnostics(doc, (ds) => ds.length === 0);
 
         // Create a broken JS config fresh. Detection lights the stack again;
-        // the new server evaluates the module (observable via the marker),
-        // fails, and has no last-good to keep — nor a JSON fallback to take.
+        // the module is evaluated (observable via the marker), fails, and
+        // there is no earlier config to keep — nor a JSON fallback to take.
         fs.writeFileSync(
           js,
           `import fs from 'node:fs';

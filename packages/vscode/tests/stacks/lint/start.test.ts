@@ -119,7 +119,8 @@ rs.mock('vscode-languageclient/node', () => ({
         refreshOutcome === 'unconfigured-rejected'
       ) {
         this.notification?.({ kind: 'unconfigured' });
-        // Go rejects instead of committing when a last-good catalog exists.
+        // The server rejects instead of committing while an earlier config
+        // stays active.
         if (refreshOutcome === 'unconfigured-rejected') {
           throw new Error('config refresh failed at last-good boundary');
         }
@@ -399,8 +400,8 @@ it('reports a bridged runtime as not-detected with a detail when the shim finds 
   // Not a failure: the dependency poll has nothing to retry.
   expect(runtime.retryConfigDependency()).toBeUndefined();
 
-  // An unchanged episode logs once; Go rejecting with a last-good catalog is
-  // not reported as a failure either.
+  // An unchanged episode logs once; the server rejecting a refresh while an
+  // earlier config stays active is not reported as a failure either.
   await refreshConfig(runtime, 'config-change');
   refreshOutcome = 'unconfigured-rejected';
   await refreshConfig(runtime, 'config-change');

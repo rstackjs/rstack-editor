@@ -140,7 +140,7 @@ describe('lint worker config refresh', () => {
     });
   });
 
-  it('stamps requests sent to Go and preserves parameterless messages', async () => {
+  it('stamps requests sent to the server and preserves parameterless messages', async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'lint-worker-go-'));
     const stubPath = path.join(directory, 'fake-go.cjs');
     fs.writeFileSync(stubPath, fakeGoSource);

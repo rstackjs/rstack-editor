@@ -191,7 +191,7 @@ suite('PluginLintPool generations', () => {
     assert.strictEqual(
       hostB.lintCalls,
       1,
-      'Go can route an accepted generation before Node observes the ack',
+      'a caller can route an accepted generation before the pool observes the ack',
     );
 
     assert.strictEqual(await pool.commit('b'), true);
@@ -209,7 +209,7 @@ suite('PluginLintPool generations', () => {
     assert.strictEqual(
       hostA.shutdownCalls,
       0,
-      'the predecessor remains rollback-capable until a later commit proves Go accepted b',
+      'the predecessor remains rollback-capable until a later commit proves the newer generation was accepted',
     );
 
     assert.strictEqual(
@@ -239,9 +239,9 @@ suite('PluginLintPool generations', () => {
     await pool.prepare(descriptor('b'), 'fingerprint-b', 'b');
     await pool.commit('b');
 
-    // Node already switched to b, but Go did not receive/accept the commit
-    // response and compensates with abort. The pool must return to a rather
-    // than leaving both processes on different generations.
+    // The pool already switched to b, but the caller did not receive/accept
+    // the commit response and compensates with abort. The pool must return to a
+    // rather than leaving both sides on different generations.
     await pool.abort('b');
     await pool.lint(request('a'));
     assert.strictEqual(hosts.get('/a.mjs')!.lintCalls, 1);
@@ -252,7 +252,7 @@ suite('PluginLintPool generations', () => {
     assert.strictEqual(hosts.get('/a.mjs')!.shutdownCalls, 1);
   });
 
-  test('default grace retains at most two old WorkerPools', async () => {
+  test('default grace retains at most two old hosts', async () => {
     const hosts = new Map<string, TestHost>();
     const pool = new PluginLintPool(testLogger(), async (configs) => {
       const host = new TestHost();
