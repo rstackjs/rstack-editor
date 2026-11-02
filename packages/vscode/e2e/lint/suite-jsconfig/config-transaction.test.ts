@@ -6,10 +6,9 @@
 //   constant: `@rslint/core/config-loader` is resolved from the project at
 //   runtime, so the adapter takes the loader's
 //   `CONFIG_DISCOVERY_PROTOCOL_VERSION` as a constructor argument. The tests
-//   inject the devDependency's constant; the fixtures currently pin the same
-//   0.9.0 release line.
-// - The watch-glob test asserts upstream's current JS/TS config list is kept
-//   verbatim, with this extension's existing lockfile additions.
+//   inject the devDependency's constant.
+// - The watch-glob test asserts the JS/TS config names the extension watches,
+//   with this extension's existing lockfile additions.
 import * as assert from 'node:assert';
 
 import {
@@ -263,7 +262,7 @@ suite('LSP config discovery transactions', () => {
     reportError: () => assert.fail('unexpected config error'),
   };
 
-  test('the extension watcher leaves gitignore ownership to Go', () => {
+  test('the extension watcher covers configs and lockfiles only', () => {
     assert.match(CONFIG_REFRESH_WATCH_GLOB, /rslint\.config\.js/);
     assert.match(CONFIG_REFRESH_WATCH_GLOB, /rslint\.config\.mjs/);
     assert.match(CONFIG_REFRESH_WATCH_GLOB, /rslint\.config\.ts/);
@@ -327,7 +326,7 @@ suite('LSP config discovery transactions', () => {
     assert.deepStrictEqual(host.deletedTransactions, ['tx-1']);
   });
 
-  test('a rejected commit retains the session until Go aborts it', async () => {
+  test('a rejected commit retains the session until the caller aborts it', async () => {
     const host = new TestConfigHost();
     const pool = new TestPluginPool();
     pool.commitResult = false;
@@ -366,7 +365,7 @@ suite('LSP config discovery transactions', () => {
     assert.deepStrictEqual(host.deletedTransactions, ['tx-abort']);
   });
 
-  test('a later Running state requests a fresh initial catalog', async () => {
+  test('a later Running state requests a fresh initial refresh', async () => {
     const events: string[] = [];
     const recovery = recoverConfigDiscoveryOnServerState(
       State.Running,

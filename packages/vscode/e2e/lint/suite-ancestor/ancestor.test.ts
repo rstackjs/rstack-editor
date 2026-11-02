@@ -1,7 +1,6 @@
 // The opened workspace folder is `packages/app`; the fixture's only
-// `rslint.config.*` sits two levels above it. The rslint CLI and its Go server
-// walk up to the filesystem root for a config, so native lint detection must
-// light this folder, and its ancestor watchers must keep that decision fresh.
+// `rslint.config.*` sits two levels above it, so native lint detection must
+// light this folder from the ancestor config and keep that decision fresh.
 import * as vscode from 'vscode';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -66,9 +65,8 @@ suite('rslint config above the workspace folder', function () {
     await waitForDiagnostics(document, hasNoDebugger);
   });
 
-  // The live runtime keeps its key; the extension's ancestor watchers send
-  // configRefresh, as do the Go server's own (`ancestorJSConfigFileWatchers`,
-  // registered through the worker) once they are live.
+  // The live runtime keeps its key; edits above the folder are picked up by
+  // the extension's own config watchers and applied without a restart.
   test('applies a nearer config created above the folder while linting', async () => {
     const document = await openIndex();
     await waitForDiagnostics(document, hasNoDebugger);

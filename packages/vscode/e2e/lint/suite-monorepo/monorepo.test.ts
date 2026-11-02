@@ -46,17 +46,16 @@ suite('rslint monorepo multi-config support', function () {
   /**
    * Give `packages/foo` its own **physical** `@rslint/core` copy, so the
    * monorepo exercises two Lint runtimes in one workspace folder (rslint
-   * #1617). Upstream's fixture does the same by copying `package.json` + `dist`
-   * out of the workspace-resolved core and symlinking that core's own
-   * `node_modules` next to the copy.
+   * #1617). The workspace-resolved package is copied as a whole, so the
+   * fixture does not encode the package's internal file layout; the
+   * dependencies it needs are linked next to the copy.
    *
    * Adaptation: this repo installs published npm packages into one shared
    * fixture root (`e2e/lint/fixtures/package.json`), and with pnpm's isolated
-   * store the core's dependencies (`picomatch`, `jiti`, the platform
-   * `@rslint/native-*`) live in the `node_modules` **two levels above** the
-   * package directory, not inside it. Those entries are linked individually —
-   * `@rslint/core` itself is skipped, because a link to the original would
-   * shadow the copy the Lint worker is meant to load.
+   * store the core's dependencies live in the `node_modules` **two levels
+   * above** the package directory, not inside it. Those entries are linked
+   * individually — `@rslint/core` itself is skipped, because a link to the
+   * original would shadow the copy the Lint worker is meant to load.
    */
   suiteSetup(async function () {
     this.timeout(120000);
@@ -72,18 +71,11 @@ suite('rslint monorepo multi-config support', function () {
       getWorkspaceRoot(),
       'packages/foo/node_modules/@rslint/core',
     );
-    await fs.promises.mkdir(nestedCore, { recursive: true });
-    await Promise.all([
-      fs.promises.copyFile(
-        path.join(sourceCore, 'package.json'),
-        path.join(nestedCore, 'package.json'),
-      ),
-      fs.promises.cp(
-        path.join(sourceCore, 'dist'),
-        path.join(nestedCore, 'dist'),
-        { recursive: true, force: false, errorOnExist: true },
-      ),
-    ]);
+    await fs.promises.cp(sourceCore, nestedCore, {
+      recursive: true,
+      force: false,
+      errorOnExist: true,
+    });
 
     const dependencyRoot = path.resolve(sourceCore, '..', '..');
     const nestedModules = path.join(nestedCore, 'node_modules');

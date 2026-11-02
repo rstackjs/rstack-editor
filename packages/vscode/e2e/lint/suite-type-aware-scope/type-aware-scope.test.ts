@@ -14,8 +14,8 @@ import { closeTextEditor } from '../utils/documents';
 //
 // Fixture: rslint.config.js has project:
 // ['./packages/core/tsconfig.lint.json']. The default tsconfig.json deliberately
-// excludes index.ts, so tsgo's main Session cannot own the declared lint
-// project. This exercises rslint's standalone Program path.
+// excludes index.ts, so the declared lint project is the only project that
+// covers it and the rule must still run there.
 // - packages/core/src/index.ts: IN tsconfig.lint.json, type-aware rules fire
 // - packages/cli/src/preview.ts: NOT in tsconfig.lint.json, type-aware rules do not fire
 suite('rslint type-aware rule scope', function () {
@@ -114,7 +114,7 @@ suite('rslint type-aware rule scope', function () {
     );
     assert.ok(
       !updated.some((d) => diagnosticRuleIdIncludes(d, 'require-await')),
-      'Incremental standalone Program retained a stale require-await diagnostic',
+      'An incremental edit retained a stale require-await diagnostic',
     );
 
     await closeTextEditor(doc);
@@ -170,7 +170,7 @@ suite('rslint type-aware rule scope', function () {
         !updated.some((d) =>
           diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
         ),
-        'External dependency change left stale standalone Program diagnostics',
+        'External dependency change left stale type-aware diagnostics',
       );
     } finally {
       await vscode.workspace.fs.writeFile(dependencyUri, originalDependency);
@@ -183,7 +183,7 @@ suite('rslint type-aware rule scope', function () {
       restored.some((d) =>
         diagnosticRuleIdIncludes(d, 'no-unsafe-member-access'),
       ),
-      'Restored dependency did not restore standalone Program diagnostics',
+      'Restored dependency did not restore type-aware diagnostics',
     );
   });
 });
