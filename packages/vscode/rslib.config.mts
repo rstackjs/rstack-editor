@@ -5,28 +5,23 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig, type LibConfig, rspack } from '@rslib/core';
 import WebpackLicensePlugin from 'webpack-license-plugin';
 
-const require = createRequire(import.meta.url);
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
-// The VSIX is platform-targeted for exactly one reason: Rstest's AST test-case
-// collection loads the `yuku-core` napi binding (via `yuku-parser`). Everything
-// else in this extension is platform neutral (the Rslint Go binary and its napi
-// parser are resolved from the project at runtime and never ship in the VSIX).
+// The test stack's AST collection is the only native dependency in the VSIX.
 // On musl Linux (Alpine), set `VSCE_TARGET=alpine-<arch>` explicitly.
 const vsceTarget =
   process.env.VSCE_TARGET ?? `${process.platform}-${process.arch}`;
-// Yuku's loader resolves `binding-${platform}-${arch}${libc}`; the Linux VSIX
-// targets differ only by libc: `linux-*` is glibc, `alpine-*` is musl.
 const LINUX_LIBC: Record<string, string> = { linux: 'gnu', alpine: 'musl' };
 const [targetOs, targetArch] = vsceTarget.split('-');
 const libc = LINUX_LIBC[targetOs];
-const yukuBindingSuffix = libc ? `linux-${targetArch}-${libc}` : vsceTarget;
-const yukuCoreRequire = createRequire(
-  createRequire(require.resolve('yuku-parser')).resolve('yuku-core'),
-);
-// Yuku computes this package name at runtime, so Rspack cannot discover it.
-const yukuBindingPackage = `@yuku-core/binding-${yukuBindingSuffix}`;
-const yukuBindingPath = yukuCoreRequire.resolve(yukuBindingPackage);
+const parserBindingSuffix = libc
+  ? `linux-${targetArch}-${libc}`
+  : targetOs === 'win32'
+    ? `${vsceTarget}-msvc`
+    : vsceTarget;
+const parserRequire = createRequire(import.meta.resolve('@swc-next/parser'));
+const parserBindingPackage = `@swc-next/parser-binding-${parserBindingSuffix}`;
+const parserBindingPath = parserRequire.resolve(parserBindingPackage);
 
 /**
  * Packages that are always resolved from the user's project at runtime, never
@@ -36,6 +31,8 @@ const RUNTIME_RESOLVED_PACKAGES = /^(@rslint\/core|@rstest\/core|jiti)(\/|$)/;
 
 const externals: NonNullable<NonNullable<LibConfig['output']>['externals']> = [
   { vscode: 'commonjs vscode' },
+  // Keep native package loading in Node; ship only the selected VSIX target.
+  /^@swc-next\/parser-binding-/,
   ({ request }, callback) => {
     if (request && RUNTIME_RESOLVED_PACKAGES.test(request)) {
       return callback(undefined, `commonjs ${request}`);
@@ -69,8 +66,8 @@ const libs: LibConfig[] = [
           new rspack.CopyRspackPlugin({
             patterns: [
               {
-                from: yukuBindingPath,
-                to: `${yukuBindingPackage}/${path.basename(yukuBindingPath)}`,
+                from: path.dirname(parserBindingPath),
+                to: `node_modules/${parserBindingPackage}`,
               },
               {
                 // Preloaded via a `--import` node arg, so a file of its own.
@@ -158,7 +155,7 @@ export default defineConfig(({ envMode }) => {
             outputFilename: `${environment.name}.licenses.json`,
             includePackages: () =>
               environment.name === 'extension'
-                ? [path.dirname(yukuBindingPath)]
+                ? [path.dirname(parserBindingPath)]
                 : [],
           }),
         );

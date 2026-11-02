@@ -4,6 +4,7 @@
 !dist/**/*.js
 !dist/rstack-resolve-hook.mjs
 !dist/**/*.node
+!dist/node_modules/@swc-next/parser-binding-*/package.json
 !dist/*.licenses.json
 !icon.png
 !LICENSE
