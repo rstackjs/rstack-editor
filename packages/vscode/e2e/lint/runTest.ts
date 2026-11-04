@@ -32,6 +32,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { downloadAndUnzipVSCode, runTests } from '@vscode/test-electron';
+import { vscodeTestCachePath } from '../vscodeTestCache';
 
 interface TestSuite {
   name: string;
@@ -218,11 +219,14 @@ async function main(): Promise<void> {
   // Resolve the executable once so every suite explicitly uses the same one.
   // `VSCODE_TEST_EXECUTABLE`/`VSCODE_TEST_VERSION` mirror the other runners in
   // this repo; a cached download under `.vscode-test/` is reused.
+  // `VSCODE_TEST_CACHE_PATH` moves that cache outside the checkout
+  // (rstack-ecosystem-ci wipes its consumer with `git clean -fdxq`).
   const vscodeExecutablePath =
     process.env.VSCODE_TEST_EXECUTABLE ||
     (await downloadAndUnzipVSCode({
       version: process.env.VSCODE_TEST_VERSION ?? 'stable',
       timeout: 60_000,
+      cachePath: vscodeTestCachePath,
       extensionDevelopmentPath,
     }));
 

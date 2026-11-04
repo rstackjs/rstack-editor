@@ -10,6 +10,7 @@ import { cpSync, existsSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { runTests } from '@vscode/test-electron';
+import { vscodeTestCachePath } from './vscodeTestCache';
 
 const FIXTURE_NAMES = [
   'rslint',
@@ -50,6 +51,7 @@ async function launch({
     // VS Code (`.../Visual Studio Code.app/Contents/MacOS/Electron`, `Code.exe`,
     // `code`) and nothing is downloaded at all.
     vscodeExecutablePath: process.env.VSCODE_TEST_EXECUTABLE || undefined,
+    cachePath: vscodeTestCachePath,
     extensionDevelopmentPath,
     extensionTestsPath,
     launchArgs: [
