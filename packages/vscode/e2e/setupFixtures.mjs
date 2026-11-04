@@ -3,7 +3,7 @@
 // The fixtures install **exact published npm versions** of
 // `@rslint/core` / `@rstest/core` / `rstack` — the extension resolves all three
 // from the project, so a fixture that linked this repo's own node_modules would
-// test nothing. `rstack@0.8.2` itself pins `@rslint/core@0.9.5` exactly, so the
+// test nothing. `rstack@0.9.0` itself pins `@rslint/core@0.10.0` exactly, so the
 // Rstack fixture pins its lint core transitively. Each fixture is its own
 // independent install. Exact toolchain pins make installs reproducible
 // without committed lockfiles, and Renovate bumps those pins.
