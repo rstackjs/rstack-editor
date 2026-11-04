@@ -1379,7 +1379,7 @@ describe('Rstest public API', () => {
       'accepts the worker after a connection with %s',
       async (kind) => {
         const sockets: net.Socket[] = [];
-        const received: Buffer[] = [];
+        const received: (string | Buffer)[] = [];
         const api = createApi(root);
         startDebugging = async (configuration) => {
           debugEvents.emit('start', { configuration });
