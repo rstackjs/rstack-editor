@@ -21,9 +21,10 @@
 //   for a shared one; this host loads nothing and caches nothing, so "the same
 //   installation" is the same runtime key and a structurally equal record.
 // - Upstream's "rejects a core package whose binary is missing" has no
-//   host-side analogue (the binary is the worker's business). It is replaced
-//   by the rejection this host actually performs: the SUPPORT_MATRIX version
-//   floor. Same shape, same count, the check that exists here.
+//   host-side analogue (the binary is the worker's business), so this host
+//   replaces it with the rejection it actually performs: the SUPPORT_MATRIX
+//   version floor. The binary check itself is pinned where it lives now, in
+//   `tests/stacks/lint/workerCore.test.ts` (`loadCoreInstallation`).
 import * as assert from 'node:assert';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -292,6 +293,33 @@ suite('local core resolver', () => {
     try {
       await new CoreResolver().resolve(document, temporaryWorkspaceFolder(), {
         mode: 'native',
+      });
+    } catch (error) {
+      failure = error;
+    }
+    assert.ok(failure instanceof Error, 'expected the resolver to reject');
+    assert.ok(failure.message.includes('0.7.3'), failure.message);
+    const named = /\(([^()]+)\)$/.exec(failure.message)?.[1];
+    assert.ok(named, `expected a core directory in: ${failure.message}`);
+    await assertSamePhysicalPath(named, packageDirectory);
+  });
+
+  test('rejects an unsupported configured corePath', async () => {
+    // Same gate as the node_modules case above, on the branch that applies
+    // `rstack.rslint.corePath`: the override must not bypass SUPPORT_MATRIX.
+    // A version below the current floor (`@rslint/core >= 0.8.0`; upstream's
+    // 0.10.0 is supported here now).
+    const packageDirectory = await createCore(
+      path.join(temporaryDirectory, 'vendor', 'core'),
+      '0.7.3',
+    );
+    const document = await createSource('src/index.ts');
+
+    let failure: unknown;
+    try {
+      await new CoreResolver().resolve(document, temporaryWorkspaceFolder(), {
+        mode: 'native',
+        corePath: './vendor/core',
       });
     } catch (error) {
       failure = error;
