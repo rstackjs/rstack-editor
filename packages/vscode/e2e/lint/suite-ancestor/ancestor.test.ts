@@ -46,6 +46,38 @@ suite('rslint config above the workspace folder', function () {
       diagnosticRuleIdIncludes(diagnostic, 'no-debugger'),
     );
 
+  // On macOS, Node's directory `fs.watch` runs on one FSEventStream per
+  // process, and libuv destroys and recreates that stream (from
+  // `kFSEventStreamEventIdSinceNow`) whenever a directory watcher starts or
+  // stops. VS Code's non-recursive watchers share one watcher process, so an
+  // edit made while any other directory watcher starts can be lost by all of
+  // them. Startup still churns watchers right after the first diagnostics (Go
+  // registers its own ancestor watchers only once initialized), and macOS CI
+  // lost the first edit there: the diagnostics never changed. Writing the same
+  // content again, as a user saving twice would, re-signals the edit. The
+  // diagnostics must still follow the file within the overall timeout.
+  async function writeConfigUntilDiagnostics(
+    document: vscode.TextDocument,
+    filePath: string,
+    content: string,
+    predicate: (diagnostics: vscode.Diagnostic[]) => boolean,
+  ): Promise<void> {
+    const deadline = Date.now() + 60_000;
+    for (;;) {
+      fs.writeFileSync(filePath, content);
+      try {
+        await waitForDiagnostics(
+          document,
+          predicate,
+          Math.max(0, Math.min(10_000, deadline - Date.now())),
+        );
+        return;
+      } catch (error) {
+        if (Date.now() >= deadline) throw error;
+      }
+    }
+  }
+
   teardown(async () => {
     fs.rmSync(nearerConfigPath(), { force: true });
     fs.writeFileSync(rootConfigPath(), configWithNoDebugger('error'));
@@ -56,14 +88,19 @@ suite('rslint config above the workspace folder', function () {
     const document = await openIndex();
     await waitForDiagnostics(document, hasNoDebugger);
 
-    fs.writeFileSync(rootConfigPath(), configWithNoDebugger('off'));
-    await waitForDiagnostics(
+    await writeConfigUntilDiagnostics(
       document,
+      rootConfigPath(),
+      configWithNoDebugger('off'),
       (diagnostics) => !hasNoDebugger(diagnostics),
     );
 
-    fs.writeFileSync(rootConfigPath(), configWithNoDebugger('error'));
-    await waitForDiagnostics(document, hasNoDebugger);
+    await writeConfigUntilDiagnostics(
+      document,
+      rootConfigPath(),
+      configWithNoDebugger('error'),
+      hasNoDebugger,
+    );
   });
 
   // The live runtime keeps its key; the extension's ancestor watchers send
