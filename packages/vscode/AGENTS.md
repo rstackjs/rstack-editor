@@ -29,6 +29,11 @@ One extension replacing the standalone `rstack.rslint` and `rstack.rstest` exten
 
 13. **SWC Next parser** (test) — static AST collection uses `@swc-next/parser` instead of upstream's `yuku-parser`. Preserve the parser migration and target-specific native binding packaging when syncing the test stack.
 
+## Active compatibility shims
+
+- **rstest <0.13 status vocabulary** — `stacks/test/compat/rstestPre013.ts`. rstest 0.13 (`web-infra-dev/rstest#1875`, commit `ffc4eb29`) renamed the reporter statuses (`pass|fail|skip` → `passed|failed|skipped`; run status `pass|fail` → `passed|failed`). The extension resolves `@rstest/core` from the user's project, so both lines run against one build. That module is the only place that knows the legacy names; consumers speak only the 0.13 vocabulary and every call site carries the exact tag `COMPAT(rstest<0.13)`.
+  - **To drop pre-0.13 support**: delete the module and `tests/stacks/test/rstestPre013.test.ts`; remove every `COMPAT(rstest<0.13)` site (`grep -rn "COMPAT(rstest<0.13)" packages/vscode`); bump the `@rstest/core` devDependency and the E2E fixture pins to 0.13; raise `SUPPORT_MATRIX['@rstest/core']` in `src/shared/versionCheck.ts` and its test.
+
 ## Rules
 
 - **Pre-1.0.0 the extension breaks freely.** No compatibility is owed with earlier unpublished states of this extension — settings, command ids and behavior may change without deprecation paths, and dead compat code for them is removed, not kept. No settings migration exists either — not for earlier states of this extension, and not for the two retired standalone extensions (removed in #15; users re-enter their settings under `rstack.*`). Testing and fixtures track only the latest published releases, pinned exactly and bumped by Renovate; a green E2E run speaks only for those releases. `SUPPORT_MATRIX` floors are the minimum versions the extension accepts: each entry is the lowest release evidence shows works with the current code, and its comment records that evidence. Move a floor only when a change makes older releases stop working, never because a devDependency or fixture moved. Raising a floor needs no transition story; the status names the required version.

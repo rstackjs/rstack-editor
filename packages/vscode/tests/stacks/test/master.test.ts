@@ -874,7 +874,7 @@ const createInFlightOneShotWorker = (shouldReject = false) => {
         await runFinished.promise;
         order.push('teardown');
         if (shouldReject) throw new Error('test run failed');
-        return { status: 'pass', unhandledErrors: [] };
+        return { status: 'passed', unhandledErrors: [] };
       },
     },
   });
@@ -1023,7 +1023,7 @@ describe('Rstest public API', () => {
   describe('Rstest public run lifecycle', () => {
     it('passes a selected test name to the run operation', async () => {
       const engineRun = rs.fn(async () => ({
-        status: 'pass',
+        status: 'passed',
         unhandledErrors: [],
       }));
       const worker = new Worker();
@@ -1049,7 +1049,7 @@ describe('Rstest public API', () => {
     ])('forwards the $kind path without a filter mode', async ({ filter }) => {
       const api = createApi();
       const engineRun = rs.fn(async () => ({
-        status: 'pass',
+        status: 'passed',
         unhandledErrors: [],
       }));
       const coreWorker = new Worker();
@@ -1109,7 +1109,7 @@ describe('Rstest public API', () => {
         fileFilters: undefined,
         rstest: {
           run: async () => ({
-            status: 'fail',
+            status: 'failed',
             summary: { tests: { failed: 1 }, files: { failed: 1 } },
             unhandledErrors: [],
           }),
@@ -1149,30 +1149,35 @@ describe('Rstest public API', () => {
       expect(order).toEqual(['teardown', 'kill']);
     });
 
-    it('surfaces coverage failures without test-level failures', async () => {
-      const api = createApi();
-      const coreWorker = new Worker();
-      rs.spyOn(coreWorker as any, 'init').mockResolvedValue({
-        command: 'run',
-        fileFilters: undefined,
-        rstest: {
-          run: async () => ({
-            status: 'fail',
-            summary: { tests: { failed: 0 }, files: { failed: 0 } },
-            unhandledErrors: [],
-          }),
-        },
-      });
-      mockWorker(api, (data) => coreWorker.runTest(data));
-      const { output, run, token } = createRunContext();
-      await api.runTest({ run, token });
-      expect(output.join('')).toContain(
-        'Rstest run failed without test-level failures',
-      );
-      expect(shownMessages[0]).toContain(
-        'coverage report errors or unmet coverage thresholds',
-      );
-    });
+    // COMPAT(rstest<0.13): the `fail` row is the legacy vocabulary; delete it
+    // with the compat shim.
+    it.each(['failed', 'fail'])(
+      'surfaces coverage failures without test-level failures (status: %s)',
+      async (status) => {
+        const api = createApi();
+        const coreWorker = new Worker();
+        rs.spyOn(coreWorker as any, 'init').mockResolvedValue({
+          command: 'run',
+          fileFilters: undefined,
+          rstest: {
+            run: async () => ({
+              status,
+              summary: { tests: { failed: 0 }, files: { failed: 0 } },
+              unhandledErrors: [],
+            }),
+          },
+        });
+        mockWorker(api, (data) => coreWorker.runTest(data));
+        const { output, run, token } = createRunContext();
+        await api.runTest({ run, token });
+        expect(output.join('')).toContain(
+          'Rstest run failed without test-level failures',
+        );
+        expect(shownMessages[0]).toContain(
+          'coverage report errors or unmet coverage thresholds',
+        );
+      },
+    );
 
     it('finishes a rejected continuous run and surfaces its error', async () => {
       const api = createApi();
