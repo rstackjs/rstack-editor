@@ -7,6 +7,7 @@ import type {
   TestSuiteInfo,
 } from '@rstest/core';
 import vscode from 'vscode';
+import { normalizeTestResultStatus } from './compat/rstestPre013';
 import type { DiagnosticEntry, RstestDiagnostics } from './diagnostics';
 import type { TestErrorStore } from './errorStore';
 import { logger } from './logger';
@@ -125,17 +126,18 @@ export class TestRunReporter implements Reporter {
     )?.testItem;
     if (!fileItem) return;
 
-    switch (test.status) {
+    // COMPAT(rstest<0.13): remove normalizer when dropping pre-0.13 support
+    switch (normalizeTestResultStatus(test.status)) {
       case 'todo':
-      case 'skip':
+      case 'skipped':
         this.run?.skipped(fileItem);
         this.errorStore?.clear(fileItem);
         break;
-      case 'pass':
+      case 'passed':
         this.run?.passed(fileItem, test.duration);
         this.errorStore?.clear(fileItem);
         break;
-      case 'fail': {
+      case 'failed': {
         // When a file fails before any test case runs (a syntax/collection
         // error or a worker crash during collection), the errors live only on
         // the file result and no onTestCaseResult fires to surface or store
@@ -155,6 +157,9 @@ export class TestRunReporter implements Reporter {
         }
         break;
       }
+      default:
+        // Neither vocabulary: surface it instead of reporting a wrong outcome.
+        logger.error('Unhandled test file status', test.status);
     }
   }
 
@@ -189,21 +194,22 @@ export class TestRunReporter implements Reporter {
       return;
     }
 
-    switch (result.status) {
-      case 'pass': {
+    // COMPAT(rstest<0.13): remove normalizer when dropping pre-0.13 support
+    switch (normalizeTestResultStatus(result.status)) {
+      case 'passed': {
         this.run?.passed(testItem, result.duration);
         this.diagnostics?.clearForTest(this.projectKey, testItem);
         this.errorStore?.clear(testItem);
         break;
       }
-      case 'skip':
+      case 'skipped':
       case 'todo': {
         this.run?.skipped(testItem);
         this.diagnostics?.clearForTest(this.projectKey, testItem);
         this.errorStore?.clear(testItem);
         break;
       }
-      case 'fail': {
+      case 'failed': {
         const errors = await this.createErrors(result.errors, result.testPath);
         this.run?.failed(testItem, errors, result.duration);
         this.diagnostics?.setForTest(
@@ -214,6 +220,9 @@ export class TestRunReporter implements Reporter {
         this.errorStore?.set(testItem, errors);
         break;
       }
+      default:
+        // Neither vocabulary: surface it instead of reporting a wrong outcome.
+        logger.error('Unhandled test status', result.status);
     }
   }
 

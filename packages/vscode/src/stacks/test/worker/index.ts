@@ -3,6 +3,7 @@ import { connect } from 'node:net';
 import { createBirpc } from 'birpc';
 import { missingDependencyCauseOf } from '../../../shared/missingDependency';
 import { SUPPORT_MATRIX } from '../../../shared/versionCheck';
+import { normalizeTestRunStatus } from '../compat/rstestPre013';
 import type { TestRunReporter } from '../testRunReporter';
 import type { NormalizedConfigResult, WorkerInitOptions } from '../types';
 import { retractForceColorIfDisabled } from '../shared/colorEnv';
@@ -151,19 +152,26 @@ export class Worker {
         }
       }
       const result = await rstest.run(runOptions);
-      if (result.status === 'error') {
+      // COMPAT(rstest<0.13): remove normalizer when dropping pre-0.13 support
+      // Normalize once, so every branch below reads the latest vocabulary.
+      const runStatus = normalizeTestRunStatus(result.status);
+      if (runStatus === 'error') {
         throw new Error(
           result.unhandledErrors.map((error) => error.message).join('\n\n'),
         );
       }
       if (
-        result.status === 'fail' &&
+        runStatus === 'failed' &&
         result.summary.tests.failed === 0 &&
         result.summary.files.failed === 0
       ) {
         throw new Error(
           'Rstest run failed without test-level failures. Check for operation-level failures such as coverage report errors or unmet coverage thresholds.',
         );
+      }
+      // COMPAT(rstest<0.13): remove with the normalizer
+      if (runStatus === undefined) {
+        logger.warn('Unrecognized Rstest run status', result.status);
       }
       logger.debug('Test run completed', { result });
     } catch (error) {
