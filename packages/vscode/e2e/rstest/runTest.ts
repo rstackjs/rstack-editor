@@ -28,6 +28,7 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { runTests } from '@vscode/test-electron';
+import { vscodeTestCachePath } from '../vscodeTestCache';
 
 // Repo-relative fixture dirs whose installs this slice needs. workspace-2 has
 // no node_modules of its own per project; the root install serves both nested
@@ -95,6 +96,7 @@ async function main() {
     // Escape hatch for offline / restricted environments: point at an existing
     // VS Code and nothing is downloaded at all.
     vscodeExecutablePath: process.env.VSCODE_TEST_EXECUTABLE || undefined,
+    cachePath: vscodeTestCachePath,
     extensionDevelopmentPath,
     extensionTestsPath,
     // In CI the rstest output channel is unreadable, so the extension mirrors

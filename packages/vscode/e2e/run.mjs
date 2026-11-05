@@ -10,6 +10,10 @@
 // up-to-date fixture, and unknown names throw there), then the entries run
 // sequentially — each `compile`d entry launches its own VS Code via
 // `@vscode/test-electron`.
+//
+// On Linux that VS Code needs an X display, so this file re-execs itself under
+// `xvfb-run` when there is none — running the whole chain, not just the
+// entries, under one server.
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -75,7 +79,7 @@ const packageRoot = path.resolve(
 /**
  * @param {string} command
  * @param {string[]} args
- * @param {{shell?: boolean}} [opts]
+ * @param {{shell?: boolean, missingMessage?: string}} [opts]
  */
 const run = (command, args, opts = {}) => {
   const result = spawnSync(command, args, {
@@ -89,6 +93,13 @@ const run = (command, args, opts = {}) => {
     shell: opts.shell ?? false,
   });
   if (result.error) {
+    if (
+      opts.missingMessage &&
+      /** @type {NodeJS.ErrnoException} */ (result.error).code === 'ENOENT'
+    ) {
+      console.error(opts.missingMessage);
+      process.exit(1);
+    }
     throw result.error;
   }
   if (result.status !== 0) {
@@ -107,6 +118,28 @@ const selected =
   requested.length > 0
     ? SLICES.filter((slice) => requested.includes(slice.name))
     : SLICES;
+
+// The Extension Host needs an X display. `xvfb-run` exports DISPLAY into the
+// child, so the re-exec'd process fails this check — it cannot recurse. A
+// slice that only runs plain Node (`smoke`) opens no window and skips it.
+if (
+  process.platform === 'linux' &&
+  !process.env.DISPLAY &&
+  selected.some((slice) => slice.compile)
+) {
+  run(
+    'xvfb-run',
+    [
+      '-a',
+      process.execPath,
+      fileURLToPath(import.meta.url),
+      ...process.argv.slice(2),
+    ],
+    { missingMessage: '[e2e] xvfb-run not found; install the xvfb package' },
+  );
+  // `run` exits on failure; the re-exec'd chain already ran every slice.
+  process.exit(0);
+}
 
 if (selected.some((slice) => slice.compile)) {
   console.log('[e2e] compiling slices (tsc -p tsconfig.e2e.json)');
