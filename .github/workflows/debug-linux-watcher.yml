@@ -1,0 +1,86 @@
+name: debug-linux-watcher
+
+# Temporary diagnostics for the Linux-only workspace E2E failure in
+# rstack-ecosystem-ci (branch debug/linux-watcher; do not merge). Mirrors how
+# the ecosystem-ci rstest suite drives the editor E2E (Node 24.21.0 +
+# corepack, `pnpm run build`, then `node e2e/run.mjs rstest` with
+# RSTACK_E2E_TOOLCHAIN_OVERRIDES on the override leg), with
+# RSTACK_DETECTION_DIAG=1 mirror watcher activity to the job output.
+
+on:
+  push:
+    branches: [debug/linux-watcher]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.sha }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  rstest:
+    name: rstest E2E (${{ matrix.leg }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - leg: pinned
+            override: false
+          - leg: override
+            override: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24.21.0
+
+      # Same package-manager bootstrap as
+      # rstack-ecosystem-ci's .github/actions/build-rstest: corepack reads each
+      # checkout's `packageManager` field, so the rstest toolchain checkout
+      # below installs with its own pinned pnpm.
+      - name: Enable corepack
+        run: npm install -g corepack@latest --force && corepack enable
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Cache VS Code Download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .vscode-test/vscode-*
+          key: vscode-test-${{ runner.os }}-debug-${{ hashFiles('packages/vscode/package.json') }}
+          restore-keys: |
+            vscode-test-${{ runner.os }}-debug-
+
+      # leg=override only: recreate the .github/actions/build-rstest flow,
+      # cloned inside the checkout (branch job, disposable).
+      - name: Build rstest toolchain checkout
+        if: matrix.override == true
+        run: |
+          git clone https://github.com/web-infra-dev/rstest "$GITHUB_WORKSPACE/rstest-toolchain"
+          git -C "$GITHUB_WORKSPACE/rstest-toolchain" checkout a091c2b8
+          cd "$GITHUB_WORKSPACE/rstest-toolchain"
+          pnpm install --frozen-lockfile --prefer-offline
+          node --run build
+          test -f packages/core/package.json
+
+      - name: E2E (rstest stack, diagnostics on)
+        working-directory: packages/vscode
+        run: node e2e/run.mjs rstest
+        env:
+          CI: 'true'
+          RSTACK_DETECTION_DIAG: '1'
+          VSCODE_TEST_CACHE_PATH: ${{ github.workspace }}/.vscode-test
+          RSTACK_E2E_TOOLCHAIN_OVERRIDES: ${{ matrix.override == true && format('@rstest/core={0}/rstest-toolchain/packages/core', github.workspace) || '' }}

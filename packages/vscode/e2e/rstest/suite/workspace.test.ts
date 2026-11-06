@@ -19,6 +19,7 @@
 //   holding the first one.
 import assert from 'node:assert';
 import fs from 'node:fs/promises';
+import nodeFs from 'node:fs';
 import path from 'node:path';
 import vscode from 'vscode';
 import {
@@ -29,6 +30,22 @@ import {
   toLabelTree,
   waitFor,
 } from './helpers';
+
+// TEMPORARY diagnosis companion to the `debug/linux-watcher` detection.ts
+// patch — do not merge. Every `fs.rename` in this suite gets one stderr line
+// with a timestamp and both paths' post-rename existence, so a runner-local
+// copy of the job log can prove the renames happened on the file system.
+const traceRename = async (
+  label: string,
+  from: string,
+  to: string,
+): Promise<void> => {
+  console.error(
+    `[rename ${new Date().toISOString()}] ${label}: ${path.basename(from)} -> ${path.basename(to)}`,
+    `from-exists=${nodeFs.existsSync(from)}`,
+    `to-exists=${nodeFs.existsSync(to)}`,
+  );
+};
 
 // The unwrapped single-folder tree of workspace-1 (the standard layout: one
 // root `rstest.config.ts`, so no workspace node and no project node).
@@ -126,7 +143,20 @@ suite('Workspace discover suite', () => {
       path.resolve(fixturesRoot, 'workspace-2/project-1/rstest.config.ts'),
       path.resolve(fixturesRoot, 'workspace-2/project-1/foo.config.ts'),
     );
+    await traceRename(
+      'phase-3 #1 done',
+      path.resolve(fixturesRoot, 'workspace-2/project-1/rstest.config.ts'),
+      path.resolve(fixturesRoot, 'workspace-2/project-1/foo.config.ts'),
+    );
     await fs.rename(
+      path.resolve(
+        fixturesRoot,
+        'workspace-2/folder/project-2/rstest.config.ts',
+      ),
+      path.resolve(fixturesRoot, 'workspace-2/folder/project-2/bar.config.ts'),
+    );
+    await traceRename(
+      'phase-3 #2 done',
       path.resolve(
         fixturesRoot,
         'workspace-2/folder/project-2/rstest.config.ts',
@@ -200,7 +230,20 @@ suite('Workspace discover suite', () => {
       path.resolve(fixturesRoot, 'workspace-2/project-1/foo.config.ts'),
       path.resolve(fixturesRoot, 'workspace-2/project-1/rstest.config.ts'),
     );
+    await traceRename(
+      'restore #1 done',
+      path.resolve(fixturesRoot, 'workspace-2/project-1/foo.config.ts'),
+      path.resolve(fixturesRoot, 'workspace-2/project-1/rstest.config.ts'),
+    );
     await fs.rename(
+      path.resolve(fixturesRoot, 'workspace-2/folder/project-2/foo.config.ts'),
+      path.resolve(
+        fixturesRoot,
+        'workspace-2/folder/project-2/rstest.config.ts',
+      ),
+    );
+    await traceRename(
+      'restore #2 done',
       path.resolve(fixturesRoot, 'workspace-2/folder/project-2/foo.config.ts'),
       path.resolve(
         fixturesRoot,

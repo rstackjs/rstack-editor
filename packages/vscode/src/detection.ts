@@ -6,6 +6,20 @@ import {
   type StackId,
   STACK_IDS,
 } from './types';
+
+/**
+ * TEMPORARY watcher diagnostics for the Linux-only ecosystem-ci failure
+ * (debug/linux-watcher — do not merge; remove after the diagnosis). Every
+ * DetectionService lifecycle step mirrors to stderr so the E2E harness output
+ * captures it: folder-set changes, watcher installation, every watcher event,
+ * detection passes and their discovered config files.
+ */
+const DIAG = !!process.env.RSTACK_DETECTION_DIAG;
+const diag = (...args: unknown[]): void => {
+  if (DIAG) {
+    console.error(`[detection-diag ${new Date().toISOString()}]`, ...args);
+  }
+};
 import {
   ancestorDirectories,
   findAncestorRslintConfig,
@@ -289,11 +303,13 @@ export class DetectionService implements vscode.Disposable {
   constructor(private readonly output: vscode.LogOutputChannel) {
     this.#subscriptions.push(
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
+        diag('onDidChangeWorkspaceFolders');
         this.installWatchers();
         this.schedule();
       }),
       vscode.workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration('rstack.rstest.configFileGlobPattern')) {
+          diag('onDidChangeConfiguration configFileGlobPattern');
           this.installWatchers();
           this.schedule();
         }
@@ -341,6 +357,7 @@ export class DetectionService implements vscode.Disposable {
   }
 
   private async runDetection(): Promise<DetectionSnapshot> {
+    diag('runDetection: start');
     const folders = (vscode.workspace.workspaceFolders ?? []).filter(
       // Virtual filesystems cannot host a project-local toolchain.
       (folder) => folder.uri.scheme === 'file',
@@ -357,9 +374,23 @@ export class DetectionService implements vscode.Disposable {
     if (signature !== this.#signature || notifyUnchanged) {
       this.#signature = signature;
       this.log(snapshot);
+      diag(
+        'runDetection: snapshot changed',
+        snapshot.folders.map((entry) => ({
+          folder: entry.folder.name,
+          rstest: {
+            detected: entry.stacks.rstest.detected,
+            configFiles: entry.stacks.rstest.configFiles.map(
+              (uri) => uri.fsPath,
+            ),
+          },
+        })),
+      );
       if (!this.#disposed) {
         this.#emitter.fire(snapshot);
       }
+    } else {
+      diag('runDetection: signature unchanged');
     }
     return snapshot;
   }
@@ -382,27 +413,34 @@ export class DetectionService implements vscode.Disposable {
   }
 
   private schedule(): void {
+    diag('schedule');
     if (this.#debounce) {
       clearTimeout(this.#debounce);
     }
     this.#debounce = setTimeout(() => {
       this.#debounce = undefined;
+      diag('debounce elapsed -> refresh');
       void this.refresh();
     }, REDETECT_DEBOUNCE_MS);
   }
 
   private installWatchers(): void {
+    diag('installWatchers: start');
     for (const watcher of this.#watchers) {
       watcher.dispose();
     }
     this.#watchers = [];
     // A lockfile event is a dependency change wherever it is watched: a
     // monorepo opened at a subdirectory installs at an ancestor.
-    const onEvent = (uri: vscode.Uri) => {
-      if (isLockfile(uri)) {
-        this.#notifyUnchanged = true;
-      }
-      this.schedule();
+    const onEvent = (kind: string) => {
+      const handler = (uri: vscode.Uri) => {
+        diag(`watcher event ${kind}`, uri.fsPath);
+        if (isLockfile(uri)) {
+          this.#notifyUnchanged = true;
+        }
+        this.schedule();
+      };
+      return handler;
     };
     const patterns: vscode.RelativePattern[] = [];
     const ancestors = new Set<string>();
@@ -411,7 +449,9 @@ export class DetectionService implements vscode.Disposable {
         continue;
       }
       for (const pattern of detectionWatchPatterns(readRstestGlobs(folder))) {
-        patterns.push(new vscode.RelativePattern(folder, pattern));
+        const relative = new vscode.RelativePattern(folder, pattern);
+        diag('watch pattern', relative.base, relative.pattern);
+        patterns.push(relative);
       }
       for (const directory of ancestorDirectories(folder.uri.fsPath)) {
         ancestors.add(directory);
@@ -429,11 +469,12 @@ export class DetectionService implements vscode.Disposable {
       const watcher = vscode.workspace.createFileSystemWatcher(pattern);
       this.#watchers.push(
         watcher,
-        watcher.onDidCreate(onEvent),
-        watcher.onDidChange(onEvent),
-        watcher.onDidDelete(onEvent),
+        watcher.onDidCreate(onEvent('create')),
+        watcher.onDidChange(onEvent('change')),
+        watcher.onDidDelete(onEvent('delete')),
       );
     }
+    diag('installWatchers: done, watcher count', patterns.length);
   }
 
   dispose(): void {
