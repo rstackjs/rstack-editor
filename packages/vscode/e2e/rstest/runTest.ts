@@ -18,16 +18,44 @@
  * the shell probe never runs.
  */
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import {
   cpSync,
   existsSync,
   mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { runTests } from '@vscode/test-electron';
+
+// TEMPORARY (debug/linux-watcher): how many inotify instances the system is
+// currently holding — the ceiling that panel runs hit (max_user_instances).
+const countInotifyFds = (): number => {
+  let count = 0;
+  for (const entry of readdirSync('/proc')) {
+    if (!/^\d+$/.test(entry)) continue;
+    try {
+      for (const fd of readdirSync(`/proc/${entry}/fd`)) {
+        const target = readlinkSync(`/proc/${entry}/fd/${fd}`);
+        if (
+          target === 'anon_inode:inotify' ||
+          target === 'anon_inode:[inotify]'
+        ) {
+          count += 1;
+        }
+      }
+    } catch {
+      // A process may exit between listing and reading; ignore.
+    }
+  }
+  return count;
+};
 import { vscodeTestCachePath } from '../vscodeTestCache';
 
 // Repo-relative fixture dirs whose installs this slice needs. workspace-2 has
@@ -50,6 +78,41 @@ async function main() {
     extensionDevelopmentPath,
     'e2e/rstest/fixtures',
   );
+
+  // TEMPORARY environment diagnostics for the debug/linux-watcher branch.
+  // One-off lines in the job output so a runner-side copy of the failing
+  // ecosystem-ci context can be compared against local/leg tracks.
+  if (process.env.CI === 'true' || process.env.RSTACK_DETECTION_DIAG === '1') {
+    const procRoot = '/proc/sys/fs/inotify';
+    try {
+      console.error(`[e2e-env] time ${new Date().toISOString()}`);
+      console.error(
+        `[e2e-env] node ${process.version} ${process.platform} ${process.arch}`,
+      );
+      console.error(
+        `[e2e-env] fixtures ${fixturesRoot}`,
+        `root-dev=${statSync(fixturesRoot).dev}`,
+      );
+      for (const limit of [
+        'max_user_watches',
+        'max_user_instances',
+        'max_queued_events',
+      ]) {
+        console.error(
+          `[e2e-env] inotify ${limit} ${readFileSync(`${procRoot}/${limit}`, 'utf8').trim()}`,
+        );
+      }
+      console.error(`[e2e-env] inotify instances in use: ${countInotifyFds()}`);
+      console.error(
+        `[e2e-env] df -T fixtures:\n${execFileSync('df', ['-T', fixturesRoot], { encoding: 'utf8' })}`,
+      );
+      console.error(
+        `[e2e-env] toolchain override ${process.env.RSTACK_E2E_TOOLCHAIN_OVERRIDES || '(unset)'}`,
+      );
+    } catch (error) {
+      console.error(`[e2e-env] diagnostics failed: ${error}`);
+    }
+  }
 
   // The extension host loads `main` from `package.json`; an unbuilt repo would
   // otherwise fail deep inside VS Code with an unhelpful activation error.

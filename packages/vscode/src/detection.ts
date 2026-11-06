@@ -14,7 +14,12 @@ import {
  * captures it: folder-set changes, watcher installation, every watcher event,
  * detection passes and their discovered config files.
  */
-const DIAG = !!process.env.RSTACK_DETECTION_DIAG;
+// Default-on in CI for this temporary branch: rstack-ecosystem-ci passes no
+// RSTACK_DETECTION_DIAG, and the whole point is to capture the diag lines from
+// a run there — CI='true' is set both by the editor's own workflows and by
+// ecosystem-ci.
+const DIAG =
+  process.env.RSTACK_DETECTION_DIAG === '1' || process.env.CI === 'true';
 const diag = (...args: unknown[]): void => {
   if (DIAG) {
     console.error(`[detection-diag ${new Date().toISOString()}]`, ...args);
