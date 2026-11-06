@@ -10,6 +10,7 @@ name: debug-linux-watcher
 on:
   push:
     branches: [debug/linux-watcher]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.sha }}
@@ -31,6 +32,11 @@ jobs:
             override: false
           - leg: override
             override: true
+          # Same pre-suite load as the ecosystem-ci job: test:unit + lint ran
+          # right before the E2E in every failing run.
+          - leg: heavy
+            override: false
+            presuite: true
 
     steps:
       - name: Checkout
@@ -55,6 +61,15 @@ jobs:
 
       - name: Build
         run: pnpm run build
+
+      # leg=heavy only: match the ecosystem-ci pre-suite load.
+      - name: Unit tests (pre-suite load)
+        if: matrix.leg == 'heavy'
+        run: pnpm run test:unit
+
+      - name: Lint (pre-suite load)
+        if: matrix.leg == 'heavy'
+        run: pnpm run lint
 
       - name: Cache VS Code Download
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
