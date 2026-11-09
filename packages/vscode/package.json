@@ -436,7 +436,7 @@
     "@rslint/core": "^0.10.0",
     "@rstackjs/load-config": "^1.0.2",
     "@rstest/core": "^0.12.6",
-    "@swc-next/parser": "^0.4.1",
+    "@swc-next/parser": "^0.5.0",
     "@types/istanbul-lib-report": "^3.0.3",
     "@types/mocha": "^10.0.10",
     "@types/node": "^26.6.6",
