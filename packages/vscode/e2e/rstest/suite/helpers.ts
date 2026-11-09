@@ -72,10 +72,10 @@ const WATCHER_ARM_TIMEOUT_MS = 15_000;
  * Proves the detection file watcher delivers events for `file` before the
  * suite mutates watched fixture files. `fs.rename`/`write` issued right after
  * the watchers changed — a folder added or `configFileGlobPattern` updated —
- * race the watcher's arming: on Linux the backend has been observed staying
- * deaf for hundreds of milliseconds and swallowing the whole event burst,
- * which is exactly the "detection never re-ran" ecosystem-CI failure. The
- * FileSystemWatcher API has no ready signal, so the suite instead rewrites
+ * race the watcher's arming: on Linux the backend has been observed taking
+ * hundreds of milliseconds to arm and dropping the whole event burst written
+ * in that window, which is the "detection never re-ran" ecosystem-CI failure.
+ * The FileSystemWatcher API has no ready signal, so the suite instead rewrites
  * `file` with its identical content and waits for a watcher event through
  * `getDetectionWatcherEventCount()`: if the write is not observed, the
  * upcoming mutations would not be either. The rewrite never changes
