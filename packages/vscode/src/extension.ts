@@ -538,6 +538,7 @@ class ExtensionShell {
         }
         this.syncDependencyPoll();
       },
+      getDetectionWatcherEventCount: () => this.#detection.watcherEventCount,
     };
   }
 

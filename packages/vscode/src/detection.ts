@@ -277,6 +277,17 @@ export class DetectionService implements vscode.Disposable {
   // rebuild itself does not need the event, it already has the fresh snapshot.
   #notifyUnchanged = false;
   #watchers: vscode.Disposable[] = [];
+  /**
+   * Watcher events received by the CURRENT watcher set, reset on every
+   * (re)install. E2E only (read through the extension's exports): the VS Code
+   * `FileSystemWatcher` has no "watcher armed" signal, so a suite that mutates
+   * watched fixture files right after a watcher (re)install can race its own
+   * backends — on Linux the arm window after `createFileSystemWatcher` has
+   * been observed long enough to drop the entire event burst. The suites
+   * instead rewrite an already-watched file until an event comes back through
+   * this counter; the rewrite never changes detection's signature.
+   */
+  #watcherEventCount = 0;
   #debounce: ReturnType<typeof setTimeout> | undefined;
   #running: Promise<DetectionSnapshot> | undefined;
   #rerun = false;
@@ -303,6 +314,11 @@ export class DetectionService implements vscode.Disposable {
 
   get snapshot(): DetectionSnapshot {
     return this.#snapshot;
+  }
+
+  /** E2E only: events received since the last (re)install of the watchers. */
+  get watcherEventCount(): number {
+    return this.#watcherEventCount;
   }
 
   /** Installs the watchers and runs the first detection pass. */
@@ -396,9 +412,14 @@ export class DetectionService implements vscode.Disposable {
       watcher.dispose();
     }
     this.#watchers = [];
+    // The window the implicit reset opens matters for the arm probe below: a
+    // count that increased under the old watcher set must not satisfy a suite
+    // currently waiting on the new one.
+    this.#watcherEventCount = 0;
     // A lockfile event is a dependency change wherever it is watched: a
     // monorepo opened at a subdirectory installs at an ancestor.
     const onEvent = (uri: vscode.Uri) => {
+      this.#watcherEventCount += 1;
       if (isLockfile(uri)) {
         this.#notifyUnchanged = true;
       }

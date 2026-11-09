@@ -210,6 +210,13 @@ export interface RstackExtensionExports {
   whenStackActive(stack: StackId): Promise<Record<string, unknown>>;
   /** E2E only: shorten the shell's dependency-recovery polling interval. */
   setDependencyPollIntervalForTest(intervalMs: number): void;
+  /**
+   * E2E only: how many watcher events DetectionService has received since its
+   * last watcher (re)install. There is no "watcher armed" API; suites that
+   * mutate watched fixture files after a folder or a watched-glob change wait
+   * for this counter to move first (see `e2e/rstest/suite/helpers.ts`).
+   */
+  getDetectionWatcherEventCount(): number;
 }
 
 export type StackControllerFactory = () => StackController;

@@ -3,6 +3,7 @@
 // the `Rstest` instance directly, while here the shell republishes the stack's
 // exports through `RstackExtensionExports` (see `src/types.ts`).
 import assert from 'node:assert';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import vscode from 'vscode';
 import type { RstackExtensionExports } from '../../../src/types';
@@ -60,6 +61,59 @@ export function currentRstestExports(): RstestExports {
   const stackExports = api.getStackExports('rstest');
   assert.ok(stackExports, 'the Rstest stack should be active');
   return stackExports as unknown as RstestExports;
+}
+
+/** How long one identical-content rewrite waits for the event to come back. */
+const WATCHER_ARM_PROBE_WAIT_MS = 500;
+/** Overall budget for proving the watcher armed, rewriting between probes. */
+const WATCHER_ARM_TIMEOUT_MS = 15_000;
+
+/**
+ * Proves the detection file watcher delivers events for `file` before the
+ * suite mutates watched fixture files. `fs.rename`/`write` issued right after
+ * the watchers changed — a folder added or `configFileGlobPattern` updated —
+ * race the watcher's arming: on Linux the backend has been observed staying
+ * deaf for hundreds of milliseconds and swallowing the whole event burst,
+ * which is exactly the "detection never re-ran" ecosystem-CI failure. The
+ * FileSystemWatcher API has no ready signal, so the suite instead rewrites
+ * `file` with its identical content and waits for a watcher event through
+ * `getDetectionWatcherEventCount()`: if the write is not observed, the
+ * upcoming mutations would not be either. The rewrite never changes
+ * detection's output, so this only costs a no-op detection pass.
+ *
+ * `file` must be a file the currently-configured watch patterns match (e.g. a
+ * live `rstest.config.*` after the fixture creates it), or the probe never
+ * completes.
+ */
+export async function waitForWatcherArmed(file: string): Promise<void> {
+  const api =
+    vscode.extensions.getExtension<RstackExtensionExports>(
+      EXTENSION_ID,
+    )?.exports;
+  assert.ok(api, `extension ${EXTENSION_ID} should be activated`);
+  const eventCount = () => api.getDetectionWatcherEventCount();
+  const content = await fs.readFile(file, 'utf8');
+  let attempts = 0;
+  const deadline = Date.now() + WATCHER_ARM_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    attempts += 1;
+    const baseline = eventCount();
+    await fs.writeFile(file, content);
+    const probeDeadline = Math.min(
+      Date.now() + WATCHER_ARM_PROBE_WAIT_MS,
+      deadline,
+    );
+    while (Date.now() < probeDeadline) {
+      await delay(25);
+      if (eventCount() !== baseline) {
+        return;
+      }
+    }
+  }
+  throw new Error(
+    `the file watcher never delivered an event within ${WATCHER_ARM_TIMEOUT_MS} ms: rewrote ${file} ` +
+      `${attempts} times with identical content`,
+  );
 }
 
 export async function delay(ms: number) {
