@@ -25,10 +25,13 @@ export const parseTestFile = (
     ): (() => void) | void;
   },
 ) => {
+  // errorRecovery keeps 0.4.x behavior: return diagnostics in `result`
+  // instead of throwing (the 0.5.0 default throws a plain diagnostic object).
   const result = parseSync(code, {
     lang: 'tsx',
     preserveParens: false,
     sourceType: 'module',
+    errorRecovery: true,
   });
   const error = result.diagnostics.find(
     (diagnostic) => diagnostic.severity === 'error',
