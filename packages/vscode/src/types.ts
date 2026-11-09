@@ -210,6 +210,8 @@ export interface RstackExtensionExports {
   whenStackActive(stack: StackId): Promise<Record<string, unknown>>;
   /** E2E only: shorten the shell's dependency-recovery polling interval. */
   setDependencyPollIntervalForTest(intervalMs: number): void;
+  /** E2E only: see `watcherEventCount` (`src/detection.ts`). */
+  getDetectionWatcherEventCount(): number;
 }
 
 export type StackControllerFactory = () => StackController;

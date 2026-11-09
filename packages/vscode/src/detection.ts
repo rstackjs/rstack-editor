@@ -277,6 +277,10 @@ export class DetectionService implements vscode.Disposable {
   // rebuild itself does not need the event, it already has the fresh snapshot.
   #notifyUnchanged = false;
   #watchers: vscode.Disposable[] = [];
+  /** E2E only: monotonic count of watcher events received — the arm probe in
+   * `e2e/rstest/suite/helpers.ts` compares against its own baseline, so the
+   * counter is never reset. */
+  #watcherEventCount = 0;
   #debounce: ReturnType<typeof setTimeout> | undefined;
   #running: Promise<DetectionSnapshot> | undefined;
   #rerun = false;
@@ -303,6 +307,11 @@ export class DetectionService implements vscode.Disposable {
 
   get snapshot(): DetectionSnapshot {
     return this.#snapshot;
+  }
+
+  /** E2E only — see `#watcherEventCount`. */
+  get watcherEventCount(): number {
+    return this.#watcherEventCount;
   }
 
   /** Installs the watchers and runs the first detection pass. */
@@ -399,6 +408,7 @@ export class DetectionService implements vscode.Disposable {
     // A lockfile event is a dependency change wherever it is watched: a
     // monorepo opened at a subdirectory installs at an ancestor.
     const onEvent = (uri: vscode.Uri) => {
+      this.#watcherEventCount += 1;
       if (isLockfile(uri)) {
         this.#notifyUnchanged = true;
       }

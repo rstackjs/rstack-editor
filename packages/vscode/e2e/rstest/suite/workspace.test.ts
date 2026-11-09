@@ -28,6 +28,7 @@ import {
   getTestItemByLabels,
   toLabelTree,
   waitFor,
+  waitForWatcherArmed,
 } from './helpers';
 
 // The unwrapped single-folder tree of workspace-1 (the standard layout: one
@@ -122,6 +123,12 @@ suite('Workspace discover suite', () => {
     // (detection scopes per folder): with no matching config the folder is undetected and
     // dropped entirely, and workspace-1 — the only detected folder left —
     // is shown unwrapped again.
+    // The renames below must be seen by the freshly installed workspace-2
+    // watcher (nothing else re-runs detection): on Linux the backend arms
+    // late, so probe it first (see `waitForWatcherArmed`).
+    await waitForWatcherArmed(
+      path.resolve(fixturesRoot, 'workspace-2/project-1/rstest.config.ts'),
+    );
     await fs.rename(
       path.resolve(fixturesRoot, 'workspace-2/project-1/rstest.config.ts'),
       path.resolve(fixturesRoot, 'workspace-2/project-1/foo.config.ts'),
@@ -167,6 +174,13 @@ suite('Workspace discover suite', () => {
     // add config file.
     // Adapted like the step above: workspace-2 is still the only detected
     // folder, so its two projects are shown unwrapped.
+    // The rename's create event under the new glob is the only signal: probe
+    // the watcher reinstalled by `config.update` above before renaming
+    // (`project-2` still holds a `bar.config.ts`, which the `foo.config.*`
+    // glob does not watch, so the probe targets `project-1`).
+    await waitForWatcherArmed(
+      path.resolve(fixturesRoot, 'workspace-2/project-1/foo.config.ts'),
+    );
     await fs.rename(
       path.resolve(fixturesRoot, 'workspace-2/folder/project-2/bar.config.ts'),
       path.resolve(fixturesRoot, 'workspace-2/folder/project-2/foo.config.ts'),
