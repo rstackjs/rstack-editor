@@ -12,8 +12,8 @@ importers:
         specifier: ^11.1.0
         version: 11.1.0
       rstack:
-        specifier: ^0.9.3
-        version: 0.9.3(jiti@2.7.0)(typescript@5.9.3)
+        specifier: ^0.9.4
+        version: 0.9.4(jiti@2.7.0)(typescript@5.9.3)
 
   packages/vscode:
     devDependencies:
@@ -757,88 +757,88 @@ packages:
       '@swc/helpers':
         optional: true
 
-  '@rstackjs/cli-darwin-arm64@0.9.3':
-    resolution: {integrity: sha512-ib2vk68yn0g9ZA/yD3tzyoYWlbcbrpjbdzNuzy2nM5+L6Fba/eB3xOjK9tIFLPlQv432sIG4CaXHvLhIz7GLyA==}
+  '@rstackjs/cli-darwin-arm64@0.9.4':
+    resolution: {integrity: sha512-B6KcydWVitNHoudptonlJTnIyQypJNHtKTESeFlCwsHEhEDFoRh1RwUcGzxojOZSfCaEAOLvxlWyJbM9gfx0Cw==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [arm64]
     os: [darwin]
 
-  '@rstackjs/cli-darwin-x64@0.9.3':
-    resolution: {integrity: sha512-YMEKd5wjgJiWWsZ4002a6bWDAlw9mBRANB18NwUmmo5vp39yP9RMsltVjUUReUzzIFVMYvOJCGYa+xgDN+SxUQ==}
+  '@rstackjs/cli-darwin-x64@0.9.4':
+    resolution: {integrity: sha512-lEJNj+egCevYMKiKcXijXoRFyBx55hr1SzVPr6mO+4atUNetsGfEpral4U0RCO/BBeyQajrvlcchu7o0cONPdQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [x64]
     os: [darwin]
 
-  '@rstackjs/cli-linux-arm64-gnu@0.9.3':
-    resolution: {integrity: sha512-AAIMcXMVI1CSq4fkeBsRUPiz0oas4H1va+wzzywJkpccWj6+RTcxt2ZnRvgtqLI5cdwFPMZ3eNTviEsfGl7gqA==}
+  '@rstackjs/cli-linux-arm64-gnu@0.9.4':
+    resolution: {integrity: sha512-MID+V0sL6xFnOX1JxtUbF6MvCJhP5xALTOy2ohyDc/3oUqLpN96YiDiGFScYKS+F37iASl7L3y7WeTOeuA3J9w==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@rstackjs/cli-linux-arm64-musl@0.9.3':
-    resolution: {integrity: sha512-N3urlzWBrJ57kH/2lL4vWoPhutopHGMuUBBdfYYm0lk4Rmh5lZhSP6Q58Ks9a1iudIDs3RiiQLuy6AgPc9g+YA==}
+  '@rstackjs/cli-linux-arm64-musl@0.9.4':
+    resolution: {integrity: sha512-P6wQBW00NMhURNeZsFiB+2AZkHmYPFKAucNTK2bAFsTYwHjuQQwI9ZC6HbrMTNmEi415OMGF/s6m00S1aUCh8A==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
 
-  '@rstackjs/cli-linux-ppc64-gnu@0.9.3':
-    resolution: {integrity: sha512-DvtfefyVM+0bH2qRa+4GzKTqH1/T0cdKiLco+Q+aQKa6IzizZCcm/NMpV4Yz5dN37jZjK1yHqPgRr9+AQvKpSQ==}
+  '@rstackjs/cli-linux-ppc64-gnu@0.9.4':
+    resolution: {integrity: sha512-x2sFlfiBDmPRbn2QM+/4QqpBKL696JaDdyqjAp81Ydn/jzGVWbgODv9AfiqshwNKCf/aJ+vf01kidf3YV0sDYg==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [ppc64]
     os: [linux]
     libc: [glibc]
 
-  '@rstackjs/cli-linux-riscv64-gnu@0.9.3':
-    resolution: {integrity: sha512-WxusnHLCg8uYt9oaw0I4I/flCizot6jssOpxUickmbKveVqca8+vy9o9Rtnb5fx9ifwDkhzm1TVxXXM1VSO69w==}
+  '@rstackjs/cli-linux-riscv64-gnu@0.9.4':
+    resolution: {integrity: sha512-M03YuOZm5CDh5SXl/AWfoXWQZnl9K0ct3984wBNi8lR111vuQvH4xjYYTqeChTgzf3vB4dS5cfTMpbWHMxsAXA==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [riscv64]
     os: [linux]
     libc: [glibc]
 
-  '@rstackjs/cli-linux-riscv64-musl@0.9.3':
-    resolution: {integrity: sha512-x3UEEqk2yfEn/EMJxVcztEr8JW/YDgDPt+1M6jZobIrWmPr+K/2M0uNnnhkP5NL3mmHH/RpyUhOLdwJv4lYcQA==}
+  '@rstackjs/cli-linux-riscv64-musl@0.9.4':
+    resolution: {integrity: sha512-t2P+3mJ9D+ye6Gff0wCGCQ+zaihJCySWgyzRHoHipBpT5DVW743kH2XXFWox55w9UEShNdwN9O0eO7LXLn0/fQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [riscv64]
     os: [linux]
     libc: [musl]
 
-  '@rstackjs/cli-linux-s390x-gnu@0.9.3':
-    resolution: {integrity: sha512-r7NmDyZBZ39feodrgILfTNDy+k+oNlE+BIYPVt/pRq0vZPjKyxMJORPUvUlcp/nuzKS5i9G4+QnEk4ZFAdWaMA==}
+  '@rstackjs/cli-linux-s390x-gnu@0.9.4':
+    resolution: {integrity: sha512-agu6cLjzpidwuiiAUYY5FIA1uw5mTheJmpwnvcbSenXaFOHviHYPvZO+yBlh52dK+PBkgupyxVPN0U31TJHM5w==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [s390x]
     os: [linux]
     libc: [glibc]
 
-  '@rstackjs/cli-linux-x64-gnu@0.9.3':
-    resolution: {integrity: sha512-0ScsLqskOucfy8eQI7IW/c7WISmCgyEq6Jr1mtJHWrc8lLB2jzMyuYTjRrSt65s/f8WYOvsKDLVr/UwVvEYvnA==}
+  '@rstackjs/cli-linux-x64-gnu@0.9.4':
+    resolution: {integrity: sha512-ovX7D5LGA6WEUY2kPpASO62OumgvuewJps5D3AB5UxcJDrlWl8J+TMh5EA7SdX6xI7DyVN32wmmge6+Bcnz7eA==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@rstackjs/cli-linux-x64-musl@0.9.3':
-    resolution: {integrity: sha512-MYXR3wSc7vj60nmucCRqDMG/q0QmQZqG+LS2A3OqSLQgERN9YDIUMmWjj+IIKzw9JvfE1YCknH6zEo9ku9cwiQ==}
+  '@rstackjs/cli-linux-x64-musl@0.9.4':
+    resolution: {integrity: sha512-qIwMGAlILBZiBHctPytuvKplrrNO7LSqyNBqdOVaoH6Jif9bjdekQD16LSVY0Ky8TgZoevXFmsUvwC3s4xBzzw==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@rstackjs/cli-win32-arm64-msvc@0.9.3':
-    resolution: {integrity: sha512-8TTS42Ei+ognbF3TgmmAkGKzCShPmu2R5d3sDuamW+mdPz0JPUgrGB6EINYtTlrEoqdcmlmWtp0zQ9THDx7CMw==}
+  '@rstackjs/cli-win32-arm64-msvc@0.9.4':
+    resolution: {integrity: sha512-ZEkt592DdyDYvsUpxP63Ctnjbw6fI7OfG8QgCOr7wHoHPZZQbQiugme0EvHfnoxiy1GkQ/2As9/2uKg+vgtkfA==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [arm64]
     os: [win32]
 
-  '@rstackjs/cli-win32-ia32-msvc@0.9.3':
-    resolution: {integrity: sha512-JI1kYnRyvJWMm4LN++akHZXfhjmghim48mVhucfg4Z62IXEeYrruM51ppxC1LTVCvF7JVOfdh0g2NsV79G8HLQ==}
+  '@rstackjs/cli-win32-ia32-msvc@0.9.4':
+    resolution: {integrity: sha512-MSOxfBHNdRnndquhwVJXjbmuvWiJ293X70EJfRG8bXflme7j4snGMXfdHw8+ou1zwnkgQseQLRB/JcaOeXxJAg==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [ia32]
     os: [win32]
 
-  '@rstackjs/cli-win32-x64-msvc@0.9.3':
-    resolution: {integrity: sha512-roBdZCiJYC7hTJ9DWRNt47v50w527x6+Y9/dQwSZ7QrFAlF7RnWtibBk7qNPsU67eb5PISWpHUwUbSxi5hG+zA==}
+  '@rstackjs/cli-win32-x64-msvc@0.9.4':
+    resolution: {integrity: sha512-3Wfpj4qRJWGGOVMuTg13pAWLnCoe7GSqgV7AXGF0Op5nIbf2wVLcgaoGjwsJNpSEwFxmz8tnNrUxb028l7trdQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [x64]
     os: [win32]
@@ -2045,8 +2045,8 @@ packages:
       typescript:
         optional: true
 
-  rstack@0.9.3:
-    resolution: {integrity: sha512-jw/bCyZ3xSFQ+XFL3/4S3Z263e5eXvspThoc0vN6RtioOfWUe8vX8XuHWkbtmJBdnV9u8fI+cT5P4wBQtpstlg==}
+  rstack@0.9.4:
+    resolution: {integrity: sha512-tQLBaQsTTV1cJ5x1tpR+NbQpgtHaa+5HPDrrIvOotTm+ittEmgSUgCM3iFc5KZZk2cMx47sTkZLsaNf5mt6crA==}
     engines: {node: ^20.19.0 || >=22.12.0}
     hasBin: true
     peerDependencies:
@@ -2971,43 +2971,43 @@ snapshots:
     optionalDependencies:
       '@swc/helpers': 0.5.24
 
-  '@rstackjs/cli-darwin-arm64@0.9.3':
+  '@rstackjs/cli-darwin-arm64@0.9.4':
     optional: true
 
-  '@rstackjs/cli-darwin-x64@0.9.3':
+  '@rstackjs/cli-darwin-x64@0.9.4':
     optional: true
 
-  '@rstackjs/cli-linux-arm64-gnu@0.9.3':
+  '@rstackjs/cli-linux-arm64-gnu@0.9.4':
     optional: true
 
-  '@rstackjs/cli-linux-arm64-musl@0.9.3':
+  '@rstackjs/cli-linux-arm64-musl@0.9.4':
     optional: true
 
-  '@rstackjs/cli-linux-ppc64-gnu@0.9.3':
+  '@rstackjs/cli-linux-ppc64-gnu@0.9.4':
     optional: true
 
-  '@rstackjs/cli-linux-riscv64-gnu@0.9.3':
+  '@rstackjs/cli-linux-riscv64-gnu@0.9.4':
     optional: true
 
-  '@rstackjs/cli-linux-riscv64-musl@0.9.3':
+  '@rstackjs/cli-linux-riscv64-musl@0.9.4':
     optional: true
 
-  '@rstackjs/cli-linux-s390x-gnu@0.9.3':
+  '@rstackjs/cli-linux-s390x-gnu@0.9.4':
     optional: true
 
-  '@rstackjs/cli-linux-x64-gnu@0.9.3':
+  '@rstackjs/cli-linux-x64-gnu@0.9.4':
     optional: true
 
-  '@rstackjs/cli-linux-x64-musl@0.9.3':
+  '@rstackjs/cli-linux-x64-musl@0.9.4':
     optional: true
 
-  '@rstackjs/cli-win32-arm64-msvc@0.9.3':
+  '@rstackjs/cli-win32-arm64-msvc@0.9.4':
     optional: true
 
-  '@rstackjs/cli-win32-ia32-msvc@0.9.3':
+  '@rstackjs/cli-win32-ia32-msvc@0.9.4':
     optional: true
 
-  '@rstackjs/cli-win32-x64-msvc@0.9.3':
+  '@rstackjs/cli-win32-x64-msvc@0.9.4':
     optional: true
 
   '@rstackjs/load-config@1.0.2(jiti@2.7.0)':
@@ -4094,29 +4094,29 @@ snapshots:
     transitivePeerDependencies:
       - '@swc-next/parser-binding-wasm'
 
-  rstack@0.9.3(jiti@2.7.0)(typescript@5.9.3):
+  rstack@0.9.4(jiti@2.7.0)(typescript@5.9.3):
     dependencies:
       '@rsbuild/core': 2.3.4
       '@rslib/core': 1.1.0-beta.1(typescript@5.9.3)
       '@rslint/core': 0.10.1(jiti@2.7.0)
       '@rstest/core': 0.12.6
-      '@swc-next/parser': 0.7.0
+      '@swc-next/parser': 0.8.1
       prettier: 3.10.1
       tinypool: 2.2.0
     optionalDependencies:
-      '@rstackjs/cli-darwin-arm64': 0.9.3
-      '@rstackjs/cli-darwin-x64': 0.9.3
-      '@rstackjs/cli-linux-arm64-gnu': 0.9.3
-      '@rstackjs/cli-linux-arm64-musl': 0.9.3
-      '@rstackjs/cli-linux-ppc64-gnu': 0.9.3
-      '@rstackjs/cli-linux-riscv64-gnu': 0.9.3
-      '@rstackjs/cli-linux-riscv64-musl': 0.9.3
-      '@rstackjs/cli-linux-s390x-gnu': 0.9.3
-      '@rstackjs/cli-linux-x64-gnu': 0.9.3
-      '@rstackjs/cli-linux-x64-musl': 0.9.3
-      '@rstackjs/cli-win32-arm64-msvc': 0.9.3
-      '@rstackjs/cli-win32-ia32-msvc': 0.9.3
-      '@rstackjs/cli-win32-x64-msvc': 0.9.3
+      '@rstackjs/cli-darwin-arm64': 0.9.4
+      '@rstackjs/cli-darwin-x64': 0.9.4
+      '@rstackjs/cli-linux-arm64-gnu': 0.9.4
+      '@rstackjs/cli-linux-arm64-musl': 0.9.4
+      '@rstackjs/cli-linux-ppc64-gnu': 0.9.4
+      '@rstackjs/cli-linux-riscv64-gnu': 0.9.4
+      '@rstackjs/cli-linux-riscv64-musl': 0.9.4
+      '@rstackjs/cli-linux-s390x-gnu': 0.9.4
+      '@rstackjs/cli-linux-x64-gnu': 0.9.4
+      '@rstackjs/cli-linux-x64-musl': 0.9.4
+      '@rstackjs/cli-win32-arm64-msvc': 0.9.4
+      '@rstackjs/cli-win32-ia32-msvc': 0.9.4
+      '@rstackjs/cli-win32-x64-msvc': 0.9.4
     transitivePeerDependencies:
       - '@microsoft/api-extractor'
       - '@module-federation/runtime-tools'
